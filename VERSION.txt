@@ -1,0 +1,6 @@
+hull_futures_bot - FOR DEV package
+Version: 1.3
+Built: 2026-10-07 20:55 SGT
+Changes since 1.2: fix - the Binance leverage-bracket request is now signed (testnet showed error -1102 "timestamp" on every poll, so the bracket safety check was always skipped). One-word change in app/binance_futures.py; strategy code unchanged.
+Earlier: 1.2 = M4 (API docs off); 1.1 = H1 startup lock retry + H2 storage guard/tracker protection.
+Contents: sanitized copy - every trading setting is blank; see README.md

@@ -1,0 +1,79 @@
+# systemd service unit for the HULL futures bot.
+#
+# What this gives you:
+#   - Restart=always + RestartSec=5: if the process crashes for ANY reason,
+#     systemd restarts it within 5 seconds. Combined with the bot's own
+#     startup reconciliation (which checks real Binance state before
+#     resuming), this means a crash never leaves a position unmanaged for
+#     more than a few seconds.
+#   - WantedBy=multi-user.target: the bot starts automatically on server
+#     boot - no manual step needed after a server restart/power loss.
+#   - StartLimitIntervalSec/StartLimitBurst (2026-09-14 fix, per a third-
+#     party review): bounds the restart loop. A TRANSIENT failure (a brief
+#     network blip, Binance/Telegram briefly unreachable) still gets
+#     several quick retries within the window below - but a PERMANENT
+#     failure (corrupted data file, bad encryption key, wrong path) no
+#     longer restarts forever and silently churns; after the burst limit,
+#     systemd stops trying and marks the unit `failed`, which is exactly
+#     the visibility a permanent problem needs (`systemctl status` shows
+#     it plainly, and the external heartbeat monitor from 0k will notice
+#     /healthz go silent and alert you through a separate channel).
+#
+# ─── Install ─────────────────────────────────────────────────────────────
+#   1. Edit the paths below (WorkingDirectory, ExecStart, User) to match
+#      your actual server setup.
+#   2. sudo cp deploy/hull-futures-bot.service /etc/systemd/system/
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable hull-futures-bot   # auto-start on boot
+#   5. sudo systemctl start hull-futures-bot
+#
+# ─── Useful commands ─────────────────────────────────────────────────────
+#   sudo systemctl status hull-futures-bot      # is it running right now?
+#   sudo systemctl restart hull-futures-bot     # manual restart
+#   sudo journalctl -u hull-futures-bot -f      # live log tail
+#   sudo journalctl -u hull-futures-bot -n 200  # last 200 log lines
+#   sudo systemctl reset-failed hull-futures-bot && sudo systemctl start hull-futures-bot
+#                                                # after fixing a PERMANENT failure that
+#                                                # tripped the restart limit below, use this
+#                                                # to clear the "failed" state and try again
+
+[Unit]
+Description=Futures Trading Bot
+# Only start once the network is actually up - starting before that would
+# just crash-loop uselessly until Binance/Telegram become reachable.
+After=network-online.target
+Wants=network-online.target
+# Restart-rate bound (see the comment above on StartLimitIntervalSec) - if
+# the service is (re)started more than StartLimitBurst times within this
+# window, systemd stops trying and marks it failed instead of looping
+# forever. 5 attempts in 5 minutes is generous for real transient issues
+# (a brief outage) while still catching a permanent one within minutes,
+# not silently forever.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# EDIT THESE THREE LINES for your server:
+User=hull-bot
+WorkingDirectory=/opt/hull-futures-bot
+ExecStart=/opt/hull-futures-bot/venv/bin/python /opt/hull-futures-bot/run.py
+
+# Restart policy - this is the core of "an earthquake won't stop it", now
+# bounded by StartLimitIntervalSec/StartLimitBurst above rather than
+# unconditional (see the fix note at the top of this file).
+Restart=always
+RestartSec=5
+
+# Give the process a real chance to shut down cleanly (cancels in-flight
+# asyncio tasks, closes HTTP sessions) before systemd kills it outright.
+TimeoutStopSec=35
+
+# Basic hardening - the bot doesn't need broad filesystem/network access
+# beyond its own directory and outbound HTTPS/WSS to Binance/Telegram.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,2085 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Futures Bot — Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #161d2e; --border: #263047;
+    --text: #e7ecf5; --muted: #8a93a8;
+    --green: #35d68a; --red: #ff5c72; --amber: #f5b942; --blue: #5b8def;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text); padding: 14px;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 13px; margin: 0 0 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  .layout { display: grid; grid-template-columns: 240px 1fr; gap: 14px; align-items: start; }
+  @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+  .acct-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; margin-bottom: 4px; }
+  .acct-item:hover { background: #1d2740; }
+  .acct-item.active { background: #223058; border: 1px solid var(--blue); }
+  .acct-item .name { font-weight: 600; }
+  .acct-item .meta { color: var(--muted); font-size: 11px; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 20px; font-size: 10px; font-weight: 700; margin-left: 6px; white-space: nowrap; }
+  .pill.testnet { background: #3a3010; color: var(--amber); }
+  .pill.mainnet { background: #10321f; color: var(--green); }
+  .table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 560px; }
+  th, td { padding: 8px 6px; border-bottom: 1px solid var(--border); text-align: left; }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; white-space: nowrap; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .badge.IDLE { background: #2a3350; color: var(--muted); }
+  .badge.IN_POSITION { background: #10321f; color: var(--green); }
+  .badge.ERROR { background: #3a1420; color: var(--red); }
+  .badge.STOPPED { background: #2a3350; color: var(--muted); }
+  .badge.UNPROTECTED { background: var(--red); color: #fff; font-weight: 800; animation: pulse-alert 1s infinite; }
+  @keyframes pulse-alert { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+  .dir-LONG { color: var(--green); font-weight: 600; }
+  .dir-SHORT { color: var(--red); font-weight: 600; }
+  button { background: var(--blue); color: #fff; border: none; padding: 9px 14px; border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 600; }
+  button:hover { opacity: .9; }
+  button.danger { background: #a53048; }
+  button.ghost { background: #223058; }
+  button.small { padding: 6px 10px; font-size: 11px; margin: 2px 4px 2px 0; }
+  input, select { width: 100%; padding: 9px 9px; background: #0d1220; border: 1px solid var(--border); color: var(--text); border-radius: 6px; font-size: 13px; }
+  label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; margin-top: 8px; }
+  .field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 4px 14px; }
+  /* 2026-09-19: checkboxes span the full grid width, not a single narrow
+     auto-fill column - several of this project's own checkbox labels
+     (the entry-filter toggles especially) are full sentences, not short
+     words like "Telegram notifications" - confined to one ~160px column
+     they'd overflow rather than wrap. flex-wrap lets a long label wrap
+     onto a second line instead of being clipped or forcing the row wider
+     than its column. */
+  .checkbox-row { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+  input[type=checkbox] { width: auto; min-width: 20px; min-height: 20px; transform: scale(1.2); }
+  .msg { font-size: 12px; margin-top: 10px; padding: 7px 10px; border-radius: 6px; display: none; }
+  .msg.ok { display: block; background: #10321f; color: var(--green); }
+  .msg.err { display: block; background: #3a1420; color: var(--red); }
+  #logbox { background: #0a0e18; border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12px; height: 200px; overflow-y: auto; white-space: pre-wrap; line-height: 1.5; color: #a9b4c9; }
+  .empty { color: var(--muted); font-size: 13px; padding: 10px 0; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px; }
+  .indicators { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px,1fr)); gap: 6px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .indicators b { color: var(--text); }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 20px; max-width: 640px; width: min(92vw, 640px); max-height: 88vh; overflow-y: auto; }
+  dialog::backdrop { background: rgba(0,0,0,.6); }
+  #login-overlay { position: fixed; inset: 0; background: var(--bg); display: none; align-items: center; justify-content: center; z-index: 999; padding: 16px; }
+  #login-overlay .box { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 28px; width: min(92vw, 320px); }
+  .badge.LIVE { background: #10321f; color: var(--green); }
+  .badge.STALE { background: #3a3010; color: var(--amber); }
+  .topbar { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px,1fr)); gap: 8px; margin-bottom: 14px; }
+  .stat-box { background: #0d1220; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+  .stat-box .l { color: var(--muted); font-size: 11px; }
+  .stat-box .v { font-size: 15px; font-weight: 700; margin-top: 2px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+  /* 2026-09-19, owner request: pair-edit dialog field sections. Same
+     pattern as .tabs above, but horizontally scrollable rather than
+     wrapping - inside a dialog, wrapping to a second row eats vertical
+     space that's already tight on a phone screen; a single scrollable
+     row keeps every dialog's field area a predictable, consistent
+     height regardless of screen width. */
+  .pair-section-tabs { display: flex; gap: 6px; margin-bottom: 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
+  .tab-btn { background: #1d2740; }
+  .tab-btn.active { background: var(--blue); }
+
+  /* Top-level tab bar: Trading / Ledger / Analysis - similar data/functions
+     grouped in the same tab rather than one long scrolling page. */
+  .main-tabs { display: flex; gap: 6px; margin-bottom: 14px; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
+  .main-tab-btn { background: #1d2740; white-space: nowrap; padding: 10px 16px; flex: 0 0 auto; }
+  .main-tab-btn.active { background: var(--blue); }
+  .tabpage { display: none; }
+  .tabpage.active { display: block; }
+
+  @media (max-width: 600px) {
+    body { padding: 8px; }
+    .panel { padding: 12px; border-radius: 8px; }
+    h1 { font-size: 16px; }
+    .main-tab-btn { padding: 9px 12px; font-size: 12px; }
+    button.small { padding: 7px 10px; }
+    /* 2026-09-19, owner request (dashboard grouping/responsive task,
+       picked back up in line with everything added since): dialogs keep
+       their full 20px padding on desktop, but on a phone that's real
+       width lost from an already-narrow 92vw dialog - matches the same
+       reduction .panel already gets above, same reasoning. */
+    dialog { padding: 12px; }
+    .pair-section-tabs .tab-btn { padding: 7px 10px; font-size: 12px; }
+    table { min-width: 480px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="login-overlay">
+  <div class="box">
+    <div id="login-view">
+      <h2 style="margin-top:0;">Sign in</h2>
+      <label>Username</label>
+      <input id="login-username" type="text" autocomplete="username">
+      <label>Password</label>
+      <input id="login-password" type="password" autocomplete="current-password">
+      <button id="login-btn" style="margin-top:14px; width:100%;">Sign in</button>
+      <div style="margin-top:10px; text-align:center;">
+        <a href="#" style="font-size:12px; color:var(--muted);" onclick="showForgotView(); return false;">Forgot password?</a>
+      </div>
+      <div id="login-msg" class="msg"></div>
+    </div>
+
+    <!-- Step 1: request a reset code by email (2026-09-15, owner request) -->
+    <div id="forgot-view" style="display:none;">
+      <h2 style="margin-top:0;">Reset password</h2>
+      <p style="color:var(--muted); font-size:13px;">Enter your username - if it's correct, a reset code will be emailed to the configured recovery address.</p>
+      <label>Username</label>
+      <input id="forgot-username" type="text" autocomplete="username">
+      <button id="forgot-request-btn" style="margin-top:14px; width:100%;">Send reset code</button>
+      <div style="margin-top:10px; display:flex; justify-content:space-between;">
+        <a href="#" style="font-size:12px; color:var(--muted);" onclick="showLoginView(); return false;">Back to sign in</a>
+        <a href="#" style="font-size:12px; color:var(--muted);" onclick="showResetView(); return false;">I already have a code</a>
+      </div>
+      <div id="forgot-msg" class="msg"></div>
+    </div>
+
+    <!-- Step 2: use the emailed code to actually set a new password -->
+    <div id="reset-view" style="display:none;">
+      <h2 style="margin-top:0;">Enter reset code</h2>
+      <label>Reset code (from your email)</label>
+      <input id="reset-token" type="text" autocomplete="off">
+      <label>New password</label>
+      <input id="reset-new-password" type="password" autocomplete="new-password">
+      <button id="reset-confirm-btn" style="margin-top:14px; width:100%;">Set new password</button>
+      <div style="margin-top:10px;">
+        <a href="#" style="font-size:12px; color:var(--muted);" onclick="showLoginView(); return false;">Back to sign in</a>
+      </div>
+      <div id="reset-msg" class="msg"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 2026-09-16, owner request: "give a proper alert on the dashboard" -
+     deliberately OUTSIDE any single tab (unlike startup-failures-banner
+     below, which is Trading-tab-specific) since a singleton-lock conflict
+     means trading was never started AT ALL, on either platform - the
+     owner needs to see this regardless of which tab they're looking at.
+     Bright red, impossible to miss, not dismissible - this stays visible
+     for as long as the conflict is real, checked every poll cycle via
+     /healthz, same cadence as the other periodic status checks. -->
+<div id="singleton-conflict-banner" style="display:none; margin:14px; padding:16px 20px; background:#4a0f14; border:2px solid var(--red); border-radius:10px;">
+  <div id="singleton-conflict-title" style="font-size:16px; font-weight:700; color:#ff6b7a;">🚨 Trading has NOT started - another instance may already be running</div>
+  <div id="singleton-conflict-detail" style="margin-top:8px; font-size:13px; color:#f0d5d8; line-height:1.5;"></div>
+</div>
+
+<div class="topbar">
+  <div>
+    <h1>Futures Bot</h1>
+    <div class="sub">Binance: 12 accounts × 3 pairs · OKX: 5 accounts × 5 pairs · every setting is editable per pair (changes to a pair with an open trade apply once it is flat).</div>
+  </div>
+  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+    <button id="btn-stop-all" style="background:#7a1a1a;" onclick="confirmGlobalControl('stop')">🛑 STOP ALL</button>
+    <button id="btn-start-all" style="background:#1a5c2e;" onclick="confirmGlobalControl('start')">▶ START ALL</button>
+    <button class="ghost" onclick="logout()">Log out</button>
+  </div>
+</div>
+
+<!-- Global STOP ALL / START ALL confirmation dialog (2026-09-15, owner
+     request: "before it executes, pop up confirmation, in case pressed
+     accidentally"). Deliberately requires typing the exact word shown,
+     not just a click - a single misplaced click on a page this dense is
+     exactly the accident this exists to prevent, and both actions are
+     irreversible-ish (STOP ALL closes real positions; START ALL puts
+     real capital back to work). -->
+<dialog id="dlg-global-confirm">
+  <h2 id="global-confirm-title">Confirm</h2>
+  <p id="global-confirm-body" style="color:var(--muted);"></p>
+  <p style="margin-bottom:6px;">Type <b id="global-confirm-word"></b> to confirm:</p>
+  <input id="global-confirm-input" type="text" autocomplete="off">
+  <div style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap;">
+    <button id="global-confirm-btn" disabled>Confirm</button>
+    <button class="ghost" onclick="document.getElementById('dlg-global-confirm').close()">Cancel</button>
+  </div>
+  <div id="global-confirm-msg" class="msg"></div>
+</dialog>
+
+<div class="main-tabs">
+  <button class="main-tab-btn active" id="maintab-trading" onclick="switchMainTab('trading')">Trading</button>
+  <button class="main-tab-btn" id="maintab-okx" onclick="switchMainTab('okx')">OKX</button>
+  <button class="main-tab-btn" id="maintab-ledger" onclick="switchMainTab('ledger')">Ledger</button>
+  <button class="main-tab-btn" id="maintab-analysis" onclick="switchMainTab('analysis')">Analysis</button>
+  <button class="main-tab-btn" id="maintab-tracker" onclick="switchMainTab('tracker')">Tracker</button>
+  <button class="main-tab-btn" id="maintab-defaults" onclick="switchMainTab('defaults')">Default Settings</button>
+</div>
+
+<!-- ============================== TRADING TAB ============================== -->
+<div class="tabpage active" id="tabpage-trading">
+  <div id="startup-failures-banner" style="display:none; margin-bottom:14px; background:#3a1420; border:1px solid #a53048; border-radius:8px; padding:12px 16px;">
+    <b style="color:var(--red);">⚠ Some pairs failed to start automatically:</b>
+    <div id="startup-failures-list" style="margin-top:6px; font-size:12px; color:#e7ecf5;"></div>
+  </div>
+  <div class="layout">
+    <div>
+      <div class="panel">
+        <div class="toolbar"><h2 style="margin:0;">Accounts (<span id="acct-count">0</span>/12)</h2></div>
+        <div id="acct-list"></div>
+        <button id="btn-add-account" style="margin-top:10px; width:100%;">+ Add Account</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <div class="toolbar">
+          <h2 style="margin:0;" id="pairs-title">Pairs</h2>
+          <button id="btn-add-pair" disabled>+ Add Pair</button>
+        </div>
+        <div id="pairs-body"><div class="empty">Select or create an account to manage its pairs.</div></div>
+      </div>
+
+      <div class="panel">
+        <h2>Live Log — <span id="log-target">no pair selected</span></h2>
+        <div id="logbox">Select a pair row to view its log.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================== OKX TAB ============================== -->
+<!-- Deliberately a SEPARATE tab with its own accounts/pairs, not merged
+     into the Binance Trading tab - matches every other "separate tabs,
+     different platform requirements" decision made for OKX throughout
+     this project. Ledger and Analysis for OKX pairs (2026-09-15) are
+     NOT separate tabs of their own - they use the SAME shared Ledger/
+     Analysis tabs as Binance (see allPairOptions()/populatePairSelectors()),
+     since performance review benefits from one unified place to look,
+     unlike trading control which benefits from strict platform
+     separation. Each OKX pair row's "Ledger"/"Analysis" buttons jump to
+     those shared tabs with this pair pre-selected. -->
+<div class="tabpage" id="tabpage-okx">
+  <div class="layout">
+    <div>
+      <div class="panel">
+        <div class="toolbar"><h2 style="margin:0;">OKX Accounts (<span id="okx-acct-count">0</span>/5)</h2></div>
+        <div id="okx-acct-list"></div>
+        <button id="btn-okx-add-account" style="margin-top:10px; width:100%;">+ Add OKX Account</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <div class="toolbar">
+          <h2 style="margin:0;" id="okx-pairs-title">Pairs</h2>
+          <button id="btn-okx-add-pair" disabled>+ Add Pair</button>
+        </div>
+        <div id="okx-pairs-body"><div class="empty">Select or create an OKX account to manage its pairs.</div></div>
+      </div>
+
+      <div class="panel">
+        <h2>Live Log — <span id="okx-log-target">no pair selected</span></h2>
+        <div id="okx-logbox">Select a pair row to view its log.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================== LEDGER TAB ============================== -->
+<div class="tabpage" id="tabpage-ledger">
+  <div class="panel">
+    <div class="toolbar">
+      <h2 style="margin:0;">Trade Ledger</h2>
+      <a id="ledger-csv-link" href="#" style="color:var(--blue); font-size:12px;">Download CSV</a>
+    </div>
+    <label>Pair</label>
+    <select id="ledger-pair-select"><option value="">Select an account/pair...</option></select>
+    <div id="ledger-content" style="margin-top:14px; display:none;">
+      <div class="stat-grid" id="ledger-stats"></div>
+      <h2>Equity Curve (realized PnL)</h2>
+      <svg id="equity-svg" width="100%" height="140" viewBox="0 0 800 140" style="background:#0a0e18; border:1px solid var(--border); border-radius:6px;"></svg>
+      <h2 style="margin-top:14px;">Trades</h2>
+      <div class="table-scroll" style="max-height:320px; overflow-y:auto;">
+        <table id="ledger-table"><thead><tr>
+          <th>Opened</th><th>Closed</th><th>Dir</th><th>Qty</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Fees</th><th>Reason</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+    <div class="empty" id="ledger-empty">Pick a pair above to view its trade history.</div>
+  </div>
+</div>
+
+<!-- ============================== TRACKER TAB ============================== -->
+<div class="tabpage" id="tabpage-tracker">
+  <div class="panel">
+    <h2 style="margin:0 0 4px;">Tracker</h2>
+    <div class="sub">The bot's own separate record per account + pair. It starts at the tracker starting amount,
+      moves ONLY by each real bot trade's % result, and ignores deposits, withdrawals, manual trades and other pairs
+      - like the equity in your TradingView backtest. Its only job is deciding shadow mode. It never changes a real
+      order, size, stop or balance.</div>
+    <label>Pair</label>
+    <select id="tracker-pair-select"><option value="">Select an account/pair...</option></select>
+    <div id="tracker-content" style="margin-top:14px; display:none;">
+      <div class="stat-grid" id="tracker-stats"></div>
+      <h2 style="margin-top:14px;">Real trades (as applied to the tracker)</h2>
+      <div class="table-scroll" style="max-height:300px; overflow-y:auto;">
+        <table id="tracker-real-table"><thead><tr>
+          <th>Closed</th><th>Dir</th><th>Entry</th><th>Exit</th><th>Reason</th><th>PnL (USDT, bot share)</th>
+          <th>Balance at entry</th><th>Result %</th><th>Tracker before</th><th>Tracker after</th><th>New high</th><th>Shadow started</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+      <h2 style="margin-top:14px;">Paper (shadow) trades</h2>
+      <div id="tracker-open-paper" class="sub"></div>
+      <div class="table-scroll" style="max-height:300px; overflow-y:auto;">
+        <table id="tracker-paper-table"><thead><tr>
+          <th>Opened (candle)</th><th>Dir</th><th>Signal close</th><th>Paper entry</th><th>Paper stop</th>
+          <th>Closed (candle)</th><th>Exit</th><th>Why</th><th>Result % (display)</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+    <div class="empty" id="tracker-empty">Pick a pair above to view its tracker.</div>
+  </div>
+</div>
+
+<!-- ============================== DEFAULT SETTINGS TAB ============================== -->
+<div class="tabpage" id="tabpage-defaults">
+  <div class="panel">
+    <h2 style="margin:0 0 4px;">Default Settings</h2>
+    <div class="sub">Every field below starts BLANK - nothing is pre-filled. Fill in every field for a platform, press
+      <b>Confirm Default Settings</b>, review the summary, and confirm. Until a platform is confirmed, no new pair can be
+      created on it, and a pair with any blank setting cannot be started. Changing a value here marks that platform
+      unconfirmed again (existing pairs are not touched).</div>
+  </div>
+
+  <div class="panel" style="margin-top:14px;">
+    <h2 style="margin:0 0 8px;">Live trading switch</h2>
+    <div class="sub">OFF by default. While OFF, real-money accounts cannot start a pair. Binance testnet / OKX demo
+      accounts are not affected, so exchange connectivity can be checked safely.</div>
+    <div class="checkbox-row"><input id="ds-live" type="checkbox"><label style="margin:0;">Live trading ON (real-money accounts may start)</label></div>
+    <div id="ds-live-msg" class="msg"></div>
+  </div>
+
+  <div class="panel" style="margin-top:14px;">
+    <h2 style="margin:0 0 8px;">Alert / password-reset email</h2>
+    <div class="sub">Stored privately on the server only. Used for fallback alerts and password-reset codes (SMTP
+      settings are still set in the environment). Leave blank to send no email.</div>
+    <label>Email address</label>
+    <input id="ds-email" type="email" autocomplete="off">
+    <div style="margin-top:10px;"><button id="ds-email-save">Save email</button></div>
+    <div id="ds-email-msg" class="msg"></div>
+  </div>
+
+  <div class="panel" style="margin-top:14px;">
+    <div class="toolbar"><h2 style="margin:0;">Binance defaults</h2><span id="ds-badge-binance"></span></div>
+    <div id="ds-fields-binance" class="field-grid"></div>
+    <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
+      <button onclick="dsSave('binance')">Save</button>
+      <button style="background:#1a5c2e;" onclick="dsConfirmClick('binance')">Confirm Default Settings</button>
+    </div>
+    <div id="ds-msg-binance" class="msg"></div>
+  </div>
+
+  <div class="panel" style="margin-top:14px;">
+    <div class="toolbar"><h2 style="margin:0;">OKX defaults</h2><span id="ds-badge-okx"></span></div>
+    <div id="ds-fields-okx" class="field-grid"></div>
+    <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
+      <button onclick="dsSave('okx')">Save</button>
+      <button style="background:#1a5c2e;" onclick="dsConfirmClick('okx')">Confirm Default Settings</button>
+    </div>
+    <div id="ds-msg-okx" class="msg"></div>
+  </div>
+</div>
+
+<dialog id="dlg-ds-review">
+  <h2>Review before confirming</h2>
+  <p style="color:var(--muted); font-size:13px;">These exact values become the defaults for every NEW <b id="ds-review-platform"></b> pair.</p>
+  <div id="ds-review-body" style="max-height:50vh; overflow-y:auto;"></div>
+  <div style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap;">
+    <button id="ds-review-apply" style="background:#1a5c2e;">Confirm these settings</button>
+    <button class="ghost" onclick="document.getElementById('dlg-ds-review').close()">Cancel</button>
+  </div>
+</dialog>
+
+<!-- ============================== ANALYSIS TAB ============================== -->
+<div class="tabpage" id="tabpage-analysis">
+  <div class="panel">
+    <h2 style="margin:0 0 4px;">Offline Analysis</h2>
+    <div class="sub">Runs against historical candles only - never touches live capital or changes live behavior.</div>
+    <label>Pair</label>
+    <select id="analysis-pair-select"><option value="">Select an account/pair...</option></select>
+
+    <div id="analysis-content" style="margin-top:14px; display:none;">
+      <div class="tabs">
+        <button class="tab-btn active" id="tab-wf" onclick="switchAnalysisTab('wf')">Walk-Forward</button>
+        <button class="tab-btn" id="tab-mc" onclick="switchAnalysisTab('mc')">Monte Carlo</button>
+      </div>
+      <div id="analysis-wf">
+        <label>Number of sequential folds</label>
+        <input id="wf-folds" type="number" step="1">
+        <label>Historical candles to pull</label>
+        <input id="wf-limit" type="number" step="100">
+        <label>Starting equity (USDT, simulation only)</label>
+        <input id="wf-equity" type="number" step="any">
+        <label>Commission per fill (%)</label>
+        <input id="wf-commission" type="number" step="0.01">
+        <label>Slippage per fill (%, approximation)</label>
+        <input id="wf-slippage" type="number" step="0.01">
+        <button id="wf-run" style="margin-top:12px;">Run Walk-Forward</button>
+        <div id="wf-msg" class="msg"></div>
+        <div class="table-scroll">
+          <table id="wf-table" style="margin-top:12px;"><thead><tr>
+            <th>Fold</th><th>Candles</th><th>Trades</th><th>Win rate</th><th>Net PnL</th><th>Costs paid</th><th>Max DD %</th>
+          </tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+      <div id="analysis-mc" style="display:none;">
+        <label>Number of simulations</label>
+        <input id="mc-sims" type="number" step="100">
+        <label>Historical candles to pull</label>
+        <input id="mc-limit" type="number" step="100">
+        <label>Starting equity (USDT, simulation only)</label>
+        <input id="mc-equity" type="number" step="any">
+        <label>Commission per fill (%)</label>
+        <input id="mc-commission" type="number" step="0.01">
+        <label>Slippage per fill (%, approximation)</label>
+        <input id="mc-slippage" type="number" step="0.01">
+        <button id="mc-run" style="margin-top:12px;">Run Monte Carlo</button>
+        <div id="mc-msg" class="msg"></div>
+        <div class="stat-grid" id="mc-results" style="margin-top:12px;"></div>
+      </div>
+    </div>
+    <div class="empty" id="analysis-empty">Pick a pair above to run analysis on it.</div>
+  </div>
+</div>
+
+<!-- Add account dialog -->
+<dialog id="dlg-account">
+  <h2>Add Binance Account</h2>
+  <label>Account label (yours only, e.g. "Main" / "Sub 2")</label>
+  <input id="acc-name" type="text" placeholder="Main account">
+  <label>API Key</label>
+  <input id="acc-key" type="text" autocomplete="off">
+  <label>API Secret</label>
+  <input id="acc-secret" type="text" autocomplete="off">
+  <div class="checkbox-row"><input id="acc-testnet" type="checkbox"><label style="margin:0;">Testnet</label></div>
+  <label>Max account exposure (% of equity across all its pairs, blank = no cap)</label>
+  <input id="acc-exposure" type="number" step="1">
+  <div class="checkbox-row"><input id="acc-withdraw-enabled" type="checkbox"><label style="margin:0;">Withdrawal alert (Telegram notification only, no auto-withdrawal)</label></div>
+  <label>Withdrawal alert threshold (equity in USDT)</label>
+  <input id="acc-withdraw-threshold" type="number" step="1000">
+  <div style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap;">
+    <button id="acc-save">Save Account</button>
+    <button class="ghost" onclick="document.getElementById('dlg-account').close()">Cancel</button>
+  </div>
+  <div id="acc-msg" class="msg"></div>
+</dialog>
+
+<!-- Add/edit pair dialog -->
+<dialog id="dlg-pair">
+  <h2 id="pair-dlg-title">Add Pair</h2>
+  <!-- 2026-09-15, owner request: editing an EXISTING pair opens locked -
+       fields disabled until explicitly unlocked, and every change needs a
+       reviewed confirmation before it's actually saved. A brand-new pair
+       (nothing live to protect) skips this entirely - see openEditPair()
+       vs the "+ Add Pair" button's own handler for exactly which path
+       shows this banner. -->
+  <div id="pair-lock-banner" style="display:none; background:#2a2410; border:1px solid #6b5a1a; border-radius:8px; padding:10px 14px; margin-bottom:14px; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+    <span style="color:#e8c95a; font-size:13px;">🔒 Fields are locked to prevent accidental changes.</span>
+    <button type="button" class="small" onclick="unlockFields('')">🔓 Unlock to Edit</button>
+  </div>
+  <label>Symbol</label>
+  <input id="pair-symbol" type="text">
+  <div class="field-grid" id="pair-fields"></div>
+  <div style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap;">
+    <button id="pair-save">Save</button>
+    <button class="ghost" onclick="document.getElementById('dlg-pair').close()">Cancel</button>
+  </div>
+  <div id="pair-msg" class="msg"></div>
+</dialog>
+
+<!-- Shared confirm-the-diff step (2026-09-15) - used by BOTH Binance and
+     OKX pair edits, not duplicated per platform, since the confirmation
+     UI itself is identical either way (only which save function it calls
+     on confirm differs, set per-use via pendingSaveAction). -->
+<dialog id="dlg-pair-confirm">
+  <h2>Confirm changes</h2>
+  <p style="color:var(--muted); font-size:13px;">Review before applying - this cannot be un-clicked.</p>
+  <div id="pair-confirm-diff" style="max-height:300px; overflow-y:auto; font-size:13px;"></div>
+  <div style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap;">
+    <button id="pair-confirm-apply-btn">Apply changes</button>
+    <button class="ghost" onclick="document.getElementById('dlg-pair-confirm').close()">Cancel</button>
+  </div>
+</dialog>
+
+<!-- 2026-10-01 owner decision: reminder shown when STARTING a pair that has never made a real trade (the
+     "first allocation"). The rule (first trade only on a fresh LONG/SHORT reversal, never mid-trend) stays ON
+     by default; this dialog lets the owner keep it or switch it for this pair before any capital goes to work. -->
+<dialog id="dlg-first-trade">
+  <h2 id="ft-title">First trade reminder</h2>
+  <p id="ft-body" style="font-size:14px; line-height:1.5;"></p>
+  <p id="ft-detail" style="color:var(--muted); font-size:13px; line-height:1.5;"></p>
+  <div style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap;">
+    <button id="ft-keep-btn">Start</button>
+    <button id="ft-switch-btn" class="ghost">Switch</button>
+    <button id="ft-cancel-btn" class="ghost">Cancel</button>
+  </div>
+</dialog>
+
+<!-- Add OKX account dialog - deliberately its own fields, not shared with
+     Binance's dlg-account: OKX needs a passphrase (Binance doesn't), a
+     demo/live flag instead of testnet, and a sub-account label. -->
+<dialog id="dlg-okx-account">
+  <h2>Add OKX Account</h2>
+  <label>Account label (yours only, e.g. "Sub 1")</label>
+  <input id="okx-acc-name" type="text" placeholder="Sub 1">
+  <label>API Key</label>
+  <input id="okx-acc-key" type="text" autocomplete="off">
+  <label>API Secret</label>
+  <input id="okx-acc-secret" type="text" autocomplete="off">
+  <label>Passphrase</label>
+  <input id="okx-acc-passphrase" type="text" autocomplete="off">
+  <div class="checkbox-row"><input id="okx-acc-demo" type="checkbox"><label style="margin:0;">Demo trading</label></div>
+  <label>Sub-account label (informational only - which OKX sub-account these credentials belong to)</label>
+  <input id="okx-acc-sublabel" type="text" placeholder="e.g. sub-1">
+  <label>Max account exposure (% of equity across all its pairs, blank = no cap)</label>
+  <input id="okx-acc-exposure" type="number" step="1">
+  <div class="checkbox-row"><input id="okx-acc-withdraw-enabled" type="checkbox"><label style="margin:0;">Withdrawal alert (Telegram notification only, no auto-withdrawal)</label></div>
+  <label>Withdrawal alert threshold (equity in USDT)</label>
+  <input id="okx-acc-withdraw-threshold" type="number" step="1000">
+  <div style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap;">
+    <button id="okx-acc-save">Save Account</button>
+    <button class="ghost" onclick="document.getElementById('dlg-okx-account').close()">Cancel</button>
+  </div>
+  <div id="okx-acc-msg" class="msg"></div>
+</dialog>
+
+<!-- Add/edit OKX pair dialog - reuses the SAME strategy-field grid
+     (buildPairFields/FIELD_META) as Binance's dlg-pair, since the
+     strategy is shared - only the symbol format hint and the OKX-only
+     trigger_px_type field differ. -->
+<dialog id="dlg-okx-pair">
+  <h2 id="okx-pair-dlg-title">Add Pair</h2>
+  <div id="okx-pair-lock-banner" style="display:none; background:#2a2410; border:1px solid #6b5a1a; border-radius:8px; padding:10px 14px; margin-bottom:14px; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+    <span style="color:#e8c95a; font-size:13px;">🔒 Fields are locked to prevent accidental changes.</span>
+    <button type="button" class="small" onclick="unlockFields('okx')">🔓 Unlock to Edit</button>
+  </div>
+  <label>Symbol (OKX instId format: BASE-QUOTE-SWAP)</label>
+  <input id="okx-pair-symbol" type="text">
+  <div class="field-grid" id="okx-pair-fields"></div>
+  <label>Stop trigger price type</label>
+  <select id="okx-pair-trigger-type">
+    <option value="">— choose —</option>
+    <option value="mark">Mark price</option>
+    <option value="last">Last traded price</option>
+    <option value="index">Index price</option>
+  </select>
+  <div style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap;">
+    <button id="okx-pair-save">Save</button>
+    <button class="ghost" onclick="document.getElementById('dlg-okx-pair').close()">Cancel</button>
+  </div>
+  <div id="okx-pair-msg" class="msg"></div>
+</dialog>
+
+<script>
+const FIELD_META = {
+  // Every setting, editable per pair. NOTHING is pre-filled - values come
+  // from the owner's confirmed Default Settings. Timeframe choices depend on
+  // the platform (OKX has no 8h candle) - see TIMEFRAMES below.
+  timeframe:        { label: "Candle timeframe", type: "select", section: "Strategy" },
+  hma_length:       { label: "HMA length", type: "number", step: 1, section: "Strategy" },
+  ema_filter_length:     { label: "Filter EMA length (entry filter)", type: "number", step: 1, section: "Strategy" },
+  ema_sizing_length:    { label: "Sizing EMA length (trend vs counter-trend sizing only - never blocks)", type: "number", step: 1, section: "Strategy" },
+  atr_length:       { label: "ATR length (for TP1/TP2 tracking only)", type: "number", step: 1, section: "Strategy" },
+  wait_first_reversal: { label: "First trade only on a fresh LONG/SHORT reversal (any pair that has not traded yet - NEVER enters mid-trend)", type: "checkbox", section: "Strategy" },
+  use_hold_rule:    { label: "Hold Rule ON (ignore opposite signal while in profit and ADX below level)", type: "checkbox", section: "Hold Rule" },
+  adx_di_length:    { label: "ADX DI length (normal candles)", type: "number", step: 1, section: "Hold Rule" },
+  adx_smoothing:    { label: "ADX smoothing", type: "number", step: 1, section: "Hold Rule" },
+  hold_adx_level:   { label: "Hold Rule ADX level (hold only if ADX is BELOW this)", type: "number", step: 0.5, section: "Hold Rule" },
+  trend_alloc_pct:  { label: "Trend-aligned allocation (% of balance)", type: "number", step: 0.1, section: "Sizing & Risk" },
+  counter_alloc_pct:{ label: "Counter-trend allocation (% of balance)", type: "number", step: 0.1, section: "Sizing & Risk" },
+  leverage:         { label: "Leverage - trend-aligned trades", type: "number", step: 1, section: "Sizing & Risk" },
+  counter_leverage: { label: "Leverage - counter-trend trades", type: "number", step: 1, section: "Sizing & Risk" },
+  stop_loss_pct_equity: { label: "Fixed stop (% of balance at entry)", type: "number", step: 0.1, section: "Sizing & Risk" },
+  tp1_atr_mult:     { label: "TP1 tracker (x ATR) - tracking only, never closes", type: "number", step: 0.1, section: "Sizing & Risk" },
+  tp2_atr_mult:     { label: "TP2 tracker (x ATR) - tracking only, never closes", type: "number", step: 0.1, section: "Sizing & Risk" },
+  isolated_margin:  { label: "Isolated margin (exchange margin mode)", type: "checkbox", section: "Sizing & Risk" },
+  use_shadow:       { label: "Shadow Mode ON (paper trades after a new tracker high)", type: "checkbox", section: "Shadow & Tracker" },
+  shadow_trades:    { label: "Number of shadow (paper) trades", type: "number", step: 1, section: "Shadow & Tracker" },
+  shadow_slippage_ticks: { label: "Paper entry slippage (ticks)", type: "number", step: 1, section: "Shadow & Tracker" },
+  tracker_start_balance: { label: "Tracker starting amount (USDT)", type: "number", step: 1, section: "Shadow & Tracker" },
+  poll_seconds:     { label: "Poll interval (seconds)", type: "number", step: 1, section: "Operational" },
+  telegram_enabled: { label: "Telegram notifications", type: "checkbox", section: "Operational" },
+  ws_staleness_seconds: { label: "Pause entries if price feed stale for (seconds)", type: "number", step: 1, section: "Operational" },
+};
+const TIMEFRAMES = {
+  '':  ["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w","1M"],
+  okx: ["1m","3m","5m","15m","30m","1h","2h","4h","6h","12h","1d"],   // OKX: native candles only, no 8h
+};
+// No strategy-specific field groups - every field is always
+// shown within its own section tab.
+
+let accounts = [];
+let selectedAccountId = null;
+let statusById = {};       // "accId:symbol" -> status dict
+let selectedLogKey = null;
+let editingPairSymbol = null;
+
+// OKX equivalents (2026-09-15) - deliberately separate state, never
+// merged with the Binance variables above, matching every other
+// "separate tabs" decision throughout this project.
+let okxAccounts = [];
+let selectedOKXAccountId = null;
+let okxStatusById = {};
+let selectedOKXLogKey = null;
+let editingOKXPairSymbol = null;
+
+function fmt(n, d = 2) { return (n === null || n === undefined) ? "—" : Number(n).toLocaleString(undefined, {minimumFractionDigits: d, maximumFractionDigits: d}); }
+
+function getCookie(name) {
+  const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+async function api(path, opts) {
+  opts = opts || {};
+  const method = (opts.method || 'GET').toUpperCase();
+  if (method !== 'GET') {
+    // Double-submit CSRF: echo the csrf_token cookie back as a header so the
+    // backend can confirm this request came from this dashboard's own JS.
+    const csrf = getCookie('csrf_token');
+    if (csrf) {
+      opts.headers = Object.assign({}, opts.headers, {'X-CSRF-Token': csrf});
+    }
+  }
+  const res = await fetch(path, opts);
+  if (res.status === 401) { showLogin(); throw new Error('Not authenticated'); }
+  if (!res.ok) { const t = await res.text(); throw new Error(t); }
+  return res.status === 204 ? null : res.json();
+}
+
+function showLogin() {
+  document.getElementById('login-overlay').style.display = 'flex';
+  showLoginView();
+}
+function hideLogin() {
+  document.getElementById('login-overlay').style.display = 'none';
+}
+
+document.getElementById('login-btn').onclick = async () => {
+  const msg = document.getElementById('login-msg');
+  msg.className = 'msg';
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        username: document.getElementById('login-username').value,
+        password: document.getElementById('login-password').value,
+      }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || 'Login failed');
+    hideLogin();
+    await init();
+  } catch (e) { msg.className = 'msg err'; msg.textContent = e.message; }
+};
+
+// ---------------- Forgot / reset password (2026-09-15) ----------------
+// Deliberately calls fetch() directly, not the api() helper - these two
+// routes are public (no session/CSRF exists yet at this point, same as
+// login itself), so there's no CSRF header to attach.
+function showLoginView() {
+  document.getElementById('login-view').style.display = '';
+  document.getElementById('forgot-view').style.display = 'none';
+  document.getElementById('reset-view').style.display = 'none';
+}
+function showForgotView() {
+  document.getElementById('login-view').style.display = 'none';
+  document.getElementById('forgot-view').style.display = '';
+  document.getElementById('reset-view').style.display = 'none';
+  document.getElementById('forgot-msg').style.display = 'none';
+}
+function showResetView() {
+  document.getElementById('login-view').style.display = 'none';
+  document.getElementById('forgot-view').style.display = 'none';
+  document.getElementById('reset-view').style.display = '';
+  document.getElementById('reset-msg').style.display = 'none';
+}
+
+document.getElementById('forgot-request-btn').onclick = async () => {
+  const msg = document.getElementById('forgot-msg');
+  const btn = document.getElementById('forgot-request-btn');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/auth/forgot-password', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username: document.getElementById('forgot-username').value}),
+    });
+    const data = await res.json();
+    msg.className = 'msg ok';
+    msg.style.display = 'block';
+    msg.textContent = data.message || 'If that username is correct, a reset code has been sent.';
+  } catch (e) {
+    msg.className = 'msg err';
+    msg.style.display = 'block';
+    msg.textContent = 'Something went wrong sending the reset code.';
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+document.getElementById('reset-confirm-btn').onclick = async () => {
+  const msg = document.getElementById('reset-msg');
+  msg.className = 'msg';
+  try {
+    const res = await fetch('/api/auth/reset-password', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        token: document.getElementById('reset-token').value,
+        new_password: document.getElementById('reset-new-password').value,
+      }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || 'Reset failed');
+    msg.className = 'msg ok';
+    msg.style.display = 'block';
+    msg.textContent = 'Password changed - you can sign in now.';
+    setTimeout(showLoginView, 1500);
+  } catch (e) {
+    msg.className = 'msg err';
+    msg.style.display = 'block';
+    msg.textContent = e.message;
+  }
+};
+
+async function logout() {
+  await fetch('/api/auth/logout', {method:'POST'});
+  showLogin();
+}
+
+// ---------------- Global STOP ALL / START ALL (2026-09-15) ----------------
+// Requires TYPING the exact confirmation word, not just a click - a single
+// misplaced click on a page this dense is exactly the accident this
+// exists to prevent. STOP ALL closes every real open position across
+// BOTH Binance and OKX; START ALL puts real capital back to work on
+// everything still marked enabled.
+function confirmGlobalControl(action) {
+  const dlg = document.getElementById('dlg-global-confirm');
+  const input = document.getElementById('global-confirm-input');
+  const btn = document.getElementById('global-confirm-btn');
+  const msg = document.getElementById('global-confirm-msg');
+  const word = action === 'stop' ? 'STOP' : 'START';
+
+  document.getElementById('global-confirm-title').textContent =
+    action === 'stop' ? 'Stop everything?' : 'Start everything?';
+  document.getElementById('global-confirm-body').textContent = action === 'stop'
+    ? 'This closes EVERY open position, on every account, on BOTH Binance and OKX, right now - and pauses every pair. This cannot be undone once positions are closed.'
+    : 'This resumes every pair that is currently marked enabled, on both Binance and OKX.';
+  document.getElementById('global-confirm-word').textContent = word;
+  input.value = '';
+  msg.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = action === 'stop' ? 'Stop everything' : 'Start everything';
+
+  input.oninput = () => { btn.disabled = (input.value.trim() !== word); };
+
+  btn.onclick = async () => {
+    btn.disabled = true;
+    btn.textContent = 'Working...';
+    try {
+      const path = action === 'stop' ? '/api/control/stop-all' : '/api/control/start-all';
+      const result = await api(path, {method: 'POST'});
+      msg.className = 'msg ok';
+      msg.style.display = 'block';
+      if (action === 'stop') {
+        msg.textContent = `Stopped ${result.stopped.length} pair(s).` +
+          (result.failed.length ? ` ${result.failed.length} FAILED to stop cleanly - check them manually.` : '');
+      } else {
+        msg.textContent = `Running now: ${result.binance_running} Binance pair(s), ${result.okx_running} OKX pair(s).`;
+      }
+      await refreshStatus();
+      setTimeout(() => dlg.close(), 2000);
+    } catch (e) {
+      msg.className = 'msg err';
+      msg.style.display = 'block';
+      msg.textContent = e.message;
+      btn.disabled = false;
+      btn.textContent = action === 'stop' ? 'Stop everything' : 'Start everything';
+    }
+  };
+
+  dlg.showModal();
+}
+
+// ---------------- runtime cells ----------------
+function tpCell(s) {
+  const b = s.base_v3 || {};
+  if (b.tp1_price == null) return '—';
+  const t = (v, hit) => `${fmt(v)} ${hit ? '<span style="color:#35d68a;">✓ touched</span>' : ''}`;
+  return `<div style="font-size:11px;">TP1 ${t(b.tp1_price, b.tp1_touched)}<br>TP2 ${t(b.tp2_price, b.tp2_touched)}</div>`;
+}
+
+function baseV3Cell(s) {
+  const ind = s.indicators || {};
+  const b = s.base_v3 || {};
+  const tr = b.tracker || {};
+  const sig = ind.signal || '—';
+  const sigColour = sig === 'LONG' ? '#35d68a' : (sig === 'SHORT' ? '#ff5c72' : 'var(--muted)');
+  const shadow = tr.shadow_active
+    ? `<span class="badge" style="background:#3a3410; color:#e8c95a;">SHADOW ${tr.shadow_done ?? 0} done</span>`
+    : '<span style="color:var(--muted);">shadow off</span>';
+  return `<div class="indicators" style="font-size:11px;">
+      <span>Signal <b style="color:${sigColour}">${sig}</b></span>
+      <span>Candle <b>${ind.sc_direction || '—'}</b></span>
+      <span>HMA <b>${ind.hma_direction || '—'}</b></span>
+      <span>Filter EMA <b>${ind.ema_filter_side || '—'}</b></span>
+      <span>Sizing EMA <b>${ind.ema_sizing_side || '—'}</b></span>
+      <span>ADX <b>${fmt(ind.adx,1)}</b></span>
+      <span>DI+ <b>${fmt(ind.di_plus,1)}</b> DI- <b>${fmt(ind.di_minus,1)}</b></span>
+      <span>ATR <b>${fmt(ind.atr_sc,2)}</b></span>
+      <span>Alloc <b>${b.allocation_pct != null ? b.allocation_pct + '%' : (ind.long_alloc_pct != null ? 'L ' + ind.long_alloc_pct + '% / S ' + ind.short_alloc_pct + '%' : '—')}</b></span>
+      <span>${shadow}</span>
+    </div>
+    <div style="font-size:10px; color:var(--muted); margin-top:2px;">${b.last_decision || ''}</div>`;
+}
+
+// ---------------- Main tab switching ----------------
+function switchMainTab(tab) {
+  for (const name of ['trading', 'okx', 'ledger', 'analysis', 'tracker', 'defaults']) {
+    document.getElementById(`tabpage-${name}`).classList.toggle('active', name === tab);
+    document.getElementById(`maintab-${name}`).classList.toggle('active', name === tab);
+  }
+  if (tab === 'okx' && !okxLoadedOnce) { okxLoadedOnce = true; loadOKXAccounts(); }
+  if (tab === 'defaults') loadDefaultSettings();
+}
+let okxLoadedOnce = false;
+
+function allPairOptions() {
+  // Flat list of {platform, accId, accName, sym} across every account/pair
+  // on BOTH platforms, for the Ledger/Analysis pair selectors - 2026-09-15,
+  // extended to include OKX (was Binance-only before this).
+  const out = [];
+  for (const acc of accounts) {
+    for (const sym of Object.keys(acc.pairs || {})) {
+      out.push({ platform: 'binance', accId: acc.id, accName: acc.name, sym });
+    }
+  }
+  for (const acc of okxAccounts) {
+    for (const sym of Object.keys(acc.pairs || {})) {
+      out.push({ platform: 'okx', accId: acc.id, accName: acc.name, sym });
+    }
+  }
+  return out;
+}
+
+function populatePairSelectors() {
+  const opts = allPairOptions();
+  for (const selectId of ['ledger-pair-select', 'analysis-pair-select', 'tracker-pair-select']) {
+    const sel = document.getElementById(selectId);
+    const current = sel.value;
+    sel.innerHTML = '<option value="">Select an account/pair...</option>' +
+      opts.map(o => `<option value="${o.platform}::${o.accId}::${o.sym}">${o.platform === 'okx' ? 'OKX: ' : ''}${o.accName} — ${o.sym}</option>`).join('');
+    if (current && [...sel.options].some(o => o.value === current)) sel.value = current;
+  }
+}
+
+async function loadAccounts() {
+  accounts = await api('/api/accounts');
+  document.getElementById('acct-count').textContent = accounts.length;
+  renderAccounts();
+  populatePairSelectors();
+  if (!selectedAccountId && accounts.length) selectAccount(accounts[0].id);
+  else renderPairs();
+}
+
+function renderAccounts() {
+  const list = document.getElementById('acct-list');
+  list.innerHTML = '';
+  if (!accounts.length) { list.innerHTML = '<div class="empty">No accounts yet.</div>'; return; }
+  for (const a of accounts) {
+    const div = document.createElement('div');
+    div.className = 'acct-item' + (a.id === selectedAccountId ? ' active' : '');
+    div.innerHTML = `<div><div class="name">${a.name}</div><div class="meta">${a.pair_count}/3 pairs</div></div>
+      <span class="pill ${a.testnet ? 'testnet' : 'mainnet'}">${a.testnet ? 'TESTNET' : 'LIVE'}</span>`;
+    div.onclick = () => selectAccount(a.id);
+    list.appendChild(div);
+  }
+  document.getElementById('btn-add-account').disabled = accounts.length >= 12;
+}
+
+function selectAccount(id) {
+  selectedAccountId = id;
+  renderAccounts();
+  renderPairs();
+}
+
+function currentAccount() { return accounts.find(a => a.id === selectedAccountId); }
+
+function renderPairs() {
+  const body = document.getElementById('pairs-body');
+  const acc = currentAccount();
+  document.getElementById('btn-add-pair').disabled = !acc || (acc.pairs && Object.keys(acc.pairs).length >= 3);
+  document.getElementById('pairs-title').textContent = acc ? `Pairs — ${acc.name}` : 'Pairs';
+  if (!acc) { body.innerHTML = '<div class="empty">Select or create an account to manage its pairs.</div>'; return; }
+  const pairs = acc.pairs || {};
+  const symbols = Object.keys(pairs);
+  if (!symbols.length) { body.innerHTML = '<div class="empty">No pairs configured on this account yet. Click "+ Add Pair".</div>'; return; }
+
+  let html = `<div class="table-scroll"><table><thead><tr>
+    <th>Symbol</th><th>Status</th><th>Feed</th><th>Direction</th><th>Entry</th><th>Fixed stop</th><th>TP1 / TP2 (tracking)</th><th>Signals</th><th></th>
+    </tr></thead><tbody>`;
+  for (const sym of symbols) {
+    const key = `${acc.id}:${sym}`;
+    const s = statusById[key] || {};
+    const status = s.status || (pairs[sym].enabled ? 'STARTING' : 'IDLE');
+    const dirClass = s.direction === 'LONG' ? 'dir-LONG' : (s.direction === 'SHORT' ? 'dir-SHORT' : '');
+    const ind = s.indicators || {};
+    const feedBadge = s.feed_stale ? '<span class="badge STALE">STALE</span>' : '<span class="badge LIVE">LIVE</span>';
+    // Item 9 fix (2026-09-14): surface a pending-reconciliation flag right
+    // here in the main table, not only in Telegram/logs - a human scanning
+    // the dashboard should see this immediately.
+    // 2026-09-14 redesign: now a LIST (a symbol can have more than one
+    // genuinely unresolved order at once, each tracked independently) -
+    // badge shows a count and every context/detail on hover, not just the
+    // single most-recently-flagged one.
+    const reconList = s.pending_reconciliations || [];
+    const reconBadge = reconList.length
+      ? `<span class="badge ERROR" title="${reconList.map(r => r.context + ': ' + r.detail).join(' | ').replace(/"/g, '&quot;')}">⚠ RECONCILE (${reconList.length})</span>`
+      : '';
+    // 2026-09-15: a config edit made while this pair had an open position
+    // doesn't apply until it's flat again (see the deferred-restart
+    // mechanism) - this makes that queued, not-yet-applied state visible
+    // on the dashboard rather than leaving it silent.
+    const pendingBadge = s.config_update_pending
+      ? `<span class="badge" style="background:#3a3410; color:#e8c95a;" title="A config change is queued and will apply once this pair is flat.">⏳ UPDATE QUEUED</span>`
+      : '';
+    // 2026-09-19, owner request: Freeze - a deliberate, persistent lock
+    // against accidental human clicks, independent of whether the pair
+    // is running. Shown as its own badge (distinct from status) since a
+    // frozen pair can be in ANY status - IDLE, IN_POSITION, whatever it
+    // was in when frozen.
+    const frozen = !!pairs[sym].frozen;
+    const frozenBadge = frozen
+      ? `<span class="badge" style="background:#4a0f14; color:#ff8a8a;" title="Frozen - editing, starting, stopping, restarting, and deleting are all refused until unfrozen.">🔒 FROZEN</span>`
+      : '';
+    html += `<tr>
+      <td><b>${sym}</b><div style="color:var(--muted); font-size:11px;">${pairs[sym].timeframe}</div></td>
+      <td><span class="badge ${status}">${status}</span> ${reconBadge} ${pendingBadge} ${frozenBadge}</td>
+      <td>${feedBadge}</td>
+      <td><span class="${dirClass}">${s.direction || '—'}</span></td>
+      <td>${fmt(s.entry_price)}</td>
+      <td>${fmt(s.sl_price)}</td>
+      <td>${tpCell(s)}</td>
+      <td>${baseV3Cell(s)}</td>
+      <td style="white-space:nowrap;">
+        <button class="small" onclick="viewLog('${acc.id}','${sym}')">Log</button>
+        <button class="small ghost" ${frozen ? 'disabled title="Frozen - unfreeze first"' : ''} onclick="openEditPair('${sym}')">Edit</button>
+        ${pairs[sym].enabled
+          ? `<button class="small danger" ${frozen ? 'disabled title="Frozen - unfreeze first"' : ''} onclick="stopPair('${acc.id}','${sym}')">Stop</button>`
+          : `<button class="small" ${frozen ? 'disabled title="Frozen - unfreeze first"' : ''} onclick="startPair('${acc.id}','${sym}')">Start</button>`}
+        <button class="small danger" ${frozen ? 'disabled title="Frozen - unfreeze first"' : ''} onclick="deletePair('${acc.id}','${sym}')">Delete</button>
+        ${frozen
+          ? `<button class="small" onclick="confirmUnfreezePair('${acc.id}','${sym}')">🔓 Unfreeze</button>`
+          : `<button class="small ghost" onclick="confirmFreezePair('${acc.id}','${sym}')">🔒 Freeze</button>`}<br>
+        <button class="small ghost" onclick="goToLedger('binance','${acc.id}','${sym}')">Ledger</button>
+        <button class="small ghost" onclick="goToTracker('binance','${acc.id}','${sym}')">Tracker</button>
+        <button class="small ghost" onclick="goToAnalysis('binance','${acc.id}','${sym}')">Analysis</button>
+      </td>
+    </tr>`;
+  }
+  html += `</tbody></table></div>`;
+  body.innerHTML = html;
+}
+
+// ---- First-trade reminder (2026-10-01): shown on Start for a pair with NO real trades yet.
+function firstTradeDialog(sym, ruleOn) {
+  return new Promise(resolve => {
+    const dlg = document.getElementById('dlg-first-trade');
+    document.getElementById('ft-title').textContent = `First trade reminder - ${sym}`;
+    const body = document.getElementById('ft-body');
+    const detail = document.getElementById('ft-detail');
+    const keepBtn = document.getElementById('ft-keep-btn');
+    const switchBtn = document.getElementById('ft-switch-btn');
+    if (ruleOn) {
+      body.innerHTML = `<b>${sym}</b> has not made a real trade yet. The rule is <b>ON</b>: its first trade will wait for a ` +
+        `<b>fresh LONG/SHORT flip</b> and will <b>NOT</b> enter on a signal that is already running (mid-trend).`;
+      detail.textContent = 'Nothing is entered on the first candle the bot sees, so the first trade may take a while. ' +
+        'You can change this later in Edit > Strategy.';
+      keepBtn.textContent = 'Start - keep rule ON (wait for a fresh flip)';
+      switchBtn.textContent = 'Turn rule OFF and start (enter on a running signal)';
+    } else {
+      body.innerHTML = `<b>${sym}</b> has not made a real trade yet. The rule is <b>OFF</b>: its first trade will enter on any ` +
+        `signal that is already running, <b>even mid-trend</b>.`;
+      detail.textContent = 'The fixed stop still caps the loss at the configured percentage of balance, but the entry can be late in a move.';
+      keepBtn.textContent = 'Start - keep rule OFF (enter on a running signal)';
+      switchBtn.textContent = 'Turn rule ON and start (wait for a fresh flip)';
+    }
+    const done = (v) => { resolve(v); if (dlg.open) dlg.close(); };
+    keepBtn.onclick = () => done('keep');
+    switchBtn.onclick = () => done('switch');
+    document.getElementById('ft-cancel-btn').onclick = () => done('cancel');
+    dlg.onclose = () => resolve('cancel');          // Escape key / any other close = cancel (first resolve wins)
+    dlg.showModal();
+  });
+}
+
+// Returns true if the start should go ahead. Never blocks a start just because the reminder itself could not
+// load; but if the owner CHOSE to switch the rule and saving it fails, the start is
+// cancelled - never start under a different setting than the one just chosen.
+async function firstTradeReminder(platform, accId, sym) {
+  const apiBase = platform === 'okx' ? '/api/okx' : '/api';
+  let ruleOn = false;
+  try {
+    const t = await api(`${apiBase}/tracker/${accId}/${sym}`);
+    if ((((t || {}).summary || {}).real_trade_count || 0) > 0) return true;     // already traded - no reminder
+    const list = platform === 'okx' ? okxAccounts : accounts;
+    const acc = (list || []).find(a => a.id === accId);
+    const pc = acc && acc.pairs ? acc.pairs[sym] : null;
+    ruleOn = !!(pc && pc.wait_first_reversal === true);   // read from the pair's own saved setting
+  } catch (e) {
+    return true;
+  }
+  const choice = await firstTradeDialog(sym, ruleOn);
+  if (choice === 'cancel') return false;
+  if (choice === 'switch') {
+    try {
+      await api(`${apiBase}/accounts/${accId}/pairs/${sym}`, {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({wait_first_reversal: !ruleOn}),
+      });
+    } catch (e) {
+      alert(`Could not change the first-trade rule for ${sym} (${e.message}). The pair was NOT started.`);
+      return false;
+    }
+  }
+  return true;
+}
+
+async function startPair(accId, sym) { if (!(await firstTradeReminder('binance', accId, sym))) return; await api(`/api/accounts/${accId}/pairs/${sym}/start`, {method:'POST'}); await loadAccounts(); await refreshStatus(); }
+async function stopPair(accId, sym) { await api(`/api/accounts/${accId}/pairs/${sym}/stop`, {method:'POST'}); await loadAccounts(); await refreshStatus(); }
+async function deletePair(accId, sym) {
+  if (!confirm(`Delete ${sym}? This stops the bot and removes its configuration.`)) return;
+  await api(`/api/accounts/${accId}/pairs/${sym}`, {method:'DELETE'});
+  await loadAccounts();
+}
+
+// 2026-09-19, owner request: Freeze - a deliberate, persistent lock
+// against accidental human clicks. Both freezing and unfreezing get their
+// own confirmation, same as deletePair above - undoing a safety lock
+// deserves the same care as setting one, not a single accidental click.
+async function confirmFreezePair(accId, sym) {
+  if (!confirm(`Freeze ${sym}? Editing, starting, stopping, restarting, and deleting will all be refused until you unfreeze it again. The bot's own trading, its fixed stop, and safety systems are completely unaffected either way.`)) return;
+  await api(`/api/accounts/${accId}/pairs/${sym}/freeze`, {method:'POST'});
+  await loadAccounts();
+}
+
+async function confirmUnfreezePair(accId, sym) {
+  if (!confirm(`Unfreeze ${sym}? Editing, starting, stopping, restarting, and deleting will all be available again.`)) return;
+  await api(`/api/accounts/${accId}/pairs/${sym}/unfreeze`, {method:'POST'});
+  await loadAccounts();
+}
+
+function viewLog(accId, sym) {
+  selectedLogKey = `${accId}:${sym}`;
+  document.getElementById('log-target').textContent = sym;
+  renderLog();
+}
+
+function renderLog() {
+  const box = document.getElementById('logbox');
+  const s = statusById[selectedLogKey];
+  box.textContent = s && s.logs && s.logs.length ? s.logs.join('\n') : '(no log entries yet)';
+  box.scrollTop = box.scrollHeight;
+}
+
+async function refreshStatus() {
+  try {
+    const data = await api('/api/status');
+    statusById = {};
+    for (const inst of data.instances) statusById[`${inst.account_id}:${inst.symbol}`] = inst;
+    renderPairs();
+    renderStartupFailures(data.startup_failures || {});
+    if (selectedLogKey) renderLog();
+  } catch (e) { /* dashboard server may be mid-restart; ignore transient errors */ }
+}
+
+function renderStartupFailures(failures) {
+  const banner = document.getElementById('startup-failures-banner');
+  const list = document.getElementById('startup-failures-list');
+  const entries = Object.entries(failures);
+  if (!entries.length) { banner.style.display = 'none'; return; }
+  banner.style.display = 'block';
+  list.innerHTML = entries.map(([key, msg]) => {
+    const [accId, sym] = key.split(':');
+    const acc = accounts.find(a => a.id === accId);
+    const label = acc ? `${acc.name} — ${sym}` : key;
+    return `<div style="margin-top:4px;"><b>${label}</b>: ${msg} <button class="small ghost" style="margin-left:8px;" onclick="startPair('${accId}','${sym}')">Retry</button></div>`;
+  }).join('');
+}
+
+// ---------------- Add account ----------------
+document.getElementById('btn-add-account').onclick = () => {
+  document.getElementById('acc-name').value = '';
+  document.getElementById('acc-key').value = '';
+  document.getElementById('acc-secret').value = '';
+  document.getElementById('acc-testnet').checked = false;
+  document.getElementById('acc-exposure').value = '';
+  document.getElementById('acc-withdraw-enabled').checked = false;
+  document.getElementById('acc-withdraw-threshold').value = '';
+  document.getElementById('acc-msg').className = 'msg';
+  document.getElementById('dlg-account').showModal();
+};
+document.getElementById('acc-save').onclick = async () => {
+  const expVal = document.getElementById('acc-exposure').value;
+  const withdrawVal = document.getElementById('acc-withdraw-threshold').value;
+  const body = {
+    name: document.getElementById('acc-name').value,
+    api_key: document.getElementById('acc-key').value,
+    api_secret: document.getElementById('acc-secret').value,
+    testnet: document.getElementById('acc-testnet').checked,
+    max_account_exposure_pct: expVal === '' ? null : Number(expVal),
+    withdraw_alert_enabled: document.getElementById('acc-withdraw-enabled').checked,
+    withdraw_alert_threshold: withdrawVal === '' ? null : Number(withdrawVal),
+  };
+  const msg = document.getElementById('acc-msg');
+  try {
+    await api('/api/accounts', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    document.getElementById('dlg-account').close();
+    await loadAccounts();
+  } catch (e) { msg.className = 'msg err'; msg.textContent = 'Failed: ' + e.message; }
+};
+
+// ---------------- Add / edit pair ----------------
+
+// ns ("namespace") and gridId let this same function build BOTH the
+// Binance pair-fields grid and the OKX one (2026-09-15) without id
+// collisions - ns='' + gridId='pair-fields' reproduces the exact original
+// ids (f_<key>/fwrap_<key>) unchanged, so existing Binance behavior is
+// untouched; ns='okx' + gridId='okx-pair-fields' gives OKX its own
+// namespaced ids (okxf_<key>/okxfwrap_<key>).
+// 2026-09-19, owner request: pair-field sections. Fixed display order -
+// object key order in FIELD_META doesn't reliably reflect insertion order
+// once fields were added across several sessions, so the tab strip's
+// order is spelled out explicitly here rather than derived.
+const FIELD_SECTIONS = ["Strategy", "Hold Rule", "Sizing & Risk", "Shadow & Tracker", "Operational"];
+// Tracks which section tab is active per dialog namespace ('' = Binance,
+// 'okx' = OKX) - separate state per namespace since both dialogs can
+// exist in the DOM at once.
+const activePairSection = { '': FIELD_SECTIONS[0], okx: FIELD_SECTIONS[0] };
+
+function buildPairFields(values, gridId = 'pair-fields', ns = '') {
+  const grid = document.getElementById(gridId);
+  grid.innerHTML = '';
+  for (const [key, meta] of Object.entries(FIELD_META)) {
+    const wrap = document.createElement('div');
+    wrap.id = `${ns}fwrap_${key}`;
+    wrap.dataset.section = meta.section || 'Strategy';
+    if (meta.group) wrap.dataset.group = meta.group;
+    const v = values ? values[key] : undefined;
+    if (meta.type === 'checkbox') {
+      wrap.className = 'checkbox-row';
+      wrap.innerHTML = `<input type="checkbox" id="${ns}f_${key}" ${v ? 'checked' : ''}><label style="margin:0;">${meta.label}</label>`;
+    } else if (meta.type === 'select') {
+      const choices = key === 'timeframe' ? (TIMEFRAMES[ns] || TIMEFRAMES['']) : meta.options;
+      const opts = choices.map(o => `<option value="${o}" ${o === v ? 'selected' : ''}>${o}</option>`).join('');
+      wrap.innerHTML = `<label>${meta.label}</label><select id="${ns}f_${key}">${opts}</select>`;
+    } else {
+      wrap.innerHTML = `<label>${meta.label}</label><input id="${ns}f_${key}" type="${meta.type}" ${meta.step ? `step="${meta.step}"` : ''} value="${v ?? ''}">`;
+    }
+    grid.appendChild(wrap);
+  }
+  const strategySelect = document.getElementById(`${ns}f_strategy_type`);
+  if (strategySelect) strategySelect.onchange = () => updateFieldVisibility(ns);
+  activePairSection[ns] = FIELD_SECTIONS[0];
+  renderSectionTabs(ns, gridId);
+  updateFieldVisibility(ns);
+}
+
+function renderSectionTabs(ns, gridId) {
+  let strip = document.getElementById(`${ns}pair-section-tabs`);
+  if (!strip) {
+    strip = document.createElement('div');
+    strip.id = `${ns}pair-section-tabs`;
+    strip.className = 'pair-section-tabs';
+    document.getElementById(gridId).before(strip);
+  }
+  strip.innerHTML = FIELD_SECTIONS.map(s =>
+    `<button type="button" class="tab-btn${s === activePairSection[ns] ? ' active' : ''}" data-section="${s}">${s}</button>`
+  ).join('');
+  for (const btn of strip.querySelectorAll('.tab-btn')) {
+    btn.onclick = () => {
+      activePairSection[ns] = btn.dataset.section;
+      renderSectionTabs(ns, gridId);
+      updateFieldVisibility(ns);
+    };
+  }
+}
+
+// 2026-09-19: replaces the old updateStrategyFieldVisibility - a field is
+// now visible only when BOTH independent conditions hold: (1) it belongs
+// to the currently active SECTION tab (purely organizational, added this
+// session - has no effect on which strategy is selected or any value),
+// and (2) it has no strategy-specific group, or its group matches the
+// currently selected strategy - this second condition is the
+// exact pre-existing behavior, completely unchanged, just re-homed into
+// this one combined function instead of two separate ones that could
+// silently disagree with each other.
+function updateFieldVisibility(ns = '') {
+  const sel = document.getElementById(`${ns}f_strategy_type`);
+  const activeStrategy = sel ? sel.value : null;  // no strategy selector, always null
+  const activeSection = activePairSection[ns] || FIELD_SECTIONS[0];
+  for (const [key, meta] of Object.entries(FIELD_META)) {
+    const wrap = document.getElementById(`${ns}fwrap_${key}`);
+    if (!wrap) continue;
+    const sectionMatches = (meta.section || 'Strategy') === activeSection;
+    const groupMatches = !meta.group || meta.group === activeStrategy;
+    wrap.style.display = (sectionMatches && groupMatches) ? '' : 'none';
+  }
+}
+
+// Kept as a thin alias - unlockFields() below still calls this by its
+// original name from before sections existed; behavior is identical to
+// calling updateFieldVisibility directly.
+function updateStrategyFieldVisibility(ns = '') {
+  updateFieldVisibility(ns);
+}
+
+// ---------------- Lock/unlock + confirm-before-save (2026-09-15) ----------------
+// Owner request: existing pairs should not be trivially editable - editing
+// an EXISTING pair opens its dialog LOCKED (every field disabled), and
+// applying a change requires reviewing an explicit diff and confirming it.
+// A brand-new pair has nothing live to protect, so it skips both steps.
+let editingPairOriginalValues = null;
+let editingOKXPairOriginalValues = null;
+let pendingConfirmedSave = null;  // the actual save function, set right before showing the confirm dialog
+
+function lockFields(ns) {
+  for (const key of Object.keys(FIELD_META)) {
+    const el = document.getElementById(`${ns}f_${key}`);
+    if (el) el.disabled = true;
+  }
+  if (ns === 'okx') {
+    const trig = document.getElementById('okx-pair-trigger-type');
+    if (trig) trig.disabled = true;
+  }
+  document.getElementById(ns === 'okx' ? 'okx-pair-lock-banner' : 'pair-lock-banner').style.display = 'flex';
+}
+
+function unlockFields(ns) {
+  for (const key of Object.keys(FIELD_META)) {
+    const el = document.getElementById(`${ns}f_${key}`);
+    if (el) el.disabled = false;
+  }
+  if (ns === 'okx') {
+    const trig = document.getElementById('okx-pair-trigger-type');
+    if (trig) trig.disabled = false;
+  }
+  document.getElementById(ns === 'okx' ? 'okx-pair-lock-banner' : 'pair-lock-banner').style.display = 'none';
+  updateStrategyFieldVisibility(ns);  // re-apply section show/hide now that fields are live again
+}
+
+function readPairPayload(ns) {
+  const payload = {};
+  for (const [key, meta] of Object.entries(FIELD_META)) {
+    const el = document.getElementById(`${ns}f_${key}`);
+    if (meta.type === 'checkbox') payload[key] = el.checked;
+    else if (meta.type === 'select' || meta.type === 'text') payload[key] = el.value;
+    else payload[key] = (el.value === '' ? null : Number(el.value));
+  }
+  return payload;
+}
+
+function computePairDiff(original, updated) {
+  const rows = [];
+  for (const [key, meta] of Object.entries(FIELD_META)) {
+    const before = original ? original[key] : undefined;
+    const after = updated[key];
+    if (String(before) !== String(after)) {
+      rows.push(`<tr><td style="padding:4px 10px 4px 0; color:var(--muted);">${meta.label}</td>
+        <td style="padding:4px 10px;">${before ?? '—'}</td>
+        <td style="padding:4px 0;">→</td>
+        <td style="padding:4px 0 4px 10px; font-weight:600;">${after}</td></tr>`);
+    }
+  }
+  return rows;
+}
+
+function confirmAndSave(originalValues, ns, saveFn) {
+  const updated = readPairPayload(ns);
+  const rows = computePairDiff(originalValues, updated);
+  const diffBox = document.getElementById('pair-confirm-diff');
+  if (!rows.length) {
+    diffBox.innerHTML = '<p style="color:var(--muted);">No fields were actually changed.</p>';
+  } else {
+    diffBox.innerHTML = `<table>${rows.join('')}</table>`;
+  }
+  pendingConfirmedSave = saveFn;
+  document.getElementById('dlg-pair-confirm').showModal();
+}
+
+document.getElementById('pair-confirm-apply-btn').onclick = async () => {
+  document.getElementById('dlg-pair-confirm').close();
+  if (pendingConfirmedSave) await pendingConfirmedSave();
+  pendingConfirmedSave = null;
+};
+
+async function confirmedDefaultsOrWarn(platform) {
+  // Add Pair is only possible once the owner has confirmed that platform's Default Settings.
+  let d;
+  try { d = await api('/api/default-settings'); } catch (e) { return null; }
+  const block = d[platform];
+  if (!block.confirmed) {
+    alert('The ' + (platform === 'okx' ? 'OKX' : 'Binance') + ' default settings are not confirmed yet.\n\n' +
+          'Open the "Default Settings" tab, fill in every field and press Confirm Default Settings first.');
+    return null;
+  }
+  return block.values;
+}
+
+document.getElementById('btn-add-pair').onclick = async () => {
+  const defaults = await confirmedDefaultsOrWarn('binance');
+  if (!defaults) return;
+  editingPairSymbol = null;
+  editingPairOriginalValues = null;
+  document.getElementById('pair-dlg-title').textContent = 'Add Pair';
+  document.getElementById('pair-symbol').value = '';
+  document.getElementById('pair-symbol').disabled = false;
+  document.getElementById('pair-lock-banner').style.display = 'none';
+  document.getElementById('pair-msg').className = 'msg';
+  buildPairFields({ ...defaults });   // pre-filled from the owner's confirmed defaults - editable per pair
+  unlockFields('');  // fields start enabled for a brand-new pair - nothing live to protect
+  document.getElementById('dlg-pair').showModal();
+};
+
+function openEditPair(sym) {
+  const acc = currentAccount();
+  const pc = acc.pairs[sym];
+  editingPairSymbol = sym;
+  editingPairOriginalValues = { ...pc };
+  document.getElementById('pair-dlg-title').textContent = `Edit ${sym}`;
+  document.getElementById('pair-symbol').value = sym;
+  document.getElementById('pair-symbol').disabled = true;
+  document.getElementById('pair-msg').className = 'msg';
+  buildPairFields(pc);
+  lockFields('');
+  document.getElementById('dlg-pair').showModal();
+}
+
+async function doSavePair() {
+  const acc = currentAccount();
+  const msg = document.getElementById('pair-msg');
+  const payload = readPairPayload('');
+  try {
+    if (editingPairSymbol) {
+      await api(`/api/accounts/${acc.id}/pairs/${editingPairSymbol}`, {
+        method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload),
+      });
+    } else {
+      payload.symbol = document.getElementById('pair-symbol').value.toUpperCase().trim();
+      await api(`/api/accounts/${acc.id}/pairs`, {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload),
+      });
+    }
+    document.getElementById('dlg-pair').close();
+    await loadAccounts();
+  } catch (e) { msg.className = 'msg err'; msg.textContent = 'Failed: ' + e.message; }
+}
+
+document.getElementById('pair-save').onclick = async () => {
+  if (editingPairSymbol) {
+    confirmAndSave(editingPairOriginalValues, '', doSavePair);
+  } else {
+    await doSavePair();  // brand-new pair - no diff to confirm, nothing live to protect
+  }
+};
+
+// ==================== OKX tab (2026-09-15) ====================
+// Deliberately separate implementations, not shared with the Binance
+// functions above - matches every other "separate tabs, own state" OKX
+// decision throughout this project. Mirrors the Binance CRUD/control
+// functions structurally, pointed at /api/okx/... and OKX's own limits
+// (5 accounts, 5 pairs) and fields (passphrase, demo, sub-account label,
+// trigger_px_type). Ledger/Analysis integration for OKX is explicitly
+// OUT of scope for this pass (see this tabpage's own HTML comment) -
+// account/pair CRUD + start/stop/log is the actual gap being closed here.
+
+async function loadOKXAccounts() {
+  okxAccounts = await api('/api/okx/accounts');
+  document.getElementById('okx-acct-count').textContent = okxAccounts.length;
+  renderOKXAccounts();
+  populatePairSelectors();
+  if (!selectedOKXAccountId && okxAccounts.length) selectOKXAccount(okxAccounts[0].id);
+  else renderOKXPairs();
+}
+
+function renderOKXAccounts() {
+  const list = document.getElementById('okx-acct-list');
+  list.innerHTML = '';
+  if (!okxAccounts.length) { list.innerHTML = '<div class="empty">No OKX accounts yet.</div>'; return; }
+  for (const a of okxAccounts) {
+    const div = document.createElement('div');
+    div.className = 'acct-item' + (a.id === selectedOKXAccountId ? ' active' : '');
+    const subLabel = a.sub_account_label ? ` (${a.sub_account_label})` : '';
+    div.innerHTML = `<div><div class="name">${a.name}${subLabel}</div><div class="meta">${a.pair_count}/5 pairs</div></div>
+      <span class="pill ${a.demo ? 'testnet' : 'mainnet'}">${a.demo ? 'DEMO' : 'LIVE'}</span>`;
+    div.onclick = () => selectOKXAccount(a.id);
+    list.appendChild(div);
+  }
+  document.getElementById('btn-okx-add-account').disabled = okxAccounts.length >= 5;
+}
+
+function selectOKXAccount(id) {
+  selectedOKXAccountId = id;
+  renderOKXAccounts();
+  renderOKXPairs();
+}
+
+function currentOKXAccount() { return okxAccounts.find(a => a.id === selectedOKXAccountId); }
+
+function renderOKXPairs() {
+  const body = document.getElementById('okx-pairs-body');
+  const acc = currentOKXAccount();
+  document.getElementById('btn-okx-add-pair').disabled = !acc || (acc.pairs && Object.keys(acc.pairs).length >= 5);
+  document.getElementById('okx-pairs-title').textContent = acc ? `Pairs — ${acc.name}` : 'Pairs';
+  if (!acc) { body.innerHTML = '<div class="empty">Select or create an OKX account to manage its pairs.</div>'; return; }
+  const pairs = acc.pairs || {};
+  const symbols = Object.keys(pairs);
+  if (!symbols.length) { body.innerHTML = '<div class="empty">No pairs configured on this account yet. Click "+ Add Pair".</div>'; return; }
+
+  let html = `<div class="table-scroll"><table><thead><tr>
+    <th>Symbol</th><th>Status</th><th>Feed</th><th>Direction</th><th>Entry</th><th>Fixed stop</th><th>TP1 / TP2 (tracking)</th><th>Signals</th><th></th>
+    </tr></thead><tbody>`;
+  for (const sym of symbols) {
+    const key = `${acc.id}:${sym}`;
+    const s = okxStatusById[key] || {};
+    const status = s.status || (pairs[sym].enabled ? 'STARTING' : 'IDLE');
+    const dirClass = s.direction === 'LONG' ? 'dir-LONG' : (s.direction === 'SHORT' ? 'dir-SHORT' : '');
+    const ind = s.indicators || {};
+    const feedBadge = s.feed_stale ? '<span class="badge STALE">STALE</span>' : '<span class="badge LIVE">LIVE</span>';
+    const reconList = s.pending_reconciliations || [];
+    const reconBadge = reconList.length
+      ? `<span class="badge ERROR" title="${reconList.map(r => r.context + ': ' + r.detail).join(' | ').replace(/"/g, '&quot;')}">⚠ RECONCILE (${reconList.length})</span>`
+      : '';
+    const pendingBadge = s.config_update_pending
+      ? `<span class="badge" style="background:#3a3410; color:#e8c95a;" title="A config change is queued and will apply once this pair is flat.">⏳ UPDATE QUEUED</span>`
+      : '';
+    const frozen = !!pairs[sym].frozen;
+    const frozenBadge = frozen
+      ? `<span class="badge" style="background:#4a0f14; color:#ff8a8a;" title="Frozen - editing, starting, stopping, restarting, and deleting are all refused until unfrozen.">🔒 FROZEN</span>`
+      : '';
+    html += `<tr>
+      <td><b>${sym}</b><div style="color:var(--muted); font-size:11px;">${pairs[sym].timeframe}</div></td>
+      <td><span class="badge ${status}">${status}</span> ${reconBadge} ${pendingBadge} ${frozenBadge}</td>
+      <td>${feedBadge}</td>
+      <td><span class="${dirClass}">${s.direction || '—'}</span></td>
+      <td>${fmt(s.entry_price)}</td>
+      <td>${fmt(s.sl_price)}</td>
+      <td>${tpCell(s)}</td>
+      <td>${baseV3Cell(s)}</td>
+      <td style="white-space:nowrap;">
+        <button class="small" onclick="viewOKXLog('${acc.id}','${sym}')">Log</button>
+        <button class="small ghost" ${frozen ? 'disabled title="Frozen - unfreeze first"' : ''} onclick="openEditOKXPair('${sym}')">Edit</button>
+        ${pairs[sym].enabled
+          ? `<button class="small danger" ${frozen ? 'disabled title="Frozen - unfreeze first"' : ''} onclick="stopOKXPair('${acc.id}','${sym}')">Stop</button>`
+          : `<button class="small" ${frozen ? 'disabled title="Frozen - unfreeze first"' : ''} onclick="startOKXPair('${acc.id}','${sym}')">Start</button>`}
+        <button class="small danger" ${frozen ? 'disabled title="Frozen - unfreeze first"' : ''} onclick="deleteOKXPair('${acc.id}','${sym}')">Delete</button>
+        ${frozen
+          ? `<button class="small" onclick="confirmUnfreezeOKXPair('${acc.id}','${sym}')">🔓 Unfreeze</button>`
+          : `<button class="small ghost" onclick="confirmFreezeOKXPair('${acc.id}','${sym}')">🔒 Freeze</button>`}<br>
+        <button class="small ghost" onclick="goToLedger('okx','${acc.id}','${sym}')">Ledger</button>
+        <button class="small ghost" onclick="goToTracker('okx','${acc.id}','${sym}')">Tracker</button>
+        <button class="small ghost" onclick="goToAnalysis('okx','${acc.id}','${sym}')">Analysis</button>
+      </td>
+    </tr>`;
+  }
+  html += `</tbody></table></div>`;
+  body.innerHTML = html;
+}
+
+async function startOKXPair(accId, sym) { if (!(await firstTradeReminder('okx', accId, sym))) return; await api(`/api/okx/accounts/${accId}/pairs/${sym}/start`, {method:'POST'}); await loadOKXAccounts(); await refreshOKXStatus(); }
+async function stopOKXPair(accId, sym) { await api(`/api/okx/accounts/${accId}/pairs/${sym}/stop`, {method:'POST'}); await loadOKXAccounts(); await refreshOKXStatus(); }
+async function deleteOKXPair(accId, sym) {
+  if (!confirm(`Delete ${sym}? This stops the bot and removes its configuration.`)) return;
+  await api(`/api/okx/accounts/${accId}/pairs/${sym}`, {method:'DELETE'});
+  await loadOKXAccounts();
+}
+
+async function confirmFreezeOKXPair(accId, sym) {
+  if (!confirm(`Freeze ${sym}? Editing, starting, stopping, restarting, and deleting will all be refused until you unfreeze it again. The bot's own trading, its fixed stop, and safety systems are completely unaffected either way.`)) return;
+  await api(`/api/okx/accounts/${accId}/pairs/${sym}/freeze`, {method:'POST'});
+  await loadOKXAccounts();
+}
+
+async function confirmUnfreezeOKXPair(accId, sym) {
+  if (!confirm(`Unfreeze ${sym}? Editing, starting, stopping, restarting, and deleting will all be available again.`)) return;
+  await api(`/api/okx/accounts/${accId}/pairs/${sym}/unfreeze`, {method:'POST'});
+  await loadOKXAccounts();
+}
+
+function viewOKXLog(accId, sym) {
+  selectedOKXLogKey = `${accId}:${sym}`;
+  document.getElementById('okx-log-target').textContent = sym;
+  renderOKXLog();
+}
+
+function renderOKXLog() {
+  const box = document.getElementById('okx-logbox');
+  const s = okxStatusById[selectedOKXLogKey];
+  box.textContent = s && s.logs && s.logs.length ? s.logs.join('\n') : '(no log entries yet)';
+  box.scrollTop = box.scrollHeight;
+}
+
+async function refreshOKXStatus() {
+  try {
+    const data = await api('/api/okx/status');
+    okxStatusById = {};
+    for (const inst of data.instances) okxStatusById[`${inst.account_id}:${inst.symbol}`] = inst;
+    renderOKXPairs();
+    if (selectedOKXLogKey) renderOKXLog();
+  } catch (e) { /* dashboard server may be mid-restart; ignore transient errors */ }
+}
+
+// ---------------- OKX add/edit account ----------------
+document.getElementById('btn-okx-add-account').onclick = () => {
+  document.getElementById('okx-acc-name').value = '';
+  document.getElementById('okx-acc-key').value = '';
+  document.getElementById('okx-acc-secret').value = '';
+  document.getElementById('okx-acc-passphrase').value = '';
+  document.getElementById('okx-acc-demo').checked = false;
+  document.getElementById('okx-acc-sublabel').value = '';
+  document.getElementById('okx-acc-exposure').value = '';
+  document.getElementById('okx-acc-withdraw-enabled').checked = false;
+  document.getElementById('okx-acc-withdraw-threshold').value = '';
+  document.getElementById('okx-acc-msg').className = 'msg';
+  document.getElementById('dlg-okx-account').showModal();
+};
+document.getElementById('okx-acc-save').onclick = async () => {
+  const expVal = document.getElementById('okx-acc-exposure').value;
+  const withdrawVal = document.getElementById('okx-acc-withdraw-threshold').value;
+  const body = {
+    name: document.getElementById('okx-acc-name').value,
+    api_key: document.getElementById('okx-acc-key').value,
+    api_secret: document.getElementById('okx-acc-secret').value,
+    passphrase: document.getElementById('okx-acc-passphrase').value,
+    demo: document.getElementById('okx-acc-demo').checked,
+    sub_account_label: document.getElementById('okx-acc-sublabel').value,
+    max_account_exposure_pct: expVal === '' ? null : Number(expVal),
+    withdraw_alert_enabled: document.getElementById('okx-acc-withdraw-enabled').checked,
+    withdraw_alert_threshold: withdrawVal === '' ? null : Number(withdrawVal),
+  };
+  const msg = document.getElementById('okx-acc-msg');
+  try {
+    await api('/api/okx/accounts', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    document.getElementById('dlg-okx-account').close();
+    await loadOKXAccounts();
+  } catch (e) { msg.className = 'msg err'; msg.textContent = 'Failed: ' + e.message; }
+};
+
+// ---------------- OKX add/edit pair ----------------
+document.getElementById('btn-okx-add-pair').onclick = async () => {
+  const defaults = await confirmedDefaultsOrWarn('okx');
+  if (!defaults) return;
+  editingOKXPairSymbol = null;
+  editingOKXPairOriginalValues = null;
+  document.getElementById('okx-pair-dlg-title').textContent = 'Add Pair';
+  document.getElementById('okx-pair-symbol').value = '';
+  document.getElementById('okx-pair-symbol').disabled = false;
+  document.getElementById('okx-pair-trigger-type').value = defaults.trigger_px_type || '';
+  document.getElementById('okx-pair-lock-banner').style.display = 'none';
+  document.getElementById('okx-pair-msg').className = 'msg';
+  buildPairFields({ ...defaults }, 'okx-pair-fields', 'okx');   // pre-filled from the owner's confirmed defaults
+  unlockFields('okx');  // fields start enabled for a brand-new pair - nothing live to protect
+  document.getElementById('dlg-okx-pair').showModal();
+};
+
+function openEditOKXPair(sym) {
+  const acc = currentOKXAccount();
+  const pc = acc.pairs[sym];
+  editingOKXPairSymbol = sym;
+  editingOKXPairOriginalValues = { ...pc };
+  document.getElementById('okx-pair-dlg-title').textContent = `Edit ${sym}`;
+  document.getElementById('okx-pair-symbol').value = sym;
+  document.getElementById('okx-pair-symbol').disabled = true;
+  document.getElementById('okx-pair-trigger-type').value = pc.trigger_px_type || '';
+  document.getElementById('okx-pair-msg').className = 'msg';
+  buildPairFields(pc, 'okx-pair-fields', 'okx');
+  lockFields('okx');
+  document.getElementById('dlg-okx-pair').showModal();
+}
+
+function readOKXPairPayload() {
+  const payload = readPairPayload('okx');
+  payload.trigger_px_type = document.getElementById('okx-pair-trigger-type').value || null;
+  return payload;
+}
+
+function computeOKXPairDiff(original, updated) {
+  const rows = computePairDiff(original, updated);
+  const before = original ? original.trigger_px_type : undefined;
+  const after = updated.trigger_px_type;
+  if (String(before) !== String(after)) {
+    rows.push(`<tr><td style="padding:4px 10px 4px 0; color:var(--muted);">SL/TP trigger price type</td>
+      <td style="padding:4px 10px;">${before ?? '—'}</td>
+      <td style="padding:4px 0;">→</td>
+      <td style="padding:4px 0 4px 10px; font-weight:600;">${after}</td></tr>`);
+  }
+  return rows;
+}
+
+async function doSaveOKXPair() {
+  const acc = currentOKXAccount();
+  const msg = document.getElementById('okx-pair-msg');
+  const payload = readOKXPairPayload();
+  try {
+    if (editingOKXPairSymbol) {
+      await api(`/api/okx/accounts/${acc.id}/pairs/${editingOKXPairSymbol}`, {
+        method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload),
+      });
+    } else {
+      payload.symbol = document.getElementById('okx-pair-symbol').value.toUpperCase().trim();
+      await api(`/api/okx/accounts/${acc.id}/pairs`, {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload),
+      });
+    }
+    document.getElementById('dlg-okx-pair').close();
+    await loadOKXAccounts();
+  } catch (e) { msg.className = 'msg err'; msg.textContent = 'Failed: ' + e.message; }
+}
+
+document.getElementById('okx-pair-save').onclick = async () => {
+  if (editingOKXPairSymbol) {
+    const updated = readOKXPairPayload();
+    const rows = computeOKXPairDiff(editingOKXPairOriginalValues, updated);
+    const diffBox = document.getElementById('pair-confirm-diff');
+    diffBox.innerHTML = rows.length ? `<table>${rows.join('')}</table>`
+      : '<p style="color:var(--muted);">No fields were actually changed.</p>';
+    pendingConfirmedSave = doSaveOKXPair;
+    document.getElementById('dlg-pair-confirm').showModal();
+  } else {
+    await doSaveOKXPair();  // brand-new pair - no diff to confirm, nothing live to protect
+  }
+};
+
+// ---------------- Default Settings page ----------------
+// Every field starts BLANK. Save stores the values (and marks the platform
+// unconfirmed); Confirm shows a review and then locks them in as the defaults
+// used for NEW pairs. All rules are enforced again on the server.
+function errText(e) {
+  try { const j = JSON.parse(e.message); if (j && j.detail) return typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail); } catch (_) {}
+  return e.message;
+}
+function dsKeys(platform) {
+  const keys = Object.keys(FIELD_META);
+  if (platform === 'okx') keys.push('trigger_px_type');
+  return keys;
+}
+function dsMeta(key) {
+  if (key === 'trigger_px_type') return { label: 'SL/TP trigger price type', type: 'select', options: ['mark', 'last', 'index'], section: 'Operational' };
+  return FIELD_META[key];
+}
+function dsChoices(platform, key, meta) {
+  return key === 'timeframe' ? (TIMEFRAMES[platform === 'okx' ? 'okx' : ''] || TIMEFRAMES['']) : meta.options;
+}
+function dsRenderPlatform(platform, data) {
+  const box = document.getElementById(`ds-fields-${platform}`);
+  box.innerHTML = '';
+  let lastSection = null;
+  for (const key of dsKeys(platform)) {
+    const meta = dsMeta(key);
+    const v = data.values[key];
+    if (meta.section !== lastSection) {
+      lastSection = meta.section;
+      const h = document.createElement('div');
+      h.style.cssText = 'grid-column:1/-1; margin-top:10px; font-size:12px; font-weight:700; color:var(--muted); text-transform:uppercase;';
+      h.textContent = meta.section;
+      box.appendChild(h);
+    }
+    const wrap = document.createElement('div');
+    const id = `ds-${platform}-${key}`;
+    let control;
+    if (meta.type === 'checkbox') {
+      control = `<select id="${id}"><option value="">— blank —</option><option value="true" ${v === true ? 'selected' : ''}>On</option><option value="false" ${v === false ? 'selected' : ''}>Off</option></select>`;
+    } else if (meta.type === 'select') {
+      const opts = dsChoices(platform, key, meta).map(o => `<option value="${o}" ${o === v ? 'selected' : ''}>${o}</option>`).join('');
+      control = `<select id="${id}"><option value="">— blank —</option>${opts}</select>`;
+    } else {
+      control = `<input id="${id}" type="number" step="${meta.step || 'any'}" value="${v ?? ''}">`;
+    }
+    wrap.innerHTML = `<label>${meta.label}</label>${control}`;
+    box.appendChild(wrap);
+  }
+  const badge = document.getElementById(`ds-badge-${platform}`);
+  if (data.confirmed) {
+    badge.innerHTML = `<span class="badge LIVE">CONFIRMED${data.confirmed_at ? ' · ' + data.confirmed_at : ''}</span>`;
+  } else {
+    badge.innerHTML = `<span class="badge STALE">NOT CONFIRMED${data.missing && data.missing.length ? ' · ' + data.missing.length + ' blank' : ''}</span>`;
+  }
+}
+function dsReadForm(platform) {
+  const out = {};
+  for (const key of dsKeys(platform)) {
+    const meta = dsMeta(key);
+    const el = document.getElementById(`ds-${platform}-${key}`);
+    const raw = el.value;
+    if (raw === '') out[key] = null;
+    else if (meta.type === 'checkbox') out[key] = (raw === 'true');
+    else if (meta.type === 'select') out[key] = raw;
+    else out[key] = Number(raw);
+  }
+  return out;
+}
+function dsMsg(id, ok, text) {
+  const m = document.getElementById(id);
+  m.className = 'msg ' + (ok ? 'ok' : 'err');
+  m.textContent = text;
+}
+async function loadDefaultSettings() {
+  try {
+    const d = await api('/api/default-settings');
+    dsRenderPlatform('binance', d.binance);
+    dsRenderPlatform('okx', d.okx);
+    document.getElementById('ds-email').value = d.alert_email || '';
+    document.getElementById('ds-live').checked = !!d.live_trading_enabled;
+  } catch (e) { dsMsg('ds-msg-binance', false, 'Could not load: ' + errText(e)); }
+}
+async function dsSave(platform) {
+  try {
+    const res = await api(`/api/default-settings/${platform}`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ values: dsReadForm(platform) }),
+    });
+    dsRenderPlatform(platform, res);
+    dsMsg(`ds-msg-${platform}`, true, 'Saved. These defaults are NOT confirmed yet - press Confirm Default Settings when every field is filled.');
+  } catch (e) { dsMsg(`ds-msg-${platform}`, false, 'Not saved: ' + errText(e)); }
+}
+let dsPendingPlatform = null;
+async function dsConfirmClick(platform) {
+  try {
+    const saved = await api(`/api/default-settings/${platform}`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ values: dsReadForm(platform) }),
+    });
+    dsRenderPlatform(platform, saved);
+    if (saved.missing && saved.missing.length) {
+      dsMsg(`ds-msg-${platform}`, false, 'Cannot confirm - still blank: ' + saved.missing.join(', '));
+      return;
+    }
+    const rows = dsKeys(platform).map(k => {
+      const meta = dsMeta(k); const v = saved.values[k];
+      const shown = (typeof v === 'boolean') ? (v ? 'On' : 'Off') : v;
+      return `<tr><td style="padding:4px 10px 4px 0; color:var(--muted);">${meta.label}</td><td style="padding:4px 0; font-weight:600;">${shown}</td></tr>`;
+    }).join('');
+    document.getElementById('ds-review-body').innerHTML = `<table>${rows}</table>`;
+    document.getElementById('ds-review-platform').textContent = platform === 'okx' ? 'OKX' : 'Binance';
+    dsPendingPlatform = platform;
+    document.getElementById('dlg-ds-review').showModal();
+  } catch (e) { dsMsg(`ds-msg-${platform}`, false, 'Not saved: ' + errText(e)); }
+}
+document.getElementById('ds-review-apply').onclick = async () => {
+  const platform = dsPendingPlatform;
+  document.getElementById('dlg-ds-review').close();
+  if (!platform) return;
+  try {
+    const res = await api(`/api/default-settings/${platform}/confirm`, { method: 'POST' });
+    dsRenderPlatform(platform, res);
+    dsMsg(`ds-msg-${platform}`, true, 'Confirmed. New pairs on this platform will start from these values.');
+  } catch (e) { dsMsg(`ds-msg-${platform}`, false, 'Not confirmed: ' + errText(e)); }
+  dsPendingPlatform = null;
+};
+document.getElementById('ds-email-save').onclick = async () => {
+  try {
+    const res = await api('/api/alert-email', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ email: document.getElementById('ds-email').value }),
+    });
+    dsMsg('ds-email-msg', true, res.alert_email ? 'Saved.' : 'Saved (blank - no email will be sent).');
+  } catch (e) { dsMsg('ds-email-msg', false, 'Not saved: ' + errText(e)); }
+};
+document.getElementById('ds-live').onchange = async (ev) => {
+  const want = ev.target.checked;
+  if (want && !window.confirm('Turn live trading ON?\n\nReal-money accounts will then be allowed to start pairs and place real orders.')) {
+    ev.target.checked = false; return;
+  }
+  try {
+    const res = await api('/api/live-trading', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ enabled: want }),
+    });
+    ev.target.checked = !!res.live_trading_enabled;
+    dsMsg('ds-live-msg', true, res.live_trading_enabled ? 'Live trading is ON.' : 'Live trading is OFF.');
+  } catch (e) { ev.target.checked = !want; dsMsg('ds-live-msg', false, 'Not changed: ' + errText(e)); }
+};
+
+async function init() {
+  try {
+    await api('/api/auth/status');
+  } catch (e) { return; }  // showLogin() already called inside api()
+  await loadAccounts();
+  await refreshStatus();
+  if (!window._pollersStarted) {
+    window._pollersStarted = true;
+    setInterval(() => refreshStatus().catch(() => {}), 5000);
+    setInterval(() => loadAccounts().catch(() => {}), 20000);
+    setInterval(() => { if (okxLoadedOnce) refreshOKXStatus().catch(() => {}); }, 5000);
+    setInterval(() => { if (okxLoadedOnce) loadOKXAccounts().catch(() => {}); }, 20000);
+  }
+}
+init();
+
+// ---------------- Singleton-lock conflict banner (2026-09-16) ----------------
+// Deliberately independent of login state - /healthz needs no auth, and
+// this specific alert (trading never started at all, on either platform)
+// is important enough that even a not-yet-logged-in owner should see it
+// immediately, not only after signing in.
+async function checkSingletonLock() {
+  try {
+    const res = await fetch('/healthz');
+    const data = await res.json();
+    const banner = document.getElementById('singleton-conflict-banner');
+    const title = document.getElementById('singleton-conflict-title');
+    if (data.storage_problem) {
+      banner.style.display = 'block';
+      title.textContent = '🚨 Trading has NOT started - the data folder is not on persistent storage';
+      document.getElementById('singleton-conflict-detail').textContent = data.storage_problem;
+    } else if (data.singleton_lock_conflict) {
+      banner.style.display = 'block';
+      title.textContent = '🚨 Trading has NOT started yet - another instance may still be running (this process keeps retrying by itself)';
+      document.getElementById('singleton-conflict-detail').textContent = data.singleton_lock_conflict;
+    } else {
+      banner.style.display = 'none';
+    }
+  } catch (e) { /* server may be mid-restart; ignore transient errors */ }
+}
+checkSingletonLock();
+setInterval(checkSingletonLock, 5000);
+
+// ---------------- Ledger ----------------
+let ledgerKey = null;
+
+function goToLedger(platform, accId, sym) {
+  switchMainTab('ledger');
+  document.getElementById('ledger-pair-select').value = `${platform}::${accId}::${sym}`;
+  loadLedgerFor(platform, accId, sym);
+}
+
+document.getElementById('ledger-pair-select').onchange = (e) => {
+  if (!e.target.value) { ledgerKey = null; document.getElementById('ledger-content').style.display = 'none'; document.getElementById('ledger-empty').style.display = 'block'; return; }
+  const [platform, accId, sym] = e.target.value.split('::');
+  loadLedgerFor(platform, accId, sym);
+};
+
+async function loadLedgerFor(platform, accId, sym) {
+  ledgerKey = { platform, accId, sym };
+  const base = platform === 'okx' ? '/api/okx/ledger' : '/api/ledger';
+  document.getElementById('ledger-csv-link').href = `${base}/${accId}/${sym}/csv`;
+  document.getElementById('ledger-empty').style.display = 'none';
+  document.getElementById('ledger-content').style.display = 'block';
+  const data = await api(`${base}/${accId}/${sym}`);
+  renderLedgerStats(data.stats);
+  renderEquityCurve(data.equity_curve);
+  renderLedgerTable(data.trades);
+}
+
+function renderLedgerStats(stats) {
+  const box = document.getElementById('ledger-stats');
+  const dd = stats.max_drawdown || {};
+  const items = [
+    ['Total trades', stats.total_trades],
+    ['Win rate', stats.win_rate != null ? fmt(stats.win_rate,1) + '%' : '—'],
+    ['Total PnL', fmt(stats.total_pnl) + ' USDT'],
+    ['Avg win', stats.avg_win != null ? fmt(stats.avg_win) : '—'],
+    ['Avg loss', stats.avg_loss != null ? fmt(stats.avg_loss) : '—'],
+    ['Max drawdown', dd.max_drawdown != null ? fmt(dd.max_drawdown) + ' USDT' : '—'],
+    ['Sharpe (per-trade)', stats.sharpe_ratio != null ? fmt(stats.sharpe_ratio, 2) : '—'],
+  ];
+  box.innerHTML = items.map(([l,v]) => `<div class="stat-box"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+}
+
+function renderEquityCurve(curve) {
+  const svg = document.getElementById('equity-svg');
+  if (!curve.length) { svg.innerHTML = '<text x="10" y="70" fill="#8a93a8" font-size="12">No closed trades yet.</text>'; return; }
+  const w = 800, h = 140, pad = 10;
+  const values = curve.map(p => p.equity);
+  const min = Math.min(...values, 0), max = Math.max(...values, 0);
+  const range = (max - min) || 1;
+  const stepX = (w - pad * 2) / Math.max(curve.length - 1, 1);
+  const points = curve.map((p, i) => {
+    const x = pad + i * stepX;
+    const y = h - pad - ((p.equity - min) / range) * (h - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  const zeroY = h - pad - ((0 - min) / range) * (h - pad * 2);
+  const color = values[values.length - 1] >= 0 ? '#35d68a' : '#ff5c72';
+  svg.innerHTML = `
+    <line x1="${pad}" y1="${zeroY}" x2="${w-pad}" y2="${zeroY}" stroke="#263047" stroke-dasharray="4,3"/>
+    <polyline points="${points}" fill="none" stroke="${color}" stroke-width="2"/>`;
+}
+
+function renderLedgerTable(trades) {
+  const tbody = document.querySelector('#ledger-table tbody');
+  if (!trades.length) { tbody.innerHTML = '<tr><td colspan="9" class="empty">No trades yet.</td></tr>'; return; }
+  tbody.innerHTML = trades.slice().reverse().map(t => {
+    const pnlLabel = t.commission_included ? 'net' : 'gross';
+    const feesCell = t.commission_included ? fmt(t.commission) : '<span style="color:var(--muted);">n/a</span>';
+    return `
+    <tr>
+      <td>${t.opened_at ? new Date(t.opened_at*1000).toLocaleString() : '—'}</td>
+      <td>${t.closed_at ? new Date(t.closed_at*1000).toLocaleString() : '—'}</td>
+      <td><span class="${t.direction === 'LONG' ? 'dir-LONG' : 'dir-SHORT'}">${t.direction}</span></td>
+      <td>${fmt(t.qty,6)}</td>
+      <td>${fmt(t.entry_price)}</td>
+      <td>${fmt(t.exit_price)}</td>
+      <td style="color:${(t.pnl||0) >= 0 ? '#35d68a' : '#ff5c72'}">${t.pnl != null ? fmt(t.pnl) : '—'} <span style="color:var(--muted); font-size:10px;">(${pnlLabel})</span></td>
+      <td>${feesCell}</td>
+      <td>${t.reason}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ---------------- Tracker ----------------
+function goToTracker(platform, accId, sym) {
+  switchMainTab('tracker');
+  document.getElementById('tracker-pair-select').value = `${platform}::${accId}::${sym}`;
+  loadTrackerFor(platform, accId, sym);
+}
+
+document.getElementById('tracker-pair-select').onchange = (e) => {
+  if (!e.target.value) { document.getElementById('tracker-content').style.display = 'none'; document.getElementById('tracker-empty').style.display = 'block'; return; }
+  const [platform, accId, sym] = e.target.value.split('::');
+  loadTrackerFor(platform, accId, sym);
+};
+
+function candleTime(ms) { return ms ? new Date(ms).toLocaleString() : '—'; }
+
+async function loadTrackerFor(platform, accId, sym) {
+  const base = platform === 'okx' ? '/api/okx/tracker' : '/api/tracker';
+  document.getElementById('tracker-empty').style.display = 'none';
+  document.getElementById('tracker-content').style.display = 'block';
+  const d = await api(`${base}/${accId}/${sym}`);
+  const t = d.summary;
+  const items = [
+    ['Tracker balance', fmt(t.balance) + ' USDT'],
+    ['From start', fmt(t.pct_from_start, 2) + '%'],
+    ['Tracker high', fmt(t.peak) + ' USDT'],
+    ['Below high', fmt(t.pct_below_peak, 2) + '%'],
+    ['Starting amount', fmt(t.start_balance) + ' USDT'],
+    ['Real trades counted', t.real_trade_count],
+    ['Shadow mode', !d.use_shadow ? 'OFF (setting)' : (t.shadow_active ? `ACTIVE - ${t.shadow_done} of ${d.shadow_trades_setting} paper trades done` : 'not active')],
+    ['Shadow periods', t.shadow_periods],
+    ['Paper trades total', t.shadow_trades_total],
+    ['Last shadow end', t.shadow_last_end_reason || '—'],
+  ];
+  document.getElementById('tracker-stats').innerHTML = items.map(([l,v]) => `<div class="stat-box"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+  const rt = document.querySelector('#tracker-real-table tbody');
+  rt.innerHTML = d.real_trades.length ? d.real_trades.slice().reverse().map(r => `
+    <tr>
+      <td>${r.closed_at ? new Date(r.closed_at*1000).toLocaleString() : '—'}</td>
+      <td><span class="${r.direction === 'LONG' ? 'dir-LONG' : 'dir-SHORT'}">${r.direction}</span></td>
+      <td>${fmt(r.entry_price)}</td><td>${fmt(r.exit_price)}</td><td>${r.reason}</td>
+      <td style="color:${(r.pnl||0) >= 0 ? '#35d68a' : '#ff5c72'}">${fmt(r.pnl)}</td>
+      <td>${fmt(r.balance_at_entry)}${r.approximated ? ' <span style="color:#e8c95a;" title="balance at entry was not saved - approximated">≈</span>' : ''}</td>
+      <td style="color:${(r.result_pct||0) >= 0 ? '#35d68a' : '#ff5c72'}">${fmt(r.result_pct, 3)}%</td>
+      <td>${fmt(r.tracker_before)}</td><td>${fmt(r.tracker_after)}</td>
+      <td>${r.new_high ? '✓' : ''}</td><td>${r.shadow_started ? 'SHADOW ON' : ''}</td>
+    </tr>`).join('') : '<tr><td colspan="12" class="empty">No real trades yet.</td></tr>';
+  const op = d.open_paper_trade;
+  document.getElementById('tracker-open-paper').innerHTML = op
+    ? `Open paper trade: <b>${op.direction}</b> from ${candleTime(op.entry_time)} at ${fmt(op.signal_close)} (paper entry ${fmt(op.entry_price)}, paper stop ${fmt(op.stop_price)})`
+    : 'No paper trade open.';
+  const pt = document.querySelector('#tracker-paper-table tbody');
+  pt.innerHTML = d.paper_trades.length ? d.paper_trades.slice().reverse().map(r => `
+    <tr>
+      <td>${candleTime(r.entry_time)}</td>
+      <td><span class="${r.direction === 'LONG' ? 'dir-LONG' : 'dir-SHORT'}">${r.direction}</span></td>
+      <td>${fmt(r.signal_close)}</td><td>${fmt(r.entry_price)}</td><td>${fmt(r.stop_price)}</td>
+      <td>${candleTime(r.exit_time)}</td><td>${fmt(r.exit_price)}</td><td>${r.exit_reason || ''}</td>
+      <td>${r.result_pct != null ? fmt(r.result_pct, 3) + '%' : '—'}</td>
+    </tr>`).join('') : '<tr><td colspan="9" class="empty">No paper trades yet.</td></tr>';
+}
+
+// ---------------- Analysis ----------------
+let analysisKey = null;
+
+function goToAnalysis(platform, accId, sym) {
+  switchMainTab('analysis');
+  document.getElementById('analysis-pair-select').value = `${platform}::${accId}::${sym}`;
+  selectAnalysisPair(platform, accId, sym);
+}
+
+document.getElementById('analysis-pair-select').onchange = (e) => {
+  if (!e.target.value) { analysisKey = null; document.getElementById('analysis-content').style.display = 'none'; document.getElementById('analysis-empty').style.display = 'block'; return; }
+  const [platform, accId, sym] = e.target.value.split('::');
+  selectAnalysisPair(platform, accId, sym);
+};
+
+function selectAnalysisPair(platform, accId, sym) {
+  analysisKey = { platform, accId, sym };
+  document.getElementById('analysis-empty').style.display = 'none';
+  document.getElementById('analysis-content').style.display = 'block';
+  document.getElementById('wf-msg').className = 'msg';
+  document.getElementById('mc-msg').className = 'msg';
+}
+
+function switchAnalysisTab(tab) {
+  document.getElementById('analysis-wf').style.display = tab === 'wf' ? 'block' : 'none';
+  document.getElementById('analysis-mc').style.display = tab === 'mc' ? 'block' : 'none';
+  document.getElementById('tab-wf').classList.toggle('active', tab === 'wf');
+  document.getElementById('tab-mc').classList.toggle('active', tab === 'mc');
+}
+
+function analysisBody(prefix, keys) {
+  // Every analysis number is typed by the owner - nothing is pre-filled.
+  const out = {};
+  for (const [field, id] of keys) {
+    const raw = document.getElementById(id).value;
+    if (raw === '') throw new Error('Fill in every field first (nothing is pre-filled).');
+    out[field] = Number(raw);
+  }
+  return out;
+}
+
+document.getElementById('wf-run').onclick = async () => {
+  const msg = document.getElementById('wf-msg');
+  msg.className = 'msg'; msg.textContent = '';
+  const btn = document.getElementById('wf-run'); btn.disabled = true;
+  try {
+    const body = analysisBody('wf', [['n_folds','wf-folds'], ['limit','wf-limit'], ['initial_equity','wf-equity'],
+                                     ['commission_pct','wf-commission'], ['slippage_pct','wf-slippage']]);
+    const res = await api(`${analysisKey.platform === 'okx' ? '/api/okx' : '/api'}/analysis/${analysisKey.accId}/${analysisKey.sym}/walk-forward`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
+    });
+    const tbody = document.querySelector('#wf-table tbody') || document.createElement('tbody');
+    tbody.innerHTML = res.folds.map(f => `
+      <tr><td>${f.fold}</td><td>${f.candles}</td><td>${f.trades}</td>
+          <td>${f.win_rate != null ? fmt(f.win_rate,1)+'%' : '—'}</td>
+          <td>${fmt(f.total_pnl)}</td><td>${fmt(f.total_costs)}</td>
+          <td>${f.max_drawdown_pct != null ? fmt(f.max_drawdown_pct,1)+'%' : '—'}</td></tr>`).join('');
+    document.getElementById('wf-table').appendChild(tbody);
+    msg.className = 'msg ok'; msg.textContent = 'Done. PnL is net of the commission/slippage entered above.';
+  } catch (e) { msg.className = 'msg err'; msg.textContent = 'Failed: ' + e.message; }
+  btn.disabled = false;
+};
+
+document.getElementById('mc-run').onclick = async () => {
+  const msg = document.getElementById('mc-msg');
+  msg.className = 'msg'; msg.textContent = '';
+  const btn = document.getElementById('mc-run'); btn.disabled = true;
+  try {
+    const body = analysisBody('mc', [['n_sims','mc-sims'], ['limit','mc-limit'], ['initial_equity','mc-equity'],
+                                     ['commission_pct','mc-commission'], ['slippage_pct','mc-slippage']]);
+    const res = await api(`${analysisKey.platform === 'okx' ? '/api/okx' : '/api'}/analysis/${analysisKey.accId}/${analysisKey.sym}/monte-carlo`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
+    });
+    const items = [
+      ['Median final equity', fmt(res.final_equity.median)],
+      ['5th pct equity', fmt(res.final_equity.p5)],
+      ['95th pct equity', fmt(res.final_equity.p95)],
+      ['Median max drawdown', fmt(res.max_drawdown_pct.p50,1)+'%'],
+      ['95th pct drawdown', fmt(res.max_drawdown_pct.p95,1)+'%'],
+      ['Probability of loss', fmt(res.probability_of_loss,1)+'%'],
+    ];
+    document.getElementById('mc-results').innerHTML = items.map(([l,v]) =>
+      `<div class="stat-box"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+    msg.className = 'msg ok'; msg.textContent = `Ran ${res.n_sims} simulations of ${res.n_trades_per_sim} trades each (net of the commission/slippage entered above).`;
+  } catch (e) { msg.className = 'msg err'; msg.textContent = 'Failed: ' + e.message; }
+  btn.disabled = false;
+};
+</script>
+</body>
+</html>
