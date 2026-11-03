@@ -168,6 +168,21 @@ class BaseExchangeAdapter(ABC):
     async def close_position_market(self, symbol: str, side: str, quantity: float) -> dict:
         ...
 
+    # ---------------------------------------------------------------- reduce-only LIMIT orders (Strategy Hub take profit)
+    @abstractmethod
+    async def limit_reduce_order(self, symbol: str, side: str, quantity: float, price: float) -> dict:
+        """A resting reduce-only LIMIT order (GTC). Returns the order dict with `orderId`.
+        On an ambiguous network failure it asks the exchange by the same client order id before giving up."""
+
+    @abstractmethod
+    async def get_order(self, symbol: str, order_id) -> dict | None:
+        """One regular order by id, Binance-style keys: status (NEW / PARTIALLY_FILLED / FILLED / CANCELED /
+        EXPIRED), executedQty (coins), origQty (coins), avgPrice. None if the exchange says it does not exist."""
+
+    @abstractmethod
+    async def cancel_regular_order(self, symbol: str, order_id):
+        """Cancel one regular (non-algo) order."""
+
     # ---------------------------------------------------------------- native stop/TP (algo) orders
     # trigger_px_type (2026-09-16, owner request - wiring an OKX dashboard
     # setting that was previously accepted but silently ignored): which
@@ -181,6 +196,13 @@ class BaseExchangeAdapter(ABC):
     async def stop_market_order(self, symbol: str, side: str, trigger_price: float,
                                  skip_throttle: bool = False, trigger_px_type: str = "mark") -> dict:
         ...
+
+    async def stop_limit_order(self, symbol: str, side: str, trigger_price: float, limit_price: float,
+                               quantity: float, skip_throttle: bool = False, trigger_px_type: str = "mark") -> dict:
+        """Stop-LIMIT protective order (Strategy Hub Stop Loss / Trailing Stop, owner decision 2026-10-23):
+        when the trigger price is reached, a reduce-only LIMIT order at limit_price for `quantity` is placed.
+        Returns a dict with "algoId". Platforms implement it; there is no silent fallback to a market stop."""
+        raise NotImplementedError("stop_limit_order is not available on this platform")
 
     @abstractmethod
     async def take_profit_market_order(self, symbol: str, side: str, trigger_price: float,

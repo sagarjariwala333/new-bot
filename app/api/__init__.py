@@ -12,7 +12,7 @@ log = logging.getLogger("api")
 from app.api.schemas import (
     AccountCreate, AccountUpdate, PairCreate, PairUpdate,
     LoginRequest, ChangePasswordRequest, ForgotPasswordRequest, ResetPasswordRequest,
-    WalkForwardRequest, MonteCarloRequest,
+    WalkForwardRequest, MonteCarloRequest, PlanBody, LibrarySave, LossLimitsSave,
     DefaultSettingsSave, AlertEmailSave, LiveTradingSwitch,
 )
 from app import default_settings as ds
@@ -26,7 +26,12 @@ from app.auth import (
 from app import ledger
 from app import reconciliation
 from app import analysis
+from app import hub_backtest
 from app.instance import _params_from_pair
+from app import hub_api
+from app import chart_api
+from app import strategy_library
+from app import loss_limits
 from app import global_control
 
 router = APIRouter(prefix="/api")
@@ -379,13 +384,108 @@ async def update_pair(account_id: str, symbol: str, body: PairUpdate):
         # applied to the running instance, until it's genuinely flat. See
         # BotInstance._pending_restart_on_flat and manager.restart_any_
         # pending() for the other half of this.
-        if inst.state.status in ("IN_POSITION", "UNPROTECTED", "CLOSING"):
+        if inst.state.status in ("IN_POSITION", "UNPROTECTED", "CLOSING") or getattr(inst, "_hub_busy", False) is True:
             inst._pending_restart_on_flat = True
             inst._log("Config updated - will apply once this pair is flat (a position is "
                       "currently open or being closed).")
         else:
             await manager.restart(account_id, symbol)
     return asdict(pc)
+
+
+@router.get("/accounts/{account_id}/pairs/{symbol}/plan", dependencies=[auth_dep])
+async def get_pair_plan(account_id: str, symbol: str):
+    acc = store.get_account(account_id)
+    if acc is None or symbol not in acc.pairs:
+        raise HTTPException(404, "pair not found")
+    return hub_api.plan_view(acc.pairs[symbol])
+
+
+@router.put("/accounts/{account_id}/pairs/{symbol}/plan", dependencies=mutating_deps)
+async def set_pair_plan(account_id: str, symbol: str, body: PlanBody):
+    acc = store.get_account(account_id)
+    if acc is None or symbol not in acc.pairs:
+        raise HTTPException(404, "pair not found")
+    _refuse_if_frozen(acc.pairs[symbol], symbol, "editing the strategy plan")
+    try:
+        return await hub_api.apply_plan(store, manager, account_id, symbol, body.plan)
+    except hub_api.PlanRefused as e:
+        raise HTTPException(400, str(e))
+
+
+@router.delete("/accounts/{account_id}/pairs/{symbol}/plan", dependencies=mutating_deps)
+async def remove_pair_plan(account_id: str, symbol: str):
+    """Remove plan: takes the strategy off the pair (it goes into the library history first)."""
+    acc = store.get_account(account_id)
+    if acc is None or symbol not in acc.pairs:
+        raise HTTPException(404, "pair not found")
+    _refuse_if_frozen(acc.pairs[symbol], symbol, "removing the strategy plan")
+    try:
+        return await hub_api.remove_plan(store, manager, account_id, symbol, "binance")
+    except hub_api.PlanRefused as e:
+        raise HTTPException(409, str(e))
+
+
+# ---------------------------------------------------------------- strategy library (2026-10-24)
+@router.get("/library", dependencies=[auth_dep])
+async def get_library():
+    try:
+        return strategy_library.list_all()
+    except strategy_library.LibraryError as e:
+        raise HTTPException(e.status, str(e))
+
+
+@router.post("/library", dependencies=mutating_deps)
+async def save_to_library(body: LibrarySave):
+    if body.platform == "okx":
+        from app.okx_store import okx_store as st
+    elif body.platform == "binance":
+        st = store
+    else:
+        raise HTTPException(400, "platform must be binance or okx")
+    acc = st.get_account(body.account_id)
+    if acc is None or body.symbol not in acc.pairs:
+        raise HTTPException(404, "pair not found")
+    try:
+        return strategy_library.save(body.name, body.plan, body.platform, body.account_id, acc.name, body.symbol,
+                                     body.timeframe)
+    except strategy_library.LibraryError as e:
+        raise HTTPException(e.status, str(e))
+
+
+@router.delete("/library/{entry_id}", dependencies=mutating_deps)
+async def delete_from_library(entry_id: str):
+    try:
+        return strategy_library.delete(entry_id)
+    except strategy_library.LibraryError as e:
+        raise HTTPException(e.status, str(e))
+
+
+# ---------------------------------------------------------------- loss limits: account and entire levels (2026-11-01)
+def _loss_limit_account_ids() -> list:
+    from app.okx_store import okx_store
+    return [a.id for a in store.list_accounts()] + [a.id for a in okx_store.list_accounts()]
+
+
+@router.get("/loss-limits", dependencies=[auth_dep])
+async def get_loss_limits():
+    try:
+        return loss_limits.status(account_ids=_loss_limit_account_ids())
+    except loss_limits.LossLimitError as e:
+        raise HTTPException(e.status, str(e))
+
+
+@router.post("/loss-limits", dependencies=mutating_deps)
+async def save_loss_limits(body: LossLimitsSave):
+    known = set(_loss_limit_account_ids())
+    for acc_id in (body.accounts or {}):
+        if acc_id not in known:
+            raise HTTPException(404, f"account {acc_id} not found")
+    try:
+        loss_limits.save_settings(body.entire, body.accounts)
+        return await get_loss_limits()
+    except loss_limits.LossLimitError as e:
+        raise HTTPException(e.status, str(e))
 
 
 @router.delete("/accounts/{account_id}/pairs/{symbol}", dependencies=mutating_deps)
@@ -430,7 +530,7 @@ async def stop_pair(account_id: str, symbol: str):
     acc = store.get_account(account_id)
     if acc is not None and symbol in acc.pairs:
         _refuse_if_frozen(acc.pairs[symbol], symbol, "stopping")
-    await manager.stop(account_id, symbol)
+    await manager.pause(account_id, symbol)    # a hub pair with Shadow mode keeps its shadow running
     return {"stopped": True}
 
 
@@ -517,7 +617,7 @@ async def _fetch_history(account_id: str, symbol: str, timeframe: str, limit: in
         "open_time", "open", "high", "low", "close", "volume", "close_time",
         "qav", "trades", "tbbav", "tbqav", "ignore",
     ])
-    for col in ["open", "high", "low", "close"]:
+    for col in ["open", "high", "low", "close", "volume"]:
         df[col] = df[col].astype(float)
     df["open_time"] = df["open_time"].astype("int64")
     return df.iloc[:-1].reset_index(drop=True)  # drop the still-forming candle
@@ -529,16 +629,13 @@ async def walk_forward(account_id: str, symbol: str, body: WalkForwardRequest):
     if acc is None or symbol not in acc.pairs:
         raise HTTPException(404, "pair not found")
     pc = acc.pairs[symbol]
+    if not getattr(pc, "plan", None):
+        raise HTTPException(400, "This pair has no Strategy Hub plan. Save a plan in the Strategy Hub first - the "
+                                 "Analysis tab tests the pair's own Hub strategy.")
     df = await _fetch_history(account_id, symbol, pc.timeframe, body.limit)
     try:
-        p = _params_from_pair(pc)
-    except RuntimeError as e:
-        raise HTTPException(400, str(e))
-    try:
-        return analysis.walk_forward_analysis(df, p, n_folds=body.n_folds,
-                                               initial_equity=body.initial_equity,
-                                               commission_pct=body.commission_pct,
-                                               slippage_pct=body.slippage_pct)
+        return hub_backtest.walk_forward(df, pc.plan, n_folds=body.n_folds, initial_equity=body.initial_equity,
+                                         commission_pct=body.commission_pct, slippage_pct=body.slippage_pct)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -549,18 +646,16 @@ async def monte_carlo(account_id: str, symbol: str, body: MonteCarloRequest):
     if acc is None or symbol not in acc.pairs:
         raise HTTPException(404, "pair not found")
     pc = acc.pairs[symbol]
+    if not getattr(pc, "plan", None):
+        raise HTTPException(400, "This pair has no Strategy Hub plan. Save a plan in the Strategy Hub first - the "
+                                 "Analysis tab tests the pair's own Hub strategy.")
     df = await _fetch_history(account_id, symbol, pc.timeframe, body.limit)
     try:
-        p = _params_from_pair(pc)
-    except RuntimeError as e:
+        return hub_backtest.monte_carlo(df, pc.plan, n_sims=body.n_sims, initial_equity=body.initial_equity,
+                                        commission_pct=body.commission_pct, slippage_pct=body.slippage_pct,
+                                        seed=body.seed)
+    except ValueError as e:
         raise HTTPException(400, str(e))
-    trades = analysis.simulate_trades(df, p, initial_equity=body.initial_equity,
-                                      commission_pct=body.commission_pct, slippage_pct=body.slippage_pct)
-    if not trades:
-        raise HTTPException(400, "No simulated trades in this history window - widen `limit` or check "
-                                  "the pair's signal frequency.")
-    return analysis.monte_carlo_simulation([t.pnl for t in trades], n_sims=body.n_sims,
-                                           initial_equity=body.initial_equity, seed=body.seed)
 
 
 # ---------------------------------------------------------------- global emergency control
@@ -582,7 +677,33 @@ async def start_all():
     return result
 
 
+# ---------------------------------------------------------------- Chart tab (2026-10-24, read-only)
+@router.get("/chart/{platform}/{account_id}/{symbol}", dependencies=[auth_dep])
+async def get_chart(platform: str, account_id: str, symbol: str, limit: int = 300):
+    """Real candles + trade markers + the open trade's levels, and the shadow tracker line below them.
+    Read-only: never places, changes or closes anything."""
+    try:
+        return await chart_api.chart_data(platform, account_id, symbol, limit)
+    except chart_api.ChartError as e:
+        raise HTTPException(e.status, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Could not read the chart data: {e}")
+
+
 # ---------------------------------------------------------------- BASE V3 tracker tab
+def _tracker_view_settings(pc):
+    """(tracker start amount, shadow on, shadow trades) for the Tracker tab. A Strategy Hub pair keeps these in its
+    plan's SHADOW MODE box (same rule as app/instance.py); a pair with no shadow box ticked starts the tracker at 1.0
+    (percent view). Never raises on a blank value."""
+    plan = pc.plan or {}
+    sh = plan.get("shadow") or {}
+    if plan:
+        on = bool(sh.get("on"))
+        start = (sh.get("tracker_start") if on else None) or pc.tracker_start_balance or 1.0
+        return start, on, (sh.get("trades") if on else None)
+    return pc.tracker_start_balance or 1.0, bool(pc.use_shadow), pc.shadow_trades
+
+
 @router.get("/tracker/{account_id}/{symbol}", dependencies=[auth_dep])
 def get_tracker(account_id: str, symbol: str):
     """BASE V3 tracker for one pair - read-only. Separate from the live
@@ -596,13 +717,13 @@ def get_tracker(account_id: str, symbol: str):
     if inst is not None:
         t = inst.tracker
     else:
-        t = base_v3_tracker.load("binance", account_id, symbol,
-                                 acc.pairs[symbol].tracker_start_balance)
+        t = base_v3_tracker.load("binance", account_id, symbol, _tracker_view_settings(acc.pairs[symbol])[0])
     sh = t.get_shadow()
+    _, _use_shadow, _shadow_trades = _tracker_view_settings(acc.pairs[symbol])
     return {
         "summary": t.summary(),
-        "shadow_trades_setting": acc.pairs[symbol].shadow_trades,
-        "use_shadow": acc.pairs[symbol].use_shadow,
+        "shadow_trades_setting": _shadow_trades,
+        "use_shadow": _use_shadow,
         "real_trades": list(t.real_trades),
         "paper_trades": list(sh.history),
         "open_paper_trade": sh.current,

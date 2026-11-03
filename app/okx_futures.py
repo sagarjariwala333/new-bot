@@ -228,7 +228,9 @@ class OKXFuturesClient(BaseExchangeAdapter):
         if order_type_hint:
             normalized["orderType"] = order_type_hint
         elif float(raw.get("slTriggerPx") or 0) > 0:
-            normalized["orderType"] = "STOP_MARKET"
+            # slOrdPx -1 = market once triggered; a real price = a stop-LIMIT (Strategy Hub Stop Loss / Trailing)
+            ord_px = str(raw.get("slOrdPx") or "-1")
+            normalized["orderType"] = "STOP_MARKET" if ord_px in ("-1", "", "0") else "STOP"
         elif float(raw.get("tpTriggerPx") or 0) > 0:
             normalized["orderType"] = "TAKE_PROFIT_MARKET"
         normalized["triggerPrice"] = raw.get("slTriggerPx") or raw.get("tpTriggerPx")
@@ -772,7 +774,8 @@ class OKXFuturesClient(BaseExchangeAdapter):
 
     # ---------------------------------------------------------------- native stop/TP (algo) orders
     async def _place_conditional(self, symbol: str, side: str, trigger_price: float,
-                                  trigger_key: str, trigger_px_type: str = "mark") -> dict:
+                                  trigger_key: str, trigger_px_type: str = "mark",
+                                  limit_price: float | None = None, quantity: float | None = None) -> dict:
         """trigger_key is 'sl' or 'tp'. ordPx=-1 means 'execute as market
         once triggered', OKX's equivalent of Binance's *_MARKET types.
 
@@ -804,6 +807,13 @@ class OKXFuturesClient(BaseExchangeAdapter):
             f"{trigger_key}TriggerPxType": trigger_px_type,
         }
         order_type_hint = "STOP_MARKET" if trigger_key == "sl" else "TAKE_PROFIT_MARKET"
+        if limit_price is not None:
+            # Stop-LIMIT (Strategy Hub Stop Loss / Trailing Stop, 2026-10-23): a limit price and a size in
+            # contracts instead of "close the whole position at market". MUST BE VERIFIED ON OKX DEMO.
+            body.pop("closeFraction", None)
+            body[f"{trigger_key}OrdPx"] = self._plain_number(limit_price)
+            body["sz"] = await self._coin_qty_to_contracts(symbol, float(quantity or 0))
+            order_type_hint = "STOP"
         try:
             data = await self._request("POST", "/api/v5/trade/order-algo", body=body)
         except Exception as place_exc:
@@ -855,6 +865,11 @@ class OKXFuturesClient(BaseExchangeAdapter):
                                         skip_throttle: bool = False, trigger_px_type: str = "mark") -> dict:
         return await self._place_conditional(symbol, side, trigger_price, "tp", trigger_px_type)
 
+    async def stop_limit_order(self, symbol: str, side: str, trigger_price: float, limit_price: float,
+                               quantity: float, skip_throttle: bool = False, trigger_px_type: str = "mark") -> dict:
+        return await self._place_conditional(symbol, side, trigger_price, "sl", trigger_px_type,
+                                             limit_price=limit_price, quantity=quantity)
+
     async def get_open_algo_orders(self, symbol: str) -> list[dict]:
         data = await self._request(
             "GET", "/api/v5/trade/orders-algo-pending",
@@ -892,6 +907,64 @@ class OKXFuturesClient(BaseExchangeAdapter):
         )
 
     # ---------------------------------------------------------------- regular orders / cleanup
+    _ORDER_STATE_MAP = {"live": "NEW", "partially_filled": "PARTIALLY_FILLED", "filled": "FILLED",
+                        "canceled": "CANCELED", "mmp_canceled": "CANCELED"}
+
+    @staticmethod
+    def _plain_number(x: float) -> str:
+        from decimal import Decimal
+        return format(Decimal(str(x)), "f")
+
+    async def limit_reduce_order(self, symbol: str, side: str, quantity: float, price: float) -> dict:
+        """Resting reduce-only LIMIT order (net mode) - the Strategy Hub's take-profit levels. Quantity in
+        coins, converted to contracts. Same ambiguous-response handling as market_order (clOrdId lookup).
+        NOT YET PROVEN ON AN OKX DEMO ACCOUNT - test on demo first."""
+        sz = await self._coin_qty_to_contracts(symbol, quantity)
+        mgn_mode, _ = self._leverage_state.get(symbol, ("isolated", 1))
+        client_order_id = self._new_client_order_id()
+        try:
+            data = await self._request(
+                "POST", "/api/v5/trade/order",
+                body={"instId": symbol, "tdMode": mgn_mode, "side": side.lower(), "ordType": "limit",
+                      "sz": sz, "px": self._plain_number(price), "reduceOnly": True, "clOrdId": client_order_id},
+            )
+            return self._normalize_order(data["data"][0])
+        except (aiohttp.ClientError, asyncio.TimeoutError) as ambiguous_exc:
+            try:
+                existing = await self.get_order_by_client_id(symbol, client_order_id)
+            except Exception:
+                existing = None
+            if existing is not None:
+                return existing
+            ambiguous_exc.client_order_id = client_order_id
+            raise ambiguous_exc
+
+    async def get_order(self, symbol: str, order_id) -> dict | None:
+        """GET /api/v5/trade/order by ordId, shaped like Binance's order (status / executedQty / origQty /
+        avgPrice, coins)."""
+        try:
+            resp = await self._request("GET", "/api/v5/trade/order", params={"instId": symbol, "ordId": str(order_id)})
+        except OKXAPIError as e:
+            if e.code in ORDER_ALREADY_GONE_CODES:
+                return None
+            raise
+        rows = resp.get("data") or []
+        if not rows:
+            return None
+        raw = rows[0]
+        info = await self.get_symbol_info(symbol)
+        ct_val = getattr(info, "ct_val", 1.0) or 1.0
+        out = self._normalize_order(raw)
+        out["status"] = self._ORDER_STATE_MAP.get(raw.get("state"), "NEW")
+        out["executedQty"] = float(raw.get("accFillSz") or 0) * ct_val
+        out["origQty"] = float(raw.get("sz") or 0) * ct_val
+        out["avgPrice"] = raw.get("avgPx") or "0"
+        return out
+
+    async def cancel_regular_order(self, symbol: str, order_id):
+        return await self._request("POST", "/api/v5/trade/cancel-order",
+                                   body={"instId": symbol, "ordId": str(order_id)})
+
     async def get_open_orders(self, symbol: str) -> list[dict]:
         data = await self._request("GET", "/api/v5/trade/orders-pending", params={"instId": symbol})
         return data["data"]
@@ -927,6 +1000,10 @@ class OKXFuturesClient(BaseExchangeAdapter):
         if order_id is not None:
             params["ordId"] = order_id
         data = await self._request("GET", "/api/v5/trade/fills", params=params)
+        try:
+            ct_val = float(getattr(await self.get_symbol_info(symbol), "ct_val", 1.0) or 1.0)
+        except Exception:
+            ct_val = None
         normalized = []
         for row in data["data"]:
             r = dict(row)
@@ -945,5 +1022,14 @@ class OKXFuturesClient(BaseExchangeAdapter):
             # fallback (mark price) even though the real fill price was
             # available all along, just under a different key.
             r["price"] = row.get("fillPx")
+            # 2026-10-24 (part closed outside the bot): the same field names as Binance - quantity in COINS
+            # (fillSz is contracts x ctVal, like positionAmt), time in ms, side upper case, fill id.
+            try:
+                r["qty"] = float(row.get("fillSz") or 0) * ct_val
+            except (TypeError, ValueError):
+                r["qty"] = None
+            r["time"] = row.get("ts")
+            r["side"] = str(row.get("side") or "").upper()
+            r["id"] = row.get("tradeId")
             normalized.append(r)
         return normalized

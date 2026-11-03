@@ -168,6 +168,9 @@ def _reset_all_shared_rate_trackers_FOR_TESTS_ONLY():
     _registry.clear()
 
 
+BINANCE_MAX_KLINES = 1500   # Binance futures: most candles one klines request returns
+
+
 @dataclass
 class BinanceFuturesClient(BaseExchangeAdapter):
     api_key: str
@@ -433,10 +436,27 @@ class BinanceFuturesClient(BaseExchangeAdapter):
 
     # ---------------------------------------------------------------- market data
     async def get_klines(self, symbol: str, interval: str, limit: int = 500) -> list[list]:
-        return await self._request(
-            "GET", "/fapi/v1/klines",
-            params={"symbol": symbol, "interval": interval, "limit": limit},
-        )
+        """Oldest first. Binance gives at most 1,500 candles per request: a bigger `limit` (the Analysis tab, up to
+        5,000) is fetched in pages backwards with endTime (2026-10-24). Up to 1,500 = one request, as before."""
+        if limit <= BINANCE_MAX_KLINES:
+            return await self._request(
+                "GET", "/fapi/v1/klines",
+                params={"symbol": symbol, "interval": interval, "limit": limit},
+            )
+        rows: list = []
+        end_time = None
+        while len(rows) < limit:
+            params = {"symbol": symbol, "interval": interval, "limit": min(BINANCE_MAX_KLINES, limit - len(rows))}
+            if end_time is not None:
+                params["endTime"] = end_time
+            page = await self._request("GET", "/fapi/v1/klines", params=params)
+            if not page:
+                break
+            rows = list(page) + rows
+            end_time = int(page[0][0]) - 1
+            if len(page) < params["limit"]:
+                break
+        return rows[-limit:]
 
     async def get_mark_price(self, symbol: str) -> float:
         data = await self._request("GET", "/fapi/v1/premiumIndex", params={"symbol": symbol})
@@ -688,6 +708,48 @@ class BinanceFuturesClient(BaseExchangeAdapter):
                 existing = None
             if existing is not None:
                 log.warning("Confirmed: the ambiguous SL placement for %s actually went "
+                            "through (algoId %s) - using the real order, not placing another.",
+                            symbol, existing.get("algoId"))
+                return existing
+            self._log_ambiguous_order_unresolved(symbol, client_algo_id, ambiguous_exc)
+            raise ambiguous_exc
+
+    async def stop_limit_order(self, symbol: str, side: str, trigger_price: float, limit_price: float,
+                               quantity: float, skip_throttle: bool = False, trigger_px_type: str = "mark") -> dict:
+        """STOP (stop-LIMIT) conditional order via the Algo Order API - the Strategy Hub Stop Loss and
+        Trailing Stop (owner decision 2026-10-23, option B: trigger and limit are the same number). When the
+        MARK price reaches triggerPrice, Binance places a LIMIT order at `price`.
+
+        closePosition is NOT used: Binance documents closePosition only for STOP_MARKET / TAKE_PROFIT_MARKET
+        and refuses it together with quantity / reduceOnly. So the quantity is sent with reduceOnly=true, and
+        the bot puts the stop back with the remaining quantity after every take-profit fill.
+        NOT PROVEN ON THE REAL EXCHANGE: Binance may refuse a reduce-only stop next to the reduce-only
+        take-profit orders - test on Binance testnet first.
+
+        Same lost-reply recovery as stop_market_order (the same clientAlgoId is looked up before giving up)."""
+        client_algo_id = self._new_client_order_id()
+        if not skip_throttle:
+            await self._throttle_if_near_order_limit()
+        try:
+            return await self._request(
+                "POST", "/fapi/v1/algoOrder", signed=True,
+                params={
+                    "algoType": "CONDITIONAL", "symbol": symbol, "side": side,
+                    "type": "STOP", "triggerPrice": trigger_price, "price": limit_price,
+                    "quantity": quantity, "timeInForce": "GTC", "reduceOnly": "true",
+                    "workingType": "MARK_PRICE", "priceProtect": "false", "clientAlgoId": client_algo_id,
+                },
+            )
+        except (aiohttp.ClientError, asyncio.TimeoutError) as ambiguous_exc:
+            log.warning("Stop-limit placement for %s: response ambiguous (%s) - querying by "
+                        "clientAlgoId %s to confirm before giving up.",
+                        symbol, ambiguous_exc, client_algo_id)
+            try:
+                existing = await self.get_algo_order_by_client_id(client_algo_id)
+            except Exception:
+                existing = None
+            if existing is not None:
+                log.warning("Confirmed: the ambiguous stop-limit placement for %s actually went "
                             "through (algoId %s) - using the real order, not placing another.",
                             symbol, existing.get("algoId"))
                 return existing
@@ -1014,6 +1076,48 @@ class BinanceFuturesClient(BaseExchangeAdapter):
             "DELETE", "/fapi/v1/order", signed=True,
             params={"symbol": symbol, "orderId": order_id},
         )
+
+    @staticmethod
+    def _plain_number(x: float) -> str:
+        """A number as plain decimal text (never 1e-05 style), for order parameters."""
+        from decimal import Decimal
+        return format(Decimal(str(x)), "f")
+
+    async def limit_reduce_order(self, symbol: str, side: str, quantity: float, price: float) -> dict:
+        """Resting reduce-only LIMIT (GTC) - the Strategy Hub's take-profit levels. side = the side that
+        REDUCES the position (SELL for a long). Same ambiguous-response handling as market_order: on a
+        network-level failure it queries by the same client order id before ever concluding anything.
+        NOT YET PROVEN ON A REAL BINANCE ACCOUNT - test on testnet first."""
+        client_order_id = self._new_client_order_id()
+        await self._throttle_if_near_order_limit()
+        try:
+            return await self._request(
+                "POST", "/fapi/v1/order", signed=True,
+                params={"symbol": symbol, "side": side, "type": "LIMIT", "timeInForce": "GTC",
+                        "quantity": self._plain_number(quantity), "price": self._plain_number(price),
+                        "reduceOnly": "true", "newClientOrderId": client_order_id},
+            )
+        except (aiohttp.ClientError, asyncio.TimeoutError) as ambiguous_exc:
+            log.warning("Limit reduce order for %s: response ambiguous (%s) - querying by client order id %s.",
+                        symbol, ambiguous_exc, client_order_id)
+            try:
+                existing = await self.get_order_by_client_id(symbol, client_order_id)
+            except Exception:
+                existing = None
+            if existing is not None:
+                return existing
+            self._log_ambiguous_order_unresolved(symbol, client_order_id, ambiguous_exc)
+            raise ambiguous_exc
+
+    async def get_order(self, symbol: str, order_id) -> dict | None:
+        """GET /fapi/v1/order by orderId. None = the exchange says it does not exist."""
+        try:
+            return await self._request("GET", "/fapi/v1/order", signed=True,
+                                       params={"symbol": symbol, "orderId": order_id})
+        except BinanceAPIError as e:
+            if e.code in ORDER_ALREADY_GONE_CODES:
+                return None
+            raise
 
     async def cancel_all_open_orders(self, symbol: str):
         """Symbol-wide cancel of BOTH regular orders and algo (conditional

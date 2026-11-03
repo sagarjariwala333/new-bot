@@ -69,13 +69,25 @@ class FakeClient:
         self.get_user_trades_calls: list[int] = []
         self.fail_get_user_trades = False
 
+        # Strategy Hub take-profit LIMIT orders (regular, reduce-only)
+        self.limit_orders: dict[int, dict] = {}
+        self.limit_calls: list[tuple[str, str, float, float]] = []
+        self.fail_limit_order = False
+        self.stop_cancel_fails = False
+
+        # Strategy Hub stop-LIMIT protective orders (Stop Loss / Trailing Stop, 2026-10-23)
+        self.stop_limit_calls: list[tuple[str, str, float, float, float]] = []
+        self.fail_stop_limit_order = False
+
     def _new_id(self) -> int:
         self._next_id += 1
         return self._next_id
 
     # ---------------------------------------------------------------- reads
     async def get_open_orders(self, symbol: str) -> list[dict]:
-        return list(self.open_orders)
+        resting = [{"orderId": oid, "clientOrderId": "hullbot_fake_lim", "status": "NEW"}
+                   for oid, o in self.limit_orders.items() if o["status"] in ("NEW", "PARTIALLY_FILLED")]
+        return list(self.open_orders) + resting
 
     async def get_position_risk(self, symbol: str) -> dict | None:
         return self.position
@@ -217,6 +229,18 @@ class FakeClient:
         })
         return {"algoId": algo_id}
 
+    async def stop_limit_order(self, symbol: str, side: str, trigger_price: float, limit_price: float,
+                               quantity: float, skip_throttle: bool = False, trigger_px_type: str = "mark") -> dict:
+        if self.fail_stop_limit_order:
+            raise BinanceAPIError(400, {"code": -2022, "msg": "simulated stop-limit failure"})
+        algo_id = self._new_id()
+        self.stop_limit_calls.append((symbol, side, trigger_price, limit_price, quantity))
+        self.open_algo_orders.append({
+            "algoId": algo_id, "orderType": "STOP", "triggerPrice": str(trigger_price), "price": str(limit_price),
+            "quantity": str(quantity), "clientAlgoId": "hullbot_fake_sll", "algoStatus": "NEW",
+        })
+        return {"algoId": algo_id}
+
     async def take_profit_market_order(self, symbol: str, side: str, trigger_price: float,
                                         skip_throttle: bool = False, trigger_px_type: str = "mark") -> dict:
         if self.fail_take_profit_order:
@@ -234,7 +258,22 @@ class FakeClient:
         self.open_algo_orders = [o for o in self.open_algo_orders if o["algoId"] != algo_id]
         return {"algoId": algo_id, "code": "200", "msg": "success"}
 
+    async def limit_reduce_order(self, symbol: str, side: str, quantity: float, price: float) -> dict:
+        if self.fail_limit_order:
+            raise BinanceAPIError(400, {"code": -2022, "msg": "simulated limit order failure"})
+        oid = self._new_id()
+        self.limit_calls.append((symbol, side, quantity, price))
+        self.limit_orders[oid] = {"orderId": oid, "status": "NEW", "executedQty": "0", "origQty": str(quantity),
+                                  "avgPrice": "0", "price": price, "side": side}
+        return dict(self.limit_orders[oid])
+
+    async def get_order(self, symbol: str, order_id) -> dict | None:
+        o = self.limit_orders.get(order_id)
+        return dict(o) if o else None
+
     async def cancel_regular_order(self, symbol: str, order_id: int):
+        if order_id in self.limit_orders and self.limit_orders[order_id]["status"] in ("NEW", "PARTIALLY_FILLED"):
+            self.limit_orders[order_id]["status"] = "CANCELED"
         self.open_orders = [o for o in self.open_orders if o.get("orderId") != order_id]
         return {"orderId": order_id, "status": "CANCELED"}
 
@@ -250,6 +289,9 @@ class FakeClient:
             raise BinanceAPIError(500, {"code": -1001, "msg": "simulated cleanup failure"})
         self.open_orders = []
         self.open_algo_orders = []
+        for o in self.limit_orders.values():
+            if o["status"] in ("NEW", "PARTIALLY_FILLED"):
+                o["status"] = "CANCELED"
         return {}
 
     async def close(self):

@@ -166,7 +166,7 @@ def main():
         page.wait_for_timeout(400)
         check("Default Settings tab is shown", page.is_visible("#tabpage-defaults"))
         vals = page.eval_on_selector_all("#ds-fields-binance input, #ds-fields-binance select", "els => els.map(e => e.value)")
-        check("every Binance default field starts blank", len(vals) > 20 and all(v == "" for v in vals), f"{len(vals)} fields, non-blank: {[v for v in vals if v != '']}")
+        check("every Binance default field starts blank", len(vals) == 5 and all(v == "" for v in vals), f"{len(vals)} fields, non-blank: {[v for v in vals if v != '']}")
         okx_vals = page.eval_on_selector_all("#ds-fields-okx input, #ds-fields-okx select", "els => els.map(e => e.value)")
         check("every OKX default field starts blank (incl. trigger type)", len(okx_vals) == len(vals) + 1 and all(v == "" for v in okx_vals))
         check("Binance badge says NOT CONFIRMED", "NOT CONFIRMED" in page.inner_text("#ds-badge-binance"))
@@ -176,12 +176,14 @@ def main():
         confirm_btn(0).click()
         page.wait_for_timeout(500)
         msg = page.inner_text("#ds-msg-binance")
-        check("Confirm with blank fields is refused and names blank fields", "still blank" in msg and "hma_length" in msg, msg[:120])
+        check("Confirm with blank fields is refused and names blank fields", "still blank" in msg and "poll_seconds" in msg, msg[:120])
         check("review dialog did NOT open", not page.is_visible("#dlg-ds-review"))
 
         # ---- fill every Binance field, save, then confirm via the review dialog
         def fill_platform(platform):
-            for key, value in {**tv.STRATEGY_VALUES, **tv.PAIR_EXTRA}.items():
+            for key, value in tv.PAIR_EXTRA.items():
+                if key not in ds.HUB_PAIR_FIELDS:
+                    continue
                 sel = f"#ds-{platform}-{key}"
                 tag = page.eval_on_selector(sel, "e => e.tagName")
                 if tag == "SELECT":
@@ -197,7 +199,7 @@ def main():
         check("Save works and says NOT confirmed yet", "NOT confirmed yet" in page.inner_text("#ds-msg-binance"), page.inner_text("#ds-msg-binance"))
         confirm_btn(0).click()
         page.wait_for_timeout(500)
-        check("review dialog opens with the entered values", page.is_visible("#dlg-ds-review") and str(tv.STRATEGY_VALUES["hma_length"]) in page.inner_text("#ds-review-body"))
+        check("review dialog opens with the entered values", page.is_visible("#dlg-ds-review") and str(tv.PAIR_EXTRA["poll_seconds"]) in page.inner_text("#ds-review-body"))
         page.click("#ds-review-apply")
         page.wait_for_timeout(500)
         check("badge now says CONFIRMED", "CONFIRMED" in page.inner_text("#ds-badge-binance") and "NOT" not in page.inner_text("#ds-badge-binance"))
@@ -210,28 +212,28 @@ def main():
         page.wait_for_timeout(500)
         check("Add Pair dialog opens after confirming", page.is_visible("#dlg-pair"), str(dialogs))
         check("symbol box starts empty (no pre-filled coin)", page.input_value("#pair-symbol") == "")
-        check("pair form is pre-filled from the confirmed defaults", page.input_value("#f_hma_length") == str(tv.STRATEGY_VALUES["hma_length"]))
+        check("pair form is pre-filled from the confirmed defaults", page.input_value("#f_poll_seconds") == str(tv.PAIR_EXTRA["poll_seconds"]))
         page.fill("#pair-symbol", "TESTUSDT")
         page.click("#pair-save")
         page.wait_for_timeout(600)
         pairs = store.get_account(acc.id).pairs
-        check("pair was created on the server from those values", "TESTUSDT" in pairs and pairs["TESTUSDT"].leverage == tv.STRATEGY_VALUES["leverage"])
+        check("pair was created on the server from those values", "TESTUSDT" in pairs and pairs["TESTUSDT"].poll_seconds == tv.PAIR_EXTRA["poll_seconds"])
         check("creating a pair did not start it", pairs["TESTUSDT"].enabled is False)
 
         # ---- editing a default un-confirms it (and existing pairs are untouched)
         page.click("#maintab-defaults")
         page.wait_for_timeout(300)
-        page.fill("#ds-binance-hma_length", "12")
+        page.fill("#ds-binance-poll_seconds", "12")
         save_btn(0).click()
         page.wait_for_timeout(500)
         check("editing a default marks it NOT CONFIRMED again", "NOT CONFIRMED" in page.inner_text("#ds-badge-binance"))
-        check("existing pair kept its own values", store.get_account(acc.id).pairs["TESTUSDT"].hma_length == tv.STRATEGY_VALUES["hma_length"])
+        check("existing pair kept its own values", store.get_account(acc.id).pairs["TESTUSDT"].poll_seconds == tv.PAIR_EXTRA["poll_seconds"])
 
         # ---- an out-of-range value is rejected by the server and shown
-        page.fill("#ds-binance-leverage", "2.5")
+        page.fill("#ds-binance-poll_seconds", "2.5")
         save_btn(0).click()
         page.wait_for_timeout(500)
-        check("a bad value is rejected with a message", "whole number" in page.inner_text("#ds-msg-binance"), page.inner_text("#ds-msg-binance"))
+        check("a bad value is rejected with a message", "Not saved" in page.inner_text("#ds-msg-binance") and "poll_seconds" in page.inner_text("#ds-msg-binance"), page.inner_text("#ds-msg-binance"))
 
         # ---- alert email
         page.fill("#ds-email", "not-an-email")

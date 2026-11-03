@@ -363,6 +363,7 @@ class TestFreezeRefusesEveryMutatingAction(unittest.IsolatedAsyncioTestCase):
         fake_manager = mock.Mock()
         fake_manager.instances_for_account = mock.Mock(return_value=[])
         fake_manager.stop = mock.AsyncMock()
+        fake_manager.pause = mock.AsyncMock()    # 2026-10-24: the Stop button pauses (a hub shadow keeps running)
         fake_manager.start = mock.AsyncMock()
         fake_manager.restart = mock.AsyncMock()
         fake_manager.startup_failures = {}
@@ -391,6 +392,7 @@ class TestFreezeRefusesEveryMutatingAction(unittest.IsolatedAsyncioTestCase):
         self.fake_manager.start.assert_not_called()
         self.fake_manager.stop.assert_not_called()
         self.fake_manager.restart.assert_not_called()
+        self.fake_manager.pause.assert_not_called()
 
     async def test_unfreeze_restores_every_action(self):
         await self.api_module.freeze_pair(self.acc.id, "BTCUSDT")
@@ -399,7 +401,7 @@ class TestFreezeRefusesEveryMutatingAction(unittest.IsolatedAsyncioTestCase):
 
         result = await self.api_module.stop_pair(self.acc.id, "BTCUSDT")
         self.assertEqual(result, {"stopped": True})
-        self.fake_manager.stop.assert_called_once()
+        self.fake_manager.pause.assert_called_once()     # the Stop button now pauses (see app/manager.py)
 
     async def test_freeze_has_no_effect_on_a_currently_running_pair(self):
         """Explicitly confirms the owner's stated design: freeze is purely
@@ -436,6 +438,7 @@ class TestOKXFreezeRefusesEveryMutatingAction(unittest.IsolatedAsyncioTestCase):
         fake_manager = mock.Mock()
         fake_manager.instances_for_account = mock.Mock(return_value=[])
         fake_manager.stop = mock.AsyncMock()
+        fake_manager.pause = mock.AsyncMock()    # 2026-10-24: the Stop button pauses (a hub shadow keeps running)
         fake_manager.start = mock.AsyncMock()
         fake_manager.restart = mock.AsyncMock()
         fake_manager.startup_failures = {}
@@ -448,6 +451,7 @@ class TestOKXFreezeRefusesEveryMutatingAction(unittest.IsolatedAsyncioTestCase):
             await self.okx_api_module.stop_okx_pair(self.acc.id, "BTC-USDT-SWAP")
         self.assertEqual(ctx.exception.status_code, 409)
         self.fake_manager.stop.assert_not_called()
+        self.fake_manager.pause.assert_not_called()
 
     async def test_unfreeze_restores_stop(self):
         await self.okx_api_module.freeze_okx_pair(self.acc.id, "BTC-USDT-SWAP")

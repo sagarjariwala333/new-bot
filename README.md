@@ -1,16 +1,10 @@
-# Futures Bot — "For Dev" package
+# Strategy Hub Bot - OWNER BUILD
 
-Binance and OKX USDⓈ-M perpetual futures bot, run from one web dashboard.
+Binance and OKX USDⓈ-M perpetual futures bot, run from one web dashboard. You build the strategy for each pair
+yourself in the **Strategy Hub** tab. There is **no preset strategy and no starter value**: a first install is
+entirely blank, and a pair with no saved plan does not start.
 
-**This package contains NO trading settings.** Every indicator length, level,
-allocation, leverage, stop and tracker number, and every on/off strategy switch, is
-**blank**. The owner types them into the dashboard (**Default Settings** tab) after
-deployment and presses **Confirm Default Settings**. Until then:
-
-- no new pair can be created (the server refuses it),
-- no pair with a blank setting can be started (the server refuses it),
-- real-money accounts cannot start at all while the **Live trading** switch is OFF
-  (it is OFF by default; Binance testnet / OKX demo accounts are not affected).
+**Owner only.** Keep this package private.
 
 Nothing in this package starts trading by itself.
 
@@ -18,16 +12,18 @@ Nothing in this package starts trading by itself.
 
 | Person | Does |
 |---|---|
-| **IT person** | Deploys the app on the owner's Railway project using `docs/RAILWAY_SETUP.md`, then leaves the project. |
-| **Owner** | Types every secret (dashboard password, encryption key, exchange API keys, Telegram/SMTP) into Railway Variables and the dashboard, fills in the Default Settings, tests, and decides when to turn live trading on. |
+| **IT person (if any)** | Deploys on the owner's Railway project with `docs/RAILWAY_SETUP.md`, then leaves the project. |
+| **Owner** | Types every secret (dashboard password, encryption key, exchange API keys, Telegram/SMTP) into Railway Variables and the dashboard, fills in the Default Settings and each pair's plan, tests, and decides when to turn live trading on. |
 
 ## Project layout
 
 ```
 app/
+  strategy_hub.py      the plan: indicators, flip, wait, sizing, TP, trailing, shadow (pure calculations)
+  hub_trading.py       how a pair with a plan trades (flip order, entry, TP, trailing, shadow)
+  hub_api.py / hub_state.py   saving a plan, per-pair hub memory
   default_settings.py  blank defaults, validation, Confirm step, alert email, live-trading switch
-  strategy.py          strategy calculations (pure, exchange-neutral)
-  base_v3_tracker.py   tracker + shadow state + last processed candle (persisted)
+  strategy.py / base_v3_tracker.py   shared calculations, tracker + shadow state (older code the hub reuses)
   instance.py          one live loop per account+pair: orders, stop, recovery
   manager.py / okx_manager.py   run all Binance / OKX pairs (the start gates live here)
   binance_futures.py / okx_futures.py   exchange adapters
@@ -36,10 +32,10 @@ app/
   static/dashboard.html
   ledger.py, reconciliation.py, risk_guard.py, singleton_lock.py, ...
 deploy/                optional VPS files (systemd, backup, smoke test) - NOT needed on Railway
-docs/RAILWAY_SETUP.md  step-by-step deployment for the IT person
+docs/RAILWAY_SETUP.md  step-by-step deployment
+docs/HANDOFF_READ_FIRST.md  rules and open items, for a new chat
 railway.json           Railway build/deploy/health-check settings
-.env.example           environment variable template (no values)
-tests/                 unittest suite (infrastructure + the blank-settings rules)
+tests/                 unittest suite
 ```
 
 ## Run locally (optional)
@@ -56,20 +52,26 @@ Open http://localhost:8000 and log in.
 
 ## Using the dashboard (owner)
 
-1. **Default Settings** tab: fill in every field for Binance and/or OKX (all start blank),
-   press **Confirm Default Settings**, review the summary, confirm. Also set the alert email here.
+1. **Default Settings** tab: everything starts BLANK. Fill the pair-level settings for Binance and/or OKX, press
+   **Confirm Default Settings**, review the summary, confirm. Also set the alert email here.
 2. **Add Account**: Binance or OKX tab. Keys are encrypted at rest and never shown again.
    Use a testnet / demo account first.
-3. **Add Pair**: the form is pre-filled from your confirmed defaults and each value can be changed per pair.
-   Editing a pair with an open trade applies once it is flat.
-4. **Start / Stop / Freeze** each pair. **STOP ALL / START ALL** cover both exchanges.
-5. **Log**, **Ledger** (real trades, CSV), **Tracker**, **Analysis** (offline walk-forward / Monte Carlo replay;
-   its starting equity and cost numbers are also typed in by you).
-6. **Live trading switch** (Default Settings tab): OFF by default. Turn it on only when you are ready for
+3. **Add Pair** (needs the confirmed defaults). A new pair does NOT start: it has no strategy yet.
+4. **Strategy Hub** tab (Layout 2, 2026-10-23): name the strategy and choose the account. The menu on the left lists
+   8 functions: Pair & chart, Indicators (entry / flip-exit ticks and their numbers), Combine & flip plus hold rule
+   (ALL / ANY / At least N), Entry (entry wait with a warning above 0, size: allocation % or a fixed base amount that
+   grows with the last closed total, optional lock-out %, leverage, email alert on margin), Max loss (% of balance,
+   % of entry amount, or fixed $), Stop loss (trailing), Take profit, Shadow mode. The first four are needed by every
+   strategy; pick the others, press Confirm selection, then open each function and fill it in (nothing is
+   pre-filled; each box has a short explanation beside it). **Save** keeps the plan. **Execute** saves it and starts the
+   pair (it asks you to confirm first). The pair must already be added to the account.
+5. **Start / Stop / Freeze** each pair. A pair with no saved plan will not start. **STOP ALL / START ALL** cover both exchanges.
+6. **Log**, **Ledger** (real trades, CSV), **Tracker**, **Analysis**.
+7. **Live trading switch** (Default Settings tab): OFF by default. Turn it on only when you are ready for
    real-money accounts to trade.
 
-Changing a default later marks that platform *unconfirmed* again, which blocks only the creation of NEW pairs
-until you press Confirm again. Pairs that already exist are not touched.
+A plan saved while the pair holds a trade starts after the trade closes. A flip is: the candle close gives the
+signal, CLOSE, FLAT, CHECK FOR CHANGES IN RULES, otherwise OPEN THE OPPOSITE.
 
 ## Safety features
 

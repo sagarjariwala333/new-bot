@@ -17,7 +17,7 @@
 # access.
 #
 # ─── Usage ───────────────────────────────────────────────────────────────
-#   cd hull_futures_bot
+#   cd strategy_hub_bot
 #   python3 -m venv venv
 #   source venv/bin/activate
 #   pip install -r requirements.txt

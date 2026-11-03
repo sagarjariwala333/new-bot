@@ -2,6 +2,9 @@
 analysis.py
 ===========
 
+NOTE 2026-10-24: the Analysis tab no longer uses this file - it replays the pair's Strategy Hub plan
+(app/hub_backtest.py). This Base V3 replay is kept only for reference and its own tests.
+
 Offline analysis tools that run against HISTORICAL data only, never against
 live capital, and never feed back into any live trading decision. Built
 entirely on top of the BASE V3 functions in strategy.py (compute_indicators,
