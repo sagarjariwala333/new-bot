@@ -56,7 +56,7 @@ After a redeploy the dashboard may briefly show a red banner saying another inst
 Restarting the service is safe for the app itself, but it stops every running pair's loop until the app is back up; running pairs resume on boot. **Do not restart while the owner has real positions open unless the owner agrees.**
 
 ## 6. What you can and cannot check
-You can check: the build succeeds, `/healthz` is OK, the login page loads over HTTPS, the **Default Settings** tab shows blank fields, the app survives a restart with the volume attached (the owner's login still works afterwards).
+You can check: the build succeeds, `/healthz` is OK, the login page loads over HTTPS, the **Default Settings** tab opens with every field blank (shown as not confirmed), the app survives a restart with the volume attached (the owner's login still works afterwards).
 
 You cannot check, and should not try: Add Pair, Start, or anything that trades. Those need the owner's Default Settings, which the app deliberately refuses to work without. Exchange connectivity is only exercised when a pair is started, so the **owner** verifies that on a Binance testnet / OKX demo account after filling in the settings.
 
@@ -69,6 +69,6 @@ You cannot check, and should not try: Add Pair, Start, or anything that trades. 
 - [ ] The IT person is removed from the Railway project and from any GitHub repo, and the owner rotates any token the IT person saw
 
 ## 8. Owner's steps after hand-over
-1. Log in. Open **Default Settings**. Fill in every field for Binance and/or OKX. Press **Confirm Default Settings**, review, confirm. Enter your alert email.
+1. Log in. Open **Default Settings**. Every field is blank: fill every field for Binance and/or OKX. Press **Confirm Default Settings**, review, confirm. Enter your alert email.
 2. Add a **testnet / demo** account with testnet/demo API keys and create a pair. Start it. Watch the log. Check the exchange shows the stop order.
 3. Only then add real accounts. Turn **Live trading** ON when you are ready. It is OFF by default and real-money accounts cannot start while it is OFF.

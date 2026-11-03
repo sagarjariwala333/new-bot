@@ -22,6 +22,7 @@ from app.okx_store import OKXPairConfig  # noqa: E402
 from app.api.schemas import WalkForwardRequest, MonteCarloRequest  # noqa: E402
 import app.api.okx as okx_api  # noqa: E402
 from tests import _test_values as tv  # noqa: E402
+from tests._hub_plan import make_plan  # noqa: E402
 
 
 def _fake_binance_shaped_klines(n=2000, seed=3):
@@ -54,7 +55,9 @@ class TestOKXAnalysisEndpoints(unittest.IsolatedAsyncioTestCase):
         okx_api.okx_store = self.store
 
         self.acc = self.store.create_account("Sub1", "key", "secret", "phrase", demo=True)
-        self.store.add_pair(self.acc.id, tv.okx_pair_config(symbol="BTC-USDT-SWAP", timeframe="4h"))
+        # 2026-10-24: the Analysis tab tests the pair's own Strategy Hub plan
+        self.store.add_pair(self.acc.id, tv.okx_pair_config(symbol="BTC-USDT-SWAP", timeframe="4h", plan=make_plan(ind_rsi=dict(entry=True, flip=True))))
+        self.store.add_pair(self.acc.id, tv.okx_pair_config(symbol="ETH-USDT-SWAP", timeframe="4h"))
 
     async def test_walk_forward_returns_a_result_for_a_real_okx_pair(self):
         with mock.patch("app.okx_futures.OKXFuturesClient.get_klines",
@@ -64,6 +67,16 @@ class TestOKXAnalysisEndpoints(unittest.IsolatedAsyncioTestCase):
                 self.acc.id, "BTC-USDT-SWAP",
                 WalkForwardRequest(limit=300, n_folds=2, initial_equity=tv.ANALYSIS['initial_equity'], commission_pct=0.0, slippage_pct=0.0))
         self.assertIsInstance(result, dict)
+        self.assertEqual(len(result["folds"]), 2)
+
+    async def test_a_pair_without_a_hub_plan_is_refused(self):
+        from fastapi import HTTPException
+        with self.assertRaises(HTTPException) as ctx:
+            await okx_api.okx_walk_forward(
+                self.acc.id, "ETH-USDT-SWAP",
+                WalkForwardRequest(limit=300, n_folds=2, initial_equity=tv.ANALYSIS['initial_equity'], commission_pct=0.0, slippage_pct=0.0))
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("no Strategy Hub plan", str(ctx.exception.detail))
 
     async def test_monte_carlo_returns_a_result_for_a_real_okx_pair(self):
         with mock.patch("app.okx_futures.OKXFuturesClient.get_klines",

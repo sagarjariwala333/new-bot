@@ -36,13 +36,13 @@
 #   3. chmod +x deploy/backup_data.sh
 #   4. Add to crontab (runs every 6 hours, keeps the last 28 = ~1 week):
 #        crontab -e
-#        0 */6 * * * /opt/hull-futures-bot/deploy/backup_data.sh >> /var/log/hull-bot-backup.log 2>&1
+#        0 */6 * * * /opt/strategy-hub-bot/deploy/backup_data.sh >> /var/log/hub-bot-backup.log 2>&1
 #
 # ─── Restoring on a new server ───────────────────────────────────────────
 #   1. Set up the new server the same way (see README.md).
 #   2. Extract BOTH archives into the new server's `data/` directory:
-#        tar -xzf hull-bot-data-<timestamp>.tar.gz -C /opt/hull-futures-bot/
-#        tar -xzf hull-bot-key-<timestamp>.tar.gz -C /opt/hull-futures-bot/
+#        tar -xzf hub-bot-data-<timestamp>.tar.gz -C /opt/strategy-hub-bot/
+#        tar -xzf hub-bot-key-<timestamp>.tar.gz -C /opt/strategy-hub-bot/
 #      The main archive alone is NOT enough to decrypt the stored API
 #      credentials - you need the key archive too, by design (see point 1).
 #   3. Start the bot - it picks up right where the old server's config left
@@ -53,8 +53,8 @@
 
 set -euo pipefail
 
-BOT_DIR="/opt/hull-futures-bot"          # EDIT: where the bot is installed
-BACKUP_DIR="/var/backups/hull-futures-bot"  # EDIT: where to keep local backups
+BOT_DIR="/opt/strategy-hub-bot"          # EDIT: where the bot is installed
+BACKUP_DIR="/var/backups/strategy-hub-bot"  # EDIT: where to keep local backups
 REMOTE_DEST=""                            # EDIT (optional): main archive off-site copy
 KEY_REMOTE_DEST=""                        # EDIT (optional, and DIFFERENT from REMOTE_DEST): key archive off-site copy
 ALLOW_SAME_REMOTE_DEST=0                  # EDIT only if you have a specific reason to send both archives to the
@@ -62,8 +62,8 @@ ALLOW_SAME_REMOTE_DEST=0                  # EDIT only if you have a specific rea
 KEEP_LAST=28                              # how many local backups to retain before pruning older ones
 
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
-ARCHIVE_NAME="hull-bot-data-${TIMESTAMP}.tar.gz"
-KEY_ARCHIVE_NAME="hull-bot-key-${TIMESTAMP}.tar.gz"
+ARCHIVE_NAME="hub-bot-data-${TIMESTAMP}.tar.gz"
+KEY_ARCHIVE_NAME="hub-bot-key-${TIMESTAMP}.tar.gz"
 
 # 2026-09-14 fix (item 14, per a third-party review): the whole point of a
 # separate key archive is that stealing ONE of the two isn't enough to
@@ -110,12 +110,12 @@ echo "[$(date)] Validating ledger files in the new archive..."
 VALIDATION_TMP="$(mktemp -d)"
 trap 'rm -rf "$VALIDATION_TMP"' EXIT
 VALIDATION_FAILED=0
-if ! tar -xzf "${BACKUP_DIR}/${ARCHIVE_NAME}" -C "$VALIDATION_TMP" 2>/tmp/hull_backup_extract_err.$$; then
+if ! tar -xzf "${BACKUP_DIR}/${ARCHIVE_NAME}" -C "$VALIDATION_TMP" 2>/tmp/hub_backup_extract_err.$$; then
     echo "[$(date)] ERROR: could not extract the archive just created for validation - treating this backup as FAILED, not just logging and moving on." >&2
-    cat /tmp/hull_backup_extract_err.$$ >&2
+    cat /tmp/hub_backup_extract_err.$$ >&2
     VALIDATION_FAILED=1
 fi
-rm -f /tmp/hull_backup_extract_err.$$
+rm -f /tmp/hub_backup_extract_err.$$
 BAD_LINES=0
 if [ -d "$VALIDATION_TMP/data/ledger" ]; then
     for f in "$VALIDATION_TMP/data/ledger"/*.jsonl; do
@@ -161,7 +161,7 @@ if [ -n "$KEY_REMOTE_DEST" ] && [ -f "${BACKUP_DIR}/${KEY_ARCHIVE_NAME}" ]; then
 fi
 
 # ─── Prune old local backups beyond KEEP_LAST, oldest first (both kinds) ──
-for PATTERN in "hull-bot-data-*.tar.gz" "hull-bot-key-*.tar.gz"; do
+for PATTERN in "hub-bot-data-*.tar.gz" "hub-bot-key-*.tar.gz"; do
     BACKUP_COUNT=$(ls -1 "${BACKUP_DIR}"/${PATTERN} 2>/dev/null | wc -l)
     if [ "$BACKUP_COUNT" -gt "$KEEP_LAST" ]; then
         TO_DELETE=$((BACKUP_COUNT - KEEP_LAST))

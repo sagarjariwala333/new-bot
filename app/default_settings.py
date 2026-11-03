@@ -2,11 +2,13 @@
 default_settings.py
 ===================
 
-Owner-entered default settings. THIS PACKAGE SHIPS WITH NO VALUES.
+Owner default settings. A first install is entirely BLANK: there are no starter or
+pre-filled values. The owner fills in every field and presses CONFIRM. Until then
+no pair can be created, and the live-trading switch stays OFF.
 
-Every strategy / sizing / risk / tracker / operational number is blank until
-the owner types it into the dashboard ("Default Settings") and presses
-CONFIRM. Nothing in the source code supplies a fallback.
+The pair classes (PairConfig / OKXPairConfig) and the strategy code still have
+NO defaults. A pair only ever gets values from CONFIRMED defaults.
+If default_settings.json exists it is loaded exactly as saved; if it is unreadable the store falls back to BLANK.
 
 What this module provides
   * FIELD_SPECS      - the single list of every owner-supplied setting, with
@@ -52,32 +54,16 @@ VALID_TIMEFRAMES = {
 OKX_VALID_TIMEFRAMES = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d"}
 TRIGGER_PX_TYPES = {"mark", "last", "index"}
 
+# There are NO starter values: a first install is entirely BLANK. The owner fills in every field and presses Confirm.
+
 # kind: int | float | whole (float that must be a whole number) | bool | timeframe | trigger
 # lo/hi: inclusive bounds, lo_exclusive makes the lower bound exclusive.
 # These are generic sanity limits only.
 FIELD_SPECS: dict[str, dict] = {
+    # Pair-level settings only. The strategy itself (indicators, sizing, stop, TP, trailing, shadow ...) lives in
+    # each pair's Strategy Hub plan, never here.
     "timeframe":             {"kind": "timeframe"},
-    "hma_length":            {"kind": "int", "lo": 1, "hi": 500},
-    "ema_filter_length":     {"kind": "int", "lo": 1, "hi": 2000},
-    "ema_sizing_length":     {"kind": "int", "lo": 1, "hi": 2000},
-    "atr_length":            {"kind": "int", "lo": 1, "hi": 500},
-    "use_hold_rule":         {"kind": "bool"},
-    "adx_di_length":         {"kind": "int", "lo": 1, "hi": 500},
-    "adx_smoothing":         {"kind": "int", "lo": 1, "hi": 500},
-    "hold_adx_level":        {"kind": "float", "lo": 0, "hi": 100},
-    "trend_alloc_pct":       {"kind": "float", "lo": 0.1, "hi": 100},
-    "counter_alloc_pct":     {"kind": "float", "lo": 0.1, "hi": 100},
-    "leverage":              {"kind": "whole", "lo": 1, "hi": 125},
-    "counter_leverage":      {"kind": "whole", "lo": 1, "hi": 125},
     "isolated_margin":       {"kind": "bool"},
-    "wait_first_reversal":   {"kind": "bool"},
-    "stop_loss_pct_equity":  {"kind": "float", "lo": 0.1, "hi": 100},
-    "tp1_atr_mult":          {"kind": "float", "lo": 0.1, "hi": 100},
-    "tp2_atr_mult":          {"kind": "float", "lo": 0.1, "hi": 100},
-    "use_shadow":            {"kind": "bool"},
-    "shadow_trades":         {"kind": "int", "lo": 1, "hi": 100},
-    "shadow_slippage_ticks": {"kind": "int", "lo": 0, "hi": 100000},
-    "tracker_start_balance": {"kind": "float", "lo": 0, "lo_exclusive": True, "hi": 1e12},
     "poll_seconds":          {"kind": "int", "lo": 5, "hi": 3600},
     "telegram_enabled":      {"kind": "bool"},
     "ws_staleness_seconds":  {"kind": "float", "lo": 5, "hi": 600},
@@ -165,15 +151,42 @@ def missing_fields(platform: str, values: dict) -> list[str]:
     return bad
 
 
+# A STRATEGY HUB pair (it has a plan) carries its strategy, sizing, stop, TP and trailing inside the plan,
+# so only these pair-level settings are still required next to it.
+HUB_PAIR_FIELDS = ("timeframe", "isolated_margin", "poll_seconds", "telegram_enabled",
+                   "ws_staleness_seconds", "trigger_px_type")
+
+
+def hub_missing_fields(platform: str, values: dict) -> list[str]:
+    """Blank/invalid pair-level settings and plan problems of a Strategy Hub pair."""
+    from app import strategy_hub
+    bad = []
+    for name in HUB_PAIR_FIELDS:
+        if name not in fields_for(platform):
+            continue
+        try:
+            validate_value(platform, name, values.get(name))
+        except SettingsError:
+            bad.append(name)
+    try:
+        strategy_hub.validate_plan(values.get("plan"))
+    except strategy_hub.PlanError as e:
+        bad.append(f"plan ({e})")
+    return bad
+
+
 def require_pair_ready(platform: str, pair_values: dict) -> None:
     """Raises RuntimeError naming every blank/invalid setting on a pair."""
-    bad = missing_fields(platform, pair_values)
-    if bad:
-        raise RuntimeError(
-            "Refusing to start - these settings are blank or invalid on this pair: "
-            + ", ".join(bad)
-            + ". Fill them in on the Default Settings page / pair settings first."
-        )
+    if pair_values.get("plan"):
+        bad = hub_missing_fields(platform, pair_values)
+        if bad:
+            raise RuntimeError(
+                "Refusing to start - these settings are blank or invalid on this pair: "
+                + ", ".join(bad) + ". Complete the strategy plan / pair settings first.")
+        return
+    # No plan = no strategy. There is NO preset strategy, so a pair without a saved plan never starts.
+    raise RuntimeError(
+        "Refusing to start - this pair has no strategy plan. Build one on the Strategy Hub tab and save it first.")
 
 
 _EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,189}\.[^@\s]{2,}$")
@@ -197,8 +210,9 @@ def _blank_platform() -> dict:
 
 
 class DefaultSettingsStore:
-    def __init__(self, path: Path | None = None):
+    def __init__(self, path: Path | None = None, starter: dict | None = None):
         self._path = path or SETTINGS_FILE
+        self._starter = starter
         self._lock = threading.Lock()
         self._data = self._load()
 
@@ -206,6 +220,11 @@ class DefaultSettingsStore:
     def _load(self) -> dict:
         data = {"binance": _blank_platform(), "okx": _blank_platform(),
                 "alert_email": "", "live_trading_enabled": False}
+        if self._starter and not self._path.exists():
+            # FIRST install only: pre-fill, but stay UNCONFIRMED (confirmed=False) and live switch OFF.
+            for plat in PLATFORMS:
+                allowed = set(fields_for(plat))
+                data[plat]["values"] = {k: v for k, v in (self._starter.get(plat) or {}).items() if k in allowed}
         if self._path.exists():
             try:
                 raw = json.loads(self._path.read_text())

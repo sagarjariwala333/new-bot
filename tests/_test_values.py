@@ -40,5 +40,19 @@ def okx_pair_config(symbol="TEST-USDT-SWAP", **over) -> OKXPairConfig:
     return OKXPairConfig(symbol=symbol, **{**STRATEGY_VALUES, **PAIR_EXTRA, "trigger_px_type": "mark", **over})
 
 
+def _a_plan():
+    from tests._hub_plan import make_plan
+    return make_plan(ind_rsi=dict(entry=True))
+
+
+def hub_pair_config(symbol="TESTUSDT", **over) -> PairConfig:
+    """A pair that carries a strategy plan (a pair without a plan never starts)."""
+    return pair_config(symbol, **{"plan": _a_plan(), **over})
+
+
+def okx_hub_pair_config(symbol="TEST-USDT-SWAP", **over) -> OKXPairConfig:
+    return okx_pair_config(symbol, **{"plan": _a_plan(), **over})
+
+
 # Offline-analysis inputs (simulation only) - arbitrary test numbers.
 ANALYSIS = dict(initial_equity=3000.0, commission_pct=0.05, slippage_pct=0.03)

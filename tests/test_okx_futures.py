@@ -254,6 +254,21 @@ class TestResponseNormalization(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(trades[0]["price"], "63451.7")
 
 
+    async def test_user_trades_have_binance_style_qty_time_side_id(self):
+        """2026-10-24 (part closed outside the bot): quantity in COINS (contracts x ctVal, like positionAmt),
+        time in ms, side upper case, fill id."""
+        info = SymbolInfo(symbol="BTC-USDT-SWAP", price_tick=0.1, qty_step=0.01, min_qty=0.01, min_notional=0.0)
+        info.ct_val = 0.01
+        self.client._symbol_cache["BTC-USDT-SWAP"] = info
+        ok_payload = {"code": "0", "msg": "", "data": [{"ordId": "1", "fee": "-0.5", "fillPx": "63451.7",
+                                                        "fillSz": "5", "ts": "1761264000000", "side": "sell",
+                                                        "tradeId": "t9"}]}
+        _install_fake_session(self.client, [(200, ok_payload)])
+        t = (await self.client.get_user_trades("BTC-USDT-SWAP"))[0]
+        self.assertAlmostEqual(t["qty"], 0.05)
+        self.assertEqual((t["time"], t["side"], t["id"]), ("1761264000000", "SELL", "t9"))
+
+
 class TestAlgoOrderInstIdCache(unittest.IsolatedAsyncioTestCase):
     """Class docstring point 3: cancel/query-by-algoId need instId on OKX,
     unlike Binance - this adapter must cache it rather than silently

@@ -61,11 +61,13 @@ from tests import _test_values as tv  # noqa: E402
 
 DASHBOARD = Path(__file__).resolve().parent.parent / "app" / "static" / "dashboard.html"
 
-NON_SETTING_FIELDS = {"symbol", "enabled", "frozen"}
+# "plan" = the Strategy Hub plan of a pair: saved per pair through its own route, never a default setting.
+NON_SETTING_FIELDS = {"symbol", "enabled", "frozen", "plan"}
 
 
 def full_values(platform: str) -> dict:
-    vals = {**tv.STRATEGY_VALUES, **tv.PAIR_EXTRA}
+    # Default Settings hold PAIR-LEVEL settings only; the strategy lives in each pair's Strategy Hub plan.
+    vals = {k: v for k, v in tv.PAIR_EXTRA.items() if k in ds.HUB_PAIR_FIELDS}
     if platform == "okx":
         vals["trigger_px_type"] = "mark"
     return vals
@@ -122,12 +124,20 @@ class TestNothingIsPrefilledInCode(unittest.TestCase):
         self.assertIn("leverage", str(cm.exception))
         self.assertIsInstance(_params_from_pair(tv.pair_config()), strat.StrategyParams)
 
-    def test_every_setting_is_covered_by_the_default_settings_form(self):
+    def test_default_settings_hold_only_pair_level_fields(self):
         binance_fields = {f.name for f in dataclasses.fields(store_module.PairConfig)} - NON_SETTING_FIELDS
         okx_fields = {f.name for f in dataclasses.fields(okx_store_module.OKXPairConfig)} - NON_SETTING_FIELDS
-        self.assertEqual(set(ds.fields_for("binance")), binance_fields)
-        self.assertEqual(set(ds.fields_for("okx")), okx_fields)
-        self.assertEqual(okx_fields - binance_fields, {"trigger_px_type"})
+        self.assertEqual(set(ds.fields_for("binance")), set(ds.HUB_PAIR_FIELDS) - {"trigger_px_type"})
+        self.assertEqual(set(ds.fields_for("okx")), set(ds.HUB_PAIR_FIELDS))
+        self.assertTrue(set(ds.fields_for("binance")) <= binance_fields)
+        self.assertTrue(set(ds.fields_for("okx")) <= okx_fields)
+        # No strategy field (old Hull fields, sizing, stop, TP, shadow) is a default setting any more.
+        for old in ("hma_length", "ema_filter_length", "ema_sizing_length", "atr_length", "use_hold_rule",
+                    "adx_di_length", "adx_smoothing", "hold_adx_level", "trend_alloc_pct", "counter_alloc_pct",
+                    "leverage", "counter_leverage", "wait_first_reversal", "stop_loss_pct_equity",
+                    "tp1_atr_mult", "tp2_atr_mult", "use_shadow", "shadow_trades", "shadow_slippage_ticks",
+                    "tracker_start_balance"):
+            self.assertNotIn(old, ds.FIELD_SPECS, old)
 
 
 # --------------------------------------------------------------------------
@@ -138,32 +148,38 @@ class TestValidation(unittest.TestCase):
     def test_blank_is_never_accepted(self):
         for blank in (None, "", "   "):
             with self.assertRaises(ds.SettingsError):
-                self.v("hma_length", blank)
+                self.v("poll_seconds", blank)
 
     def test_numeric_ranges(self):
-        self.assertEqual(self.v("hma_length", 5), 5)
-        for bad in (0, -1, 501, 2.5, "abc", float("nan"), float("inf"), True):
+        self.assertEqual(self.v("poll_seconds", 5), 5)
+        for bad in (0, -1, 4, 3601, 2.5, "abc", float("nan"), float("inf"), True):
             with self.assertRaises(ds.SettingsError, msg=repr(bad)):
-                self.v("hma_length", bad)
+                self.v("poll_seconds", bad)
         with self.assertRaises(ds.SettingsError):
-            self.v("tracker_start_balance", 0)          # lower bound is exclusive
-        self.assertEqual(self.v("tracker_start_balance", 0.01), 0.01)
+            self.v("ws_staleness_seconds", 4.9)
         with self.assertRaises(ds.SettingsError):
-            self.v("hold_adx_level", 100.01)
-        self.assertEqual(self.v("hold_adx_level", 0), 0)  # lower bound inclusive here
-
-    def test_leverage_must_be_a_whole_number(self):
-        self.assertEqual(self.v("leverage", 3), 3.0)
-        for bad in (2.5, 0, 126):
+            self.v("ws_staleness_seconds", 600.01)
+        self.assertEqual(self.v("ws_staleness_seconds", 5), 5)
+        # the exclusive-lower-bound rule still works (checked on a throw-away spec, no real field uses it now)
+        with mock.patch.dict(ds.FIELD_SPECS, {"_t": {"kind": "float", "lo": 0, "lo_exclusive": True, "hi": 10}}):
             with self.assertRaises(ds.SettingsError):
-                self.v("leverage", bad)
+                self.v("_t", 0)
+            self.assertEqual(self.v("_t", 0.01), 0.01)
+
+    def test_whole_number_rule(self):
+        # no real pair-level field uses the "whole" kind now; the rule itself is still checked on a throw-away spec
+        with mock.patch.dict(ds.FIELD_SPECS, {"_w": {"kind": "whole", "lo": 1, "hi": 125}}):
+            self.assertEqual(self.v("_w", 3), 3.0)
+            for bad in (2.5, 0, 126):
+                with self.assertRaises(ds.SettingsError):
+                    self.v("_w", bad)
 
     def test_booleans_must_be_real_booleans(self):
-        self.assertIs(self.v("use_shadow", True), True)
-        self.assertIs(self.v("use_shadow", False), False)
+        self.assertIs(self.v("telegram_enabled", True), True)
+        self.assertIs(self.v("telegram_enabled", False), False)
         for bad in ("true", 1, 0, "yes"):
             with self.assertRaises(ds.SettingsError):
-                self.v("use_shadow", bad)
+                self.v("telegram_enabled", bad)
 
     def test_timeframe_sets_differ_by_platform(self):
         self.assertEqual(self.v("timeframe", "8h", "binance"), "8h")
@@ -189,9 +205,9 @@ class TestValidation(unittest.TestCase):
     def test_missing_fields_lists_every_blank_or_invalid_one(self):
         vals = full_values("binance")
         self.assertEqual(ds.missing_fields("binance", vals), [])
-        vals["leverage"] = None
-        vals["hma_length"] = 0
-        self.assertEqual(sorted(ds.missing_fields("binance", vals)), ["hma_length", "leverage"])
+        vals["telegram_enabled"] = None
+        vals["poll_seconds"] = 0
+        self.assertEqual(sorted(ds.missing_fields("binance", vals)), ["poll_seconds", "telegram_enabled"])
 
     def test_email_validation(self):
         self.assertEqual(ds.validate_email("  me@example.com "), "me@example.com")
@@ -219,10 +235,10 @@ class TestDefaultSettingsStore(unittest.TestCase):
 
     def test_save_is_atomic_when_any_value_is_invalid(self):
         with self.assertRaises(ds.SettingsError) as cm:
-            self.s.save("binance", {"hma_length": 5, "leverage": 2.5, "atr_length": 0})
-        self.assertIn("leverage", str(cm.exception))
-        self.assertIn("atr_length", str(cm.exception))
-        self.assertIsNone(self.s.get("binance")["values"]["hma_length"], "nothing may be stored on error")
+            self.s.save("binance", {"poll_seconds": 30, "ws_staleness_seconds": 1, "timeframe": "7h"})
+        self.assertIn("ws_staleness_seconds", str(cm.exception))
+        self.assertIn("timeframe", str(cm.exception))
+        self.assertIsNone(self.s.get("binance")["values"]["poll_seconds"], "nothing may be stored on error")
 
     def test_save_rejects_a_field_from_the_other_platform(self):
         with self.assertRaises(ds.SettingsError):
@@ -231,11 +247,11 @@ class TestDefaultSettingsStore(unittest.TestCase):
 
     def test_cannot_confirm_while_anything_is_blank(self):
         vals = full_values("binance")
-        vals.pop("leverage")
+        vals.pop("poll_seconds")
         self.s.save("binance", vals)
         with self.assertRaises(ds.SettingsError) as cm:
             self.s.confirm("binance")
-        self.assertIn("leverage", str(cm.exception))
+        self.assertIn("poll_seconds", str(cm.exception))
         self.assertFalse(self.s.is_confirmed("binance"))
 
     def test_confirm_then_edit_goes_back_to_unconfirmed(self):
@@ -243,17 +259,17 @@ class TestDefaultSettingsStore(unittest.TestCase):
         g = self.s.confirm("binance")
         self.assertTrue(g["confirmed"])
         self.assertTrue(g["confirmed_at"].endswith("SGT"))
-        self.assertEqual(self.s.confirmed_values("binance")["hma_length"], tv.STRATEGY_VALUES["hma_length"])
-        self.s.save("binance", {"hma_length": 6})
+        self.assertEqual(self.s.confirmed_values("binance")["poll_seconds"], tv.PAIR_EXTRA["poll_seconds"])
+        self.s.save("binance", {"poll_seconds": 6})
         self.assertFalse(self.s.is_confirmed("binance"))
         with self.assertRaises(ds.DefaultsNotConfirmed):
             self.s.confirmed_values("binance")
 
     def test_blank_clears_a_field(self):
         self.s.save("binance", full_values("binance"))
-        self.s.save("binance", {"leverage": None})
-        self.assertIsNone(self.s.get("binance")["values"]["leverage"])
-        self.assertIn("leverage", self.s.get("binance")["missing"])
+        self.s.save("binance", {"poll_seconds": None})
+        self.assertIsNone(self.s.get("binance")["values"]["poll_seconds"])
+        self.assertIn("poll_seconds", self.s.get("binance")["missing"])
 
     def test_platforms_are_independent(self):
         self.s.save("binance", full_values("binance"))
@@ -293,13 +309,13 @@ class TestDefaultSettingsStore(unittest.TestCase):
 
     def test_a_hand_edited_file_that_claims_confirmed_but_is_incomplete_is_not_trusted(self):
         path = TEST_DATA_DIR / "tampered.json"
-        path.write_text(json.dumps({"binance": {"values": {"hma_length": 5}, "confirmed": True}}))
+        path.write_text(json.dumps({"binance": {"values": {"poll_seconds": 5}, "confirmed": True}}))
         s = ds.DefaultSettingsStore(path=path)
         with self.assertRaises(ds.DefaultsNotConfirmed):
             s.confirmed_values("binance")
 
     def test_settings_file_is_not_world_readable(self):
-        self.s.save("binance", {"hma_length": 5})
+        self.s.save("binance", {"poll_seconds": 5})
         mode = (TEST_DATA_DIR / "default_settings.json").stat().st_mode & 0o777
         self.assertEqual(mode & 0o077, 0, oct(mode))
 
@@ -307,12 +323,12 @@ class TestDefaultSettingsStore(unittest.TestCase):
         self.s.save("binance", full_values("binance"))
         self.s.confirm("binance")
         with mock.patch.object(ds, "default_settings", self.s):
-            merged = ds.build_pair_values("binance", {"leverage": 2, "hma_length": None})
-            self.assertEqual(merged["leverage"], 2.0)
-            self.assertEqual(merged["hma_length"], tv.STRATEGY_VALUES["hma_length"])
+            merged = ds.build_pair_values("binance", {"poll_seconds": 30, "timeframe": None})
+            self.assertEqual(merged["poll_seconds"], 30)
+            self.assertEqual(merged["timeframe"], tv.PAIR_EXTRA["timeframe"])
             with self.assertRaises(ds.SettingsError):
-                ds.build_pair_values("binance", {"leverage": 2.5})
-        self.s.save("binance", {"hma_length": 7})   # now unconfirmed
+                ds.build_pair_values("binance", {"poll_seconds": 2.5})
+        self.s.save("binance", {"poll_seconds": 7})   # now unconfirmed
         with mock.patch.object(ds, "default_settings", self.s):
             with self.assertRaises(ds.DefaultsNotConfirmed):
                 ds.build_pair_values("binance", {})
@@ -364,19 +380,26 @@ class TestBinanceStartGates(_ManagerBase):
         self.test_acc = self.store.create_account("T", "k", "s", True)     # testnet
         self.real_acc = self.store.create_account("R", "k", "s", False)    # real money
 
-    async def test_blank_pair_cannot_start_and_names_the_blank_fields(self):
+    async def test_pair_without_a_plan_cannot_start(self):
         self.store.add_pair(self.test_acc.id, store_module.PairConfig(symbol="BLANKUSDT"))
         with mock.patch.object(self.mgr, "_build_instance") as build:
             with self.assertRaises(RuntimeError) as cm:
                 await self.mgr.start(self.test_acc.id, "BLANKUSDT")
             build.assert_not_called()
-        self.assertIn("blank or invalid", str(cm.exception))
-        self.assertIn("hma_length", str(cm.exception))
+        self.assertIn("no strategy plan", str(cm.exception))
         self.assertNotIn("BLANKUSDT", self.mgr.instances)
 
-    async def test_every_single_blank_field_blocks_the_start(self):
-        for name in ds.fields_for("binance"):
-            pc = tv.pair_config(symbol="ONEUSDT", **{name: None})
+    async def test_complete_legacy_pair_without_a_plan_still_cannot_start(self):
+        self.store.add_pair(self.test_acc.id, tv.pair_config(symbol="NOPLANUSDT"))
+        with self.assertRaises(RuntimeError) as cm:
+            self.mgr._check_may_start(self.test_acc.id, "NOPLANUSDT")
+        self.assertIn("no strategy plan", str(cm.exception))
+
+    async def test_every_single_blank_pair_setting_blocks_the_start(self):
+        for name in ds.HUB_PAIR_FIELDS:
+            if name not in ds.fields_for("binance"):
+                continue
+            pc = tv.hub_pair_config(symbol="ONEUSDT", **{name: None})
             self.store.delete_pair(self.test_acc.id, "ONEUSDT")
             self.store.add_pair(self.test_acc.id, pc)
             with self.assertRaises(RuntimeError, msg=f"blank {name} must block start") as cm:
@@ -384,11 +407,11 @@ class TestBinanceStartGates(_ManagerBase):
             self.assertIn(name, str(cm.exception))
 
     async def test_complete_pair_on_testnet_is_allowed_even_with_live_switch_off(self):
-        self.store.add_pair(self.test_acc.id, tv.pair_config(symbol="OKUSDT"))
+        self.store.add_pair(self.test_acc.id, tv.hub_pair_config(symbol="OKUSDT"))
         self.mgr._check_may_start(self.test_acc.id, "OKUSDT")   # must not raise
 
     async def test_complete_pair_on_a_real_account_needs_the_live_switch(self):
-        self.store.add_pair(self.real_acc.id, tv.pair_config(symbol="REALUSDT"))
+        self.store.add_pair(self.real_acc.id, tv.hub_pair_config(symbol="REALUSDT"))
         with mock.patch.object(self.mgr, "_build_instance") as build:
             with self.assertRaises(RuntimeError) as cm:
                 await self.mgr.start(self.real_acc.id, "REALUSDT")
@@ -422,21 +445,21 @@ class TestOKXStartGates(_ManagerBase):
         self.demo_acc = self.okx_store.create_account("D", "k", "s", "p", demo=True)
         self.real_acc = self.okx_store.create_account("R", "k", "s", "p", demo=False)
 
-    async def test_blank_pair_cannot_start(self):
+    async def test_pair_without_a_plan_cannot_start(self):
         self.okx_store.add_pair(self.demo_acc.id, okx_store_module.OKXPairConfig(symbol="AAA-USDT-SWAP"))
         with self.assertRaises(RuntimeError) as cm:
             await self.mgr.start(self.demo_acc.id, "AAA-USDT-SWAP")
-        self.assertIn("blank or invalid", str(cm.exception))
+        self.assertIn("no strategy plan", str(cm.exception))
 
     async def test_trigger_type_is_required_on_okx(self):
-        self.okx_store.add_pair(self.demo_acc.id, tv.okx_pair_config(symbol="BBB-USDT-SWAP", trigger_px_type=None))
+        self.okx_store.add_pair(self.demo_acc.id, tv.okx_hub_pair_config(symbol="BBB-USDT-SWAP", trigger_px_type=None))
         with self.assertRaises(RuntimeError) as cm:
             self.mgr._check_may_start(self.demo_acc.id, "BBB-USDT-SWAP")
         self.assertIn("trigger_px_type", str(cm.exception))
 
     async def test_demo_allowed_real_needs_the_switch(self):
-        self.okx_store.add_pair(self.demo_acc.id, tv.okx_pair_config(symbol="CCC-USDT-SWAP"))
-        self.okx_store.add_pair(self.real_acc.id, tv.okx_pair_config(symbol="DDD-USDT-SWAP"))
+        self.okx_store.add_pair(self.demo_acc.id, tv.okx_hub_pair_config(symbol="CCC-USDT-SWAP"))
+        self.okx_store.add_pair(self.real_acc.id, tv.okx_hub_pair_config(symbol="DDD-USDT-SWAP"))
         self.mgr._check_may_start(self.demo_acc.id, "CCC-USDT-SWAP")
         with self.assertRaises(RuntimeError) as cm:
             await self.mgr.start(self.real_acc.id, "DDD-USDT-SWAP")
@@ -514,33 +537,33 @@ class TestApiRoutes(unittest.TestCase):
             values = full_values("binance")
         api.save_default_settings("binance", Body)
         api.confirm_default_settings("binance")
-        created = api.add_pair(self.acc.id, PairCreate(symbol="AAAUSDT", leverage=2))
-        self.assertEqual(created["leverage"], 2.0)
+        created = api.add_pair(self.acc.id, PairCreate(symbol="AAAUSDT", poll_seconds=30))
+        self.assertEqual(created["poll_seconds"], 30)
         # A bad value is refused either by the server's own check (HTTP 400, used with the
         # stand-in pydantic) or - with the REAL pydantic - already when the request object is
         # built (which a real server answers with HTTP 422). Either way the pair is not created.
         with self.assertRaises(Exception) as cm:
-            api.add_pair(self.acc.id, PairCreate(symbol="BBBUSDT", leverage=2.5))
+            api.add_pair(self.acc.id, PairCreate(symbol="BBBUSDT", poll_seconds=2.5))
         self.assertTrue(getattr(cm.exception, "status_code", None) == 400
                         or type(cm.exception).__name__ == "ValidationError", repr(cm.exception))
         self.assertNotIn("BBBUSDT", self.store.get_account(self.acc.id).pairs)
 
     def test_confirm_refuses_incomplete_settings_with_a_400(self):
         class Body:
-            values = {k: v for k, v in full_values("binance").items() if k != "leverage"}
+            values = {k: v for k, v in full_values("binance").items() if k != "poll_seconds"}
         api.save_default_settings("binance", Body)
         with self.assertRaises(Exception) as cm:
             api.confirm_default_settings("binance")
         self.assertEqual(cm.exception.status_code, 400)
-        self.assertIn("leverage", cm.exception.detail)
+        self.assertIn("poll_seconds", cm.exception.detail)
 
     def test_save_with_an_out_of_range_value_is_a_400_and_stores_nothing(self):
         class Body:
-            values = {"hma_length": 0}
+            values = {"poll_seconds": 0}
         with self.assertRaises(Exception) as cm:
             api.save_default_settings("binance", Body)
         self.assertEqual(cm.exception.status_code, 400)
-        self.assertIsNone(self.switch.get("binance")["values"]["hma_length"])
+        self.assertIsNone(self.switch.get("binance")["values"]["poll_seconds"])
 
     def test_unknown_platform_is_a_404(self):
         class Body:
@@ -574,6 +597,60 @@ class TestApiRoutes(unittest.TestCase):
         class Off:
             enabled = False
         self.assertFalse(api.set_live_trading(Off)["live_trading_enabled"])
+
+
+# --------------------------------------------------------------------------
+class TestTrackerTabForHubPairs(unittest.TestCase):
+    """A Hub pair has NO old shadow / tracker-start fields; the Tracker tab must read them from the plan and must
+    not fail on a stopped pair."""
+    def setUp(self):
+        import tempfile
+        from app import base_v3_tracker as tr
+        shutil.rmtree(TEST_DATA_DIR / "trk", ignore_errors=True)
+        (TEST_DATA_DIR / "trk").mkdir(parents=True, exist_ok=True)
+        store_module.ACCOUNTS_FILE = TEST_DATA_DIR / "trk" / "accounts.json"
+        okx_store_module.OKX_ACCOUNTS_FILE = TEST_DATA_DIR / "trk" / "okx_accounts.json"
+        self.store = store_module.Store()
+        self.okx_store = okx_store_module.OKXStore()
+        api.store = self.store
+        okx_api.okx_store = self.okx_store
+        d = tempfile.mkdtemp(prefix="tracker_view_")
+        pt = mock.patch.object(tr, "TRACKER_DIR", Path(d))
+        pt.start()
+        self.addCleanup(pt.stop)
+        self.addCleanup(shutil.rmtree, d, True)
+        # no running instance (other test files may leave a fake manager behind, so use our own)
+        none_mgr = mock.Mock()
+        none_mgr.get.return_value = None
+        for target, name in ((api, "manager"), (okx_api, "okx_manager")):
+            pm = mock.patch.object(target, name, none_mgr)
+            pm.start()
+            self.addCleanup(pm.stop)
+        self.acc = self.store.create_account("T", "k", "s", True)
+        self.okx_acc = self.okx_store.create_account("D", "k", "s", "p", demo=True)
+
+    def _pairs(self, shadow):
+        from tests._hub_plan import make_plan
+        plan = make_plan(ind_rsi=dict(entry=True))
+        if shadow:
+            plan["shadow"] = {"on": True, "trades": 3, "slippage_ticks": 2, "tracker_start": 2500.0}
+        blank = dict(tracker_start_balance=None, use_shadow=None, shadow_trades=None, shadow_slippage_ticks=None)
+        self.store.add_pair(self.acc.id, tv.pair_config(symbol="HUBUSDT", plan=plan, **blank))
+        self.okx_store.add_pair(self.okx_acc.id, tv.okx_pair_config(symbol="HUB-USDT-SWAP", plan=plan, **blank))
+
+    def test_stopped_hub_pair_without_shadow_still_shows_the_tracker_tab(self):
+        self._pairs(shadow=False)
+        for out in (api.get_tracker(self.acc.id, "HUBUSDT"), okx_api.get_tracker(self.okx_acc.id, "HUB-USDT-SWAP")):
+            self.assertIs(out["use_shadow"], False)
+            self.assertIsNone(out["shadow_trades_setting"])
+            self.assertEqual(out["summary"]["start_balance"], 1.0)
+
+    def test_stopped_hub_pair_with_shadow_box_reads_the_plan(self):
+        self._pairs(shadow=True)
+        for out in (api.get_tracker(self.acc.id, "HUBUSDT"), okx_api.get_tracker(self.okx_acc.id, "HUB-USDT-SWAP")):
+            self.assertIs(out["use_shadow"], True)
+            self.assertEqual(out["shadow_trades_setting"], 3)
+            self.assertEqual(out["summary"]["start_balance"], 2500.0)
 
 
 # --------------------------------------------------------------------------

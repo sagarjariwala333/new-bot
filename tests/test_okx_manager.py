@@ -34,7 +34,7 @@ class TestOKXManualStartRefusedDuringSingletonConflict(unittest.IsolatedAsyncioT
         self.manager.store = self.store
 
         self.acc = self.store.create_account("Sub1", "key", "secret", "phrase", demo=True)
-        self.store.add_pair(self.acc.id, tv.okx_pair_config(symbol="BTC-USDT-SWAP"))
+        self.store.add_pair(self.acc.id, tv.okx_hub_pair_config(symbol="BTC-USDT-SWAP"))
 
     def tearDown(self):
         singleton_lock._lock_held = True
@@ -64,7 +64,7 @@ class TestOKXInstanceWiring(unittest.TestCase):
         okx_manager_module.okx_store = self.store
 
         self.acc = self.store.create_account("Sub1", "key", "secret", "phrase", demo=True)
-        self.store.add_pair(self.acc.id, tv.okx_pair_config(symbol="BTC-USDT-SWAP"))
+        self.store.add_pair(self.acc.id, tv.okx_hub_pair_config(symbol="BTC-USDT-SWAP"))
 
         self.manager = OKXBotManager()
 
@@ -96,7 +96,7 @@ class TestOKXStartAllEnabledIsolation(unittest.IsolatedAsyncioTestCase):
 
         self.acc = self.store.create_account("Sub1", "key", "secret", "phrase", demo=True)
         for sym in ("AAA-USDT-SWAP", "BBB-USDT-SWAP", "CCC-USDT-SWAP"):
-            self.store.add_pair(self.acc.id, tv.okx_pair_config(symbol=sym))
+            self.store.add_pair(self.acc.id, tv.okx_hub_pair_config(symbol=sym))
             self.store.set_pair_enabled(self.acc.id, sym, True)
 
         self.manager = OKXBotManager()

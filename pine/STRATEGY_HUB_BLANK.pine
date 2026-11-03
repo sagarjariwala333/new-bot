@@ -1,0 +1,834 @@
+//@version=6
+// =====================================================================================================================
+// STRATEGY HUB - BLANK  (same 14 tabs as the Hub, 1-14)
+// Every tick box starts OFF. Pine cannot leave a number box empty, so each number starts at its lowest allowed value
+// (0 or 1). Fill in what you use. The owner defaults are kept: Hold rule ON with ADX 25, Candles Wait 0, Fresh
+// Reversal on First Trade ON, No Mid-Trend Re-entry ON, the 3 flip Yes / No boxes Yes.
+// Commission and slippage: set them in the strategy Properties tab.
+// Orders fill at the candle close (process_orders_on_close), like the bot. Stops and targets work inside the next
+// candles. Step trailing, Break-Even and Take profit fills are read at each candle close (the bot does these live).
+// =====================================================================================================================
+strategy("STRATEGY HUB - BLANK", overlay = true, pyramiding = 0, process_orders_on_close = true,
+     initial_capital = 1000, default_qty_type = strategy.fixed, calc_on_every_tick = false)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 1. PAIR
+// The pair and the timeframe are the chart's own (change them on the chart). Margin mode is not used in Pine.
+// ---------------------------------------------------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 2. CHART TYPE
+// ---------------------------------------------------------------------------------------------------------------------
+G2 = "2. Chart type"
+chartType = input.string("Candles", "Chart type", options = ["Candles", "Heikin Ashi", "Renko"], group = G2)
+renkoLen  = input.int(1, "Renko brick = ATR length", minval = 1, group = G2)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 3. INDICATORS   (ENTRY / FLIP / CTREND ticks + each indicator's numbers and condition ticks)
+// ---------------------------------------------------------------------------------------------------------------------
+G3  = "3. Indicators"
+BLK = ["None", "Candle colour", "MA 1", "MA 2", "MA Crossover", "ADX / DI", "Choppiness (CI)", "RSI", "MACD", "Volume", "ATR", "Structure break"]
+mainEntry = input.string("None", "Main for ENTRY", options = BLK, group = G3)
+mainFlip  = input.string("None", "Main for FLIP (only when Flip: Same as entry = No)", options = BLK, group = G3)
+
+G3a = "3. Indicators - Candle colour (Heikin Ashi / Renko only)"
+cdE  = input.bool(false, "ENTRY", inline = "cd", group = G3a)
+cdF  = input.bool(false, "FLIP", inline = "cd", group = G3a)
+cdC  = input.bool(false, "CTREND", inline = "cd", group = G3a)
+cdStrong = input.bool(false, "Strong candle only", group = G3a)
+
+G3b = "3. Indicators - MA 1"
+m1E  = input.bool(false, "ENTRY", inline = "m1", group = G3b)
+m1F  = input.bool(false, "FLIP", inline = "m1", group = G3b)
+m1C  = input.bool(false, "CTREND", inline = "m1", group = G3b)
+m1Type = input.string("SMA", "Type", options = ["SMA", "EMA", "WMA", "HMA", "ALMA"], group = G3b)
+m1Len  = input.int(1, "Length", minval = 1, group = G3b)
+m1Above = input.bool(false, "Price above / below MA", group = G3b)
+m1Rise  = input.bool(false, "MA rising / falling", group = G3b)
+m1Cross = input.bool(false, "Price crossed MA within N candles", group = G3b)
+m1Pull  = input.bool(false, "Pullback to MA (bounce)", group = G3b)
+m1N     = input.int(0, "N candles (for the cross / pullback)", minval = 0, group = G3b)
+m1Off   = input.float(0.0, "ALMA offset", group = G3b)
+m1Sig   = input.float(0.0001, "ALMA sigma", minval = 0.0001, group = G3b)
+
+G3c = "3. Indicators - MA 2"
+m2E  = input.bool(false, "ENTRY", inline = "m2", group = G3c)
+m2F  = input.bool(false, "FLIP", inline = "m2", group = G3c)
+m2C  = input.bool(false, "CTREND", inline = "m2", group = G3c)
+m2Type = input.string("SMA", "Type", options = ["SMA", "EMA", "WMA", "HMA", "ALMA"], group = G3c)
+m2Len  = input.int(1, "Length", minval = 1, group = G3c)
+m2Above = input.bool(false, "Price above / below MA", group = G3c)
+m2Rise  = input.bool(false, "MA rising / falling", group = G3c)
+m2Cross = input.bool(false, "Price crossed MA within N candles", group = G3c)
+m2Pull  = input.bool(false, "Pullback to MA (bounce)", group = G3c)
+m2N     = input.int(0, "N candles (for the cross / pullback)", minval = 0, group = G3c)
+m2Off   = input.float(0.0, "ALMA offset", group = G3c)
+m2Sig   = input.float(0.0001, "ALMA sigma", minval = 0.0001, group = G3c)
+
+G3d = "3. Indicators - MA Crossover"
+mxE  = input.bool(false, "ENTRY", inline = "mx", group = G3d)
+mxF  = input.bool(false, "FLIP", inline = "mx", group = G3d)
+mxC  = input.bool(false, "CTREND", inline = "mx", group = G3d)
+mxAbove = input.bool(false, "MA 1 above / below MA 2", group = G3d)
+mxCross = input.bool(false, "MA 1 crossed MA 2 within N candles", group = G3d)
+mxN     = input.int(0, "N candles", minval = 0, group = G3d)
+
+G3e = "3. Indicators - ADX / DI"
+adE  = input.bool(false, "ENTRY", inline = "ad", group = G3e)
+adF  = input.bool(false, "FLIP", inline = "ad", group = G3e)
+adC  = input.bool(false, "CTREND", inline = "ad", group = G3e)
+adDiLen  = input.int(1, "DI length", minval = 1, group = G3e)
+adSmooth = input.int(1, "ADX smoothing", minval = 1, group = G3e)
+adLevel  = input.float(0.0, "ADX level", minval = 0.0, group = G3e)
+adDiReq  = input.bool(false, "DI direction required", group = G3e)
+adRising = input.bool(false, "ADX rising", group = G3e)
+
+G3f = "3. Indicators - Choppiness (CI)"
+ciE  = input.bool(false, "ENTRY", inline = "ci", group = G3f)
+ciF  = input.bool(false, "FLIP", inline = "ci", group = G3f)
+ciLen = input.int(2, "Length", minval = 2, group = G3f)
+ciMax = input.float(0.0, "CI below", minval = 0.0, group = G3f)
+
+G3g = "3. Indicators - RSI"
+rsE  = input.bool(false, "ENTRY", inline = "rs", group = G3g)
+rsF  = input.bool(false, "FLIP", inline = "rs", group = G3g)
+rsC  = input.bool(false, "CTREND", inline = "rs", group = G3g)
+rsLen   = input.int(1, "Length", minval = 1, group = G3g)
+rsLvlOn = input.bool(false, "Above / below level", group = G3g)
+rsLevel = input.float(1.0, "Level", minval = 1.0, group = G3g)
+rsObOn  = input.bool(false, "Overbought / oversold", group = G3g)
+rsOs    = input.float(0.0, "Oversold", minval = 0.0, group = G3g)
+rsOb    = input.float(0.0, "Overbought", minval = 0.0, group = G3g)
+rsDivOn = input.bool(false, "Divergence", group = G3g)
+rsPivot = input.int(1, "Divergence: pivot candles (left / right)", minval = 1, group = G3g)
+rsLook  = input.int(2, "Divergence: look-back candles", minval = 2, group = G3g)
+rsMaOn   = input.bool(false, "RSI crosses its own MA", group = G3g)
+rsMaType = input.string("SMA", "RSI average: Type", options = ["SMA", "EMA", "WMA", "HMA", "ALMA"], group = G3g)
+rsMaLen  = input.int(1, "RSI average: Length", minval = 1, group = G3g)
+rsMaOff  = input.float(0.0, "RSI average: ALMA offset", group = G3g)
+rsMaSig  = input.float(0.0001, "RSI average: ALMA sigma", minval = 0.0001, group = G3g)
+rsN     = input.int(0, "N candles (signal stays on)", minval = 0, group = G3g)
+
+G3h = "3. Indicators - MACD"
+mcE  = input.bool(false, "ENTRY", inline = "mc", group = G3h)
+mcF  = input.bool(false, "FLIP", inline = "mc", group = G3h)
+mcC  = input.bool(false, "CTREND", inline = "mc", group = G3h)
+mcFast = input.int(1, "Fast", minval = 1, group = G3h)
+mcSlow = input.int(2, "Slow", minval = 2, group = G3h)
+mcSig  = input.int(1, "Signal", minval = 1, group = G3h)
+mcHist = input.bool(false, "Histogram above / below 0", group = G3h)
+mcZero = input.bool(false, "Zero line", group = G3h)
+mcRise = input.bool(false, "Histogram rising / falling", group = G3h)
+
+G3i = "3. Indicators - Volume"
+voE  = input.bool(false, "ENTRY", inline = "vo", group = G3i)
+voF  = input.bool(false, "FLIP", inline = "vo", group = G3i)
+voLen  = input.int(1, "Average length", minval = 1, group = G3i)
+voMult = input.float(0.1, "Multiplier", minval = 0.1, group = G3i)
+voExcl = input.bool(false, "Average without the current candle", group = G3i)
+
+G3j = "3. Indicators - ATR"
+atE  = input.bool(false, "ENTRY", inline = "at", group = G3j)
+atF  = input.bool(false, "FLIP", inline = "at", group = G3j)
+atLen  = input.int(1, "ATR length", minval = 1, group = G3j)
+atAvg  = input.int(1, "Average length", minval = 1, group = G3j)
+atMult = input.float(0.1, "Multiplier", minval = 0.1, group = G3j)
+atRise = input.bool(false, "ATR rising", group = G3j)
+
+G3k = "3. Indicators - Structure break"
+stE  = input.bool(false, "ENTRY", inline = "st", group = G3k)
+stF  = input.bool(false, "FLIP", inline = "st", group = G3k)
+stC  = input.bool(false, "CTREND", inline = "st", group = G3k)
+stLen = input.int(1, "Look-back candles", minval = 1, group = G3k)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 4. INDICATOR COMBINATION
+// ---------------------------------------------------------------------------------------------------------------------
+G4 = "4. Indicator Combination"
+combE = input.string("ALL", "Indicator Combination for ENTRY", options = ["ALL", "ANY", "At least N"], group = G4)
+minE  = input.int(1, "ENTRY: how many must agree (N)", minval = 1, group = G4)
+combF = input.string("ALL", "Indicator Combination for FLIP (only when Flip: Same as entry = No)", options = ["ALL", "ANY", "At least N"], group = G4)
+minF  = input.int(1, "FLIP: how many must agree (N)", minval = 1, group = G4)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 5. ON A FLIP SIGNAL   (a flip = close, flat, then open the new side)
+// ---------------------------------------------------------------------------------------------------------------------
+G5 = "5. On a flip signal"
+flipSameEntry = input.bool(true, "Flip: Same as entry? (Yes = ticked)", group = G5)
+flipSameHold  = input.bool(true, "Flip: Same as hold rule? (Yes = ticked)", group = G5)
+flipHoldOn    = input.bool(false, "Flip's own hold rule (when Same as hold rule = No)", group = G5)
+flipHoldLvl   = input.float(0.0, "Flip's own hold: ADX below", minval = 0.0, group = G5)
+flipSameWait  = input.bool(true, "Flip: Same as entry wait? (Yes = ticked)", group = G5)
+flipWaitOwn   = input.int(0, "Flip's own wait (candles, 0 = instant)", minval = 0, group = G5)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 6. HOLD RULE   (ignore a flip while in profit and ADX below the number; uses the ADX / DI numbers)
+// ---------------------------------------------------------------------------------------------------------------------
+G6 = "6. Hold rule"
+holdOn  = input.bool(true, "Use Hold rule", group = G6)
+holdLvl = input.float(25.0, "ADX below", minval = 0.0, group = G6)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 7. ENTRY WAIT
+// ---------------------------------------------------------------------------------------------------------------------
+G7 = "7. Entry wait"
+entryWait = input.int(0, "Candles Wait", minval = 0, group = G7)
+freshFirst = input.bool(true, "Fresh Reversal on First Trade", group = G7)
+noMidTrend = input.bool(true, "No Mid-Trend Re-entry", group = G7)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 8. ENTRY SIZE   (counter trend is decided by the CTREND tick in 3. Indicators)
+// ---------------------------------------------------------------------------------------------------------------------
+G8 = "8. Entry size"
+sizeMethod = input.string("Allocation % of balance", "Size method", options = ["Allocation % of balance", "Fixed base amount (grows with the last closed total)"], group = G8)
+allocPct   = input.float(0.0, "Allocation % of balance", minval = 0.0, group = G8)
+baseAmt    = input.float(0.0, "Base amount (USDT)", minval = 0.0, group = G8)
+lockPct    = input.float(100.0, "% of last profit added to the next entry (100 = whole total)", minval = 0.0, group = G8)
+lev        = input.int(1, "Leverage", minval = 1, group = G8)
+ctOn       = input.bool(false, "Counter-trend size", group = G8)
+ctAlloc    = input.float(0.0, "Allocation % against the trend (0 = no counter-trend entry)", minval = 0.0, group = G8)
+ctBase     = input.float(0.0, "Base amount against the trend (0 = no counter-trend entry)", minval = 0.0, group = G8)
+ctLev      = input.int(1, "Leverage against the trend", minval = 1, group = G8)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 9. MAX LOSS PER TRADE
+// ---------------------------------------------------------------------------------------------------------------------
+G9 = "9. Max Loss per Trade"
+mlOn    = input.bool(false, "Use Max Loss per Trade", group = G9)
+mlBasis = input.string("% of available balance", "Measured on", options = ["% of available balance", "% of entry amount", "Fixed $ amount"], group = G9)
+mlPct   = input.float(0.1, "Max Loss per Trade %", minval = 0.1, group = G9)
+mlUsd   = input.float(0.01, "Max Loss per Trade (USDT)", minval = 0.01, group = G9)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 10. STOP LOSS   (worked out once at the entry, then fixed)
+// ---------------------------------------------------------------------------------------------------------------------
+G10 = "10. Stop Loss"
+slOn    = input.bool(false, "Use Stop Loss", group = G10)
+slBasis = input.string("% of ATR", "Measured on", options = ["% of ATR", "% of price movement", "Fixed $ amount", "Structure (swing low / high)", "Chandelier", "Moving average"], group = G10)
+slVal   = input.float(0.0001, "Value (%)  (% of ATR: 100 = 1 ATR / % of price: 3 = 3% / Chandelier: % of ATR)", minval = 0.0001, group = G10)
+slAtrLen = input.int(1, "ATR length", minval = 1, group = G10)
+slUsd   = input.float(0.01, "Loss (USDT)", minval = 0.01, group = G10)
+slLen   = input.int(1, "N candles (Structure / Chandelier)", minval = 1, group = G10)
+slMa    = input.string("MA 1", "Which MA", options = ["MA 1", "MA 2"], group = G10)
+tsOn    = input.bool(false, "Time stop", group = G10)
+tsN     = input.int(1, "Time stop: N candles", minval = 1, group = G10)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 11. BREAK-EVEN   (the Stop Loss moves to the entry price)
+// ---------------------------------------------------------------------------------------------------------------------
+G11 = "11. Break-Even"
+beOn     = input.bool(false, "Use Break-Even", group = G11)
+beTpOn   = input.bool(false, "After TP", group = G11)
+beTpN    = input.int(1, "TP number (1, 2, 3)", minval = 1, maxval = 3, group = G11)
+beAtrOn  = input.bool(false, "After ATR", group = G11)
+beAtrVal = input.float(0.0001, "ATR (%)  (100 = 1x ATR)", minval = 0.0001, group = G11)
+beAtrLen = input.int(1, "ATR length", minval = 1, group = G11)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 12. TRAILING STOP   (only tightens)
+// ---------------------------------------------------------------------------------------------------------------------
+G12 = "12. Trailing Stop"
+trOn    = input.bool(false, "Use Trailing Stop", group = G12)
+trType  = input.string("Step", "Type", options = ["Step", "Lowest low / highest high", "Moving average", "Signal candle high / low +/- ATR"], group = G12)
+trBasis = input.string("% of ATR", "Measured on (Step)", options = ["% of ATR", "% of price movement"], group = G12)
+trStart = input.string("Same as Stop Loss", "Start (Step)", options = ["Same as Stop Loss", "Own value", "Begins at a price move"], group = G12)
+trStartVal = input.float(0.0001, "Start value (%)", minval = 0.0001, group = G12)
+trBegin = input.float(0.0001, "Begins when the price moves (%)", minval = 0.0001, group = G12)
+trLock  = input.float(0.0, "Stop goes to (%)  (0 = breakeven)", group = G12)
+trGap   = input.float(0.0001, "Gap (%) / Then moves every (%)", minval = 0.0001, group = G12)
+trAtrLen = input.int(1, "ATR length", minval = 1, group = G12)
+trLen   = input.int(1, "Look-back candles (Lowest low / highest high)", minval = 1, group = G12)
+trMa    = input.string("MA 1", "Which MA (Moving average)", options = ["MA 1", "MA 2"], group = G12)
+trCVal  = input.float(100.0, "Distance (% of ATR) (Signal candle high / low +/- ATR; 100 = 1 ATR)", minval = 0.0001, group = G12)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 13. TAKE PROFIT   (TP2 after TP1, TP3 after TP2)
+// ---------------------------------------------------------------------------------------------------------------------
+G13 = "13. Take profit"
+tpOn    = input.bool(false, "Use take profit", group = G13)
+tpBasis = input.string("% of ATR", "Measured on", options = ["% of ATR", "% of price movement"], group = G13)
+tpAtrLen = input.int(1, "ATR length", minval = 1, group = G13)
+tp1On  = input.bool(false, "TP 1", inline = "t1", group = G13)
+tp1Val = input.float(0.0, "value %", inline = "t1", group = G13)
+tp1Pct = input.float(0.0, "closes %", inline = "t1", group = G13)
+tp2On  = input.bool(false, "TP 2", inline = "t2", group = G13)
+tp2Val = input.float(0.0, "value %", inline = "t2", group = G13)
+tp2Pct = input.float(0.0, "closes %", inline = "t2", group = G13)
+tp3On  = input.bool(false, "TP 3", inline = "t3", group = G13)
+tp3Val = input.float(0.0, "value %", inline = "t3", group = G13)
+tp3Pct = input.float(0.0, "closes %", inline = "t3", group = G13)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 14. SHADOW MODE   (after a new high, the next N trades are paper only: they show in the list with ~0 size)
+// ---------------------------------------------------------------------------------------------------------------------
+G14 = "14. Shadow mode"
+shOn     = input.bool(false, "Use shadow mode", group = G14)
+shTrades = input.int(1, "Number of trades off", minval = 1, group = G14)
+PAPER = 0.000001      // a paper trade is the same trade at this share of the size (P&L about 0)
+
+// =====================================================================================================================
+// HELPERS
+// =====================================================================================================================
+within(bool cond, int n) => nz(ta.barssince(cond), 9999) <= n
+
+maOf(string t, float src, int len, float off, float sig) =>
+    switch t
+        "SMA" => ta.sma(src, len)
+        "EMA" => ta.ema(src, len)
+        "WMA" => ta.wma(src, len)
+        "HMA" => ta.hma(src, len)
+        => ta.alma(src, len, off, sig)
+
+dist(string basis, float v, float price, float atr) =>
+    float d = na
+    if v > 0
+        d := basis == "% of price movement" ? price * v / 100.0 : (na(atr) or atr <= 0 ? na : atr * v / 100.0)
+    d
+
+tighter(int dir, float a, float b) => na(a) ? false : (na(b) ? true : (dir == 1 ? a > b : a < b))
+
+// =====================================================================================================================
+// 2. CHART CANDLES
+// =====================================================================================================================
+haC = (open + high + low + close) / 4.0
+var float haO = na
+haO := na(haO[1]) ? (open + close) / 2.0 : (haO[1] + haC[1]) / 2.0
+haH = math.max(high, math.max(haO, haC))
+haL = math.min(low, math.min(haO, haC))
+
+// Renko from the closed candles (close based), brick = ATR(renkoLen); the last brick, carried forward
+rBox = ta.rma(ta.tr(true), renkoLen)
+var float rTop = na
+var float rBot = na
+var float rO = na
+var float rC = na
+if not na(rBox) and rBox > 0
+    if na(rTop)
+        rTop := close
+        rBot := close
+        rO := close
+        rC := close
+    else
+        for k = 0 to 500
+            if close >= rTop + rBox
+                rO := rTop
+                rC := rTop + rBox
+                rBot := rTop
+                rTop := rTop + rBox
+            else if close <= rBot - rBox
+                rO := rBot
+                rC := rBot - rBox
+                rTop := rBot
+                rBot := rBot - rBox
+            else
+                break
+
+cO = chartType == "Heikin Ashi" ? haO : chartType == "Renko" ? rO : open
+cC = chartType == "Heikin Ashi" ? haC : chartType == "Renko" ? rC : close
+cH = chartType == "Heikin Ashi" ? haH : chartType == "Renko" ? math.max(rO, rC) : high
+cL = chartType == "Heikin Ashi" ? haL : chartType == "Renko" ? math.min(rO, rC) : low
+
+// =====================================================================================================================
+// 3. INDICATORS -> each one says LONG / SHORT
+// =====================================================================================================================
+// Candle colour
+cdL = cC > cO and (not cdStrong or cL >= cO)
+cdS = cC < cO and (not cdStrong or cH <= cO)
+
+// MA 1 / MA 2 (every ticked condition must agree; none ticked = no signal)
+ma1 = maOf(m1Type, cC, m1Len, m1Off, m1Sig)
+ma2 = maOf(m2Type, cC, m2Len, m2Off, m2Sig)
+
+m1XU = within(ta.crossover(cC, ma1), m1N)
+m1XD = within(ta.crossunder(cC, ma1), m1N)
+m1PU = within(cL <= ma1 and cC > ma1, m1N)
+m1PD = within(cH >= ma1 and cC < ma1, m1N)
+m1Any = m1Above or m1Rise or m1Cross or m1Pull
+m1L = m1Any and (not m1Above or cC > ma1) and (not m1Rise or ma1 > ma1[1]) and (not m1Cross or m1XU) and (not m1Pull or m1PU)
+m1S = m1Any and (not m1Above or cC < ma1) and (not m1Rise or ma1 < ma1[1]) and (not m1Cross or m1XD) and (not m1Pull or m1PD)
+
+m2XU = within(ta.crossover(cC, ma2), m2N)
+m2XD = within(ta.crossunder(cC, ma2), m2N)
+m2PU = within(cL <= ma2 and cC > ma2, m2N)
+m2PD = within(cH >= ma2 and cC < ma2, m2N)
+m2Any = m2Above or m2Rise or m2Cross or m2Pull
+m2L = m2Any and (not m2Above or cC > ma2) and (not m2Rise or ma2 > ma2[1]) and (not m2Cross or m2XU) and (not m2Pull or m2PU)
+m2S = m2Any and (not m2Above or cC < ma2) and (not m2Rise or ma2 < ma2[1]) and (not m2Cross or m2XD) and (not m2Pull or m2PD)
+
+// MA Crossover
+mxXU = within(ta.crossover(ma1, ma2), mxN)
+mxXD = within(ta.crossunder(ma1, ma2), mxN)
+mxAny = mxAbove or mxCross
+mxL = mxAny and (not mxAbove or ma1 > ma2) and (not mxCross or mxXU)
+mxS = mxAny and (not mxAbove or ma1 < ma2) and (not mxCross or mxXD)
+
+// ADX / DI (normal candles)
+[diP, diM, adx] = ta.dmi(adDiLen, adSmooth)
+adOk = adx >= adLevel and (not adRising or adx > adx[1])
+adL = adOk and (not adDiReq or diP > diM)
+adS = adOk and (not adDiReq or diM > diP)
+
+// Choppiness (normal candles)
+ci = 100.0 * math.log10(math.sum(ta.atr(1), ciLen) / (ta.highest(high, ciLen) - ta.lowest(low, ciLen))) / math.log10(ciLen)
+ciL = ci < ciMax
+ciS = ci < ciMax
+
+// RSI (chart close)
+rsi = ta.rsi(cC, rsLen)
+rsObU = within(ta.crossover(rsi, rsOs), rsN)
+rsObD = within(ta.crossunder(rsi, rsOb), rsN)
+// Divergence: RSI pivots (pivot candles left / right); the signal is on the candle the pivot is confirmed
+pl = ta.pivotlow(rsi, rsPivot, rsPivot)
+ph = ta.pivothigh(rsi, rsPivot, rsPivot)
+var float plR = na
+var float plP = na
+var int plB = na
+var float phR = na
+var float phP = na
+var int phB = na
+bool bullDiv = false
+bool bearDiv = false
+if not na(pl)
+    b = bar_index - rsPivot
+    if not na(plB) and b - plB >= rsPivot and b - plB <= rsLook and rsi[rsPivot] > plR and cL[rsPivot] < plP
+        bullDiv := true
+    plR := rsi[rsPivot]
+    plP := cL[rsPivot]
+    plB := b
+if not na(ph)
+    b = bar_index - rsPivot
+    if not na(phB) and b - phB >= rsPivot and b - phB <= rsLook and rsi[rsPivot] < phR and cH[rsPivot] > phP
+        bearDiv := true
+    phR := rsi[rsPivot]
+    phP := cH[rsPivot]
+    phB := b
+rsDU = within(bullDiv, rsN)
+rsDD = within(bearDiv, rsN)
+// RSI against its OWN moving average (the average is taken of the RSI line, not of the price)
+rsiMa = maOf(rsMaType, rsi, rsMaLen, rsMaOff, rsMaSig)
+rsMaU = within(ta.crossover(rsi, rsiMa), rsN)
+rsMaD = within(ta.crossunder(rsi, rsiMa), rsN)
+rsAny = rsLvlOn or rsObOn or rsDivOn or rsMaOn
+rsL = rsAny and (not rsLvlOn or rsi > rsLevel) and (not rsObOn or rsObU) and (not rsDivOn or rsDU) and (not rsMaOn or rsMaU)
+rsS = rsAny and (not rsLvlOn or rsi < rsLevel) and (not rsObOn or rsObD) and (not rsDivOn or rsDD) and (not rsMaOn or rsMaD)
+
+// MACD (chart close)
+[mLine, mSigl, mHist] = ta.macd(cC, mcFast, mcSlow, mcSig)
+mcAny = mcHist or mcZero
+mcL = mcAny and (not mcHist or mHist > 0) and (not mcZero or mLine > 0) and (not mcRise or mHist > mHist[1])
+mcS = mcAny and (not mcHist or mHist < 0) and (not mcZero or mLine < 0) and (not mcRise or mHist < mHist[1])
+
+// Volume (normal candles)
+vAvg0 = ta.sma(volume, voLen)
+vAvg = voExcl ? vAvg0[1] : vAvg0
+voL = volume >= vAvg * voMult
+voS = voL
+
+// ATR (chart candles)
+cTr = na(cC[1]) ? na : math.max(cH - cL, math.max(math.abs(cH - cC[1]), math.abs(cL - cC[1])))
+cAtr = ta.rma(cTr, atLen)
+atL = cAtr >= ta.sma(cAtr, atAvg) * atMult and (not atRise or cAtr > cAtr[1])
+atS = atL
+
+// Structure break (chart candles)
+stHH = ta.highest(cH, stLen)[1]
+stLL = ta.lowest(cL, stLen)[1]
+stL = cC > stHH
+stS = cC < stLL
+
+blockL(string b) =>
+    switch b
+        "Candle colour" => cdL
+        "MA 1" => m1L
+        "MA 2" => m2L
+        "MA Crossover" => mxL
+        "ADX / DI" => adL
+        "Choppiness (CI)" => ciL
+        "RSI" => rsL
+        "MACD" => mcL
+        "Volume" => voL
+        "ATR" => atL
+        "Structure break" => stL
+        => true
+blockS(string b) =>
+    switch b
+        "Candle colour" => cdS
+        "MA 1" => m1S
+        "MA 2" => m2S
+        "MA Crossover" => mxS
+        "ADX / DI" => adS
+        "Choppiness (CI)" => ciS
+        "RSI" => rsS
+        "MACD" => mcS
+        "Volume" => voS
+        "ATR" => atS
+        "Structure break" => stS
+        => true
+
+// =====================================================================================================================
+// 4. INDICATOR COMBINATION -> ENTRY signal (dirE) and FLIP signal (dirF): +1 long, -1 short, 0 nothing
+// =====================================================================================================================
+cnt(bool t1, bool t2, bool t3, bool t4, bool t5, bool t6, bool t7, bool t8, bool t9, bool t10, bool t11) =>
+    (t1 ? 1 : 0) + (t2 ? 1 : 0) + (t3 ? 1 : 0) + (t4 ? 1 : 0) + (t5 ? 1 : 0) + (t6 ? 1 : 0) + (t7 ? 1 : 0) + (t8 ? 1 : 0) + (t9 ? 1 : 0) + (t10 ? 1 : 0) + (t11 ? 1 : 0)
+
+nE  = cnt(cdE, m1E, m2E, mxE, adE, ciE, rsE, mcE, voE, atE, stE)
+nEL = cnt(cdE and cdL, m1E and m1L, m2E and m2L, mxE and mxL, adE and adL, ciE and ciL, rsE and rsL, mcE and mcL, voE and voL, atE and atL, stE and stL)
+nES = cnt(cdE and cdS, m1E and m1S, m2E and m2S, mxE and mxS, adE and adS, ciE and ciS, rsE and rsS, mcE and mcS, voE and voS, atE and atS, stE and stS)
+nF  = cnt(cdF, m1F, m2F, mxF, adF, ciF, rsF, mcF, voF, atF, stF)
+nFL = cnt(cdF and cdL, m1F and m1L, m2F and m2L, mxF and mxL, adF and adL, ciF and ciL, rsF and rsL, mcF and mcL, voF and voL, atF and atL, stF and stL)
+nFS = cnt(cdF and cdS, m1F and m1S, m2F and m2S, mxF and mxS, adF and adS, ciF and ciS, rsF and rsS, mcF and mcS, voF and voS, atF and atS, stF and stS)
+
+combine(string mode, int n, int nl, int ns, int need) =>
+    bool lg = false
+    bool sh = false
+    if n > 0
+        lg := mode == "ALL" ? nl == n : mode == "At least N" ? nl >= need : nl > 0
+        sh := mode == "ALL" ? ns == n : mode == "At least N" ? ns >= need : ns > 0
+    [lg, sh]
+
+[eL0, eS0] = combine(combE, nE, nEL, nES, minE)
+eL = eL0 and (mainEntry == "None" or blockL(mainEntry))      // the Main has to happen
+eS = eS0 and (mainEntry == "None" or blockS(mainEntry))
+dirE = eL and not eS ? 1 : eS and not eL ? -1 : 0
+
+[fL0, fS0] = combine(combF, nF, nFL, nFS, minF)
+fL = fL0 and (mainFlip == "None" or blockL(mainFlip))
+fS = fS0 and (mainFlip == "None" or blockS(mainFlip))
+dirFown = fL and not fS ? 1 : fS and not fL ? -1 : 0
+dirF = flipSameEntry ? dirE : dirFown
+
+// CTREND: the ticked indicator decides with / against the trend
+ctBlock = cdC ? "Candle colour" : m1C ? "MA 1" : m2C ? "MA 2" : mxC ? "MA Crossover" : adC ? "ADX / DI" : rsC ? "RSI" : mcC ? "MACD" : stC ? "Structure break" : "None"
+ctLong  = ctBlock != "None" and blockL(ctBlock)
+ctShort = ctBlock != "None" and blockS(ctBlock)
+
+// =====================================================================================================================
+// ATRs of the NORMAL candles (read at the entry candle, fixed for the trade)
+// =====================================================================================================================
+nTr   = na(close[1]) ? na : math.max(high - low, math.max(math.abs(high - close[1]), math.abs(low - close[1])))
+slAtr = ta.rma(nTr, slAtrLen)
+beAtr = ta.rma(nTr, beAtrLen)
+trAtr = ta.rma(nTr, trAtrLen)
+tpAtr = ta.rma(nTr, tpAtrLen)
+slLow  = ta.lowest(low, slLen)
+slHigh = ta.highest(high, slLen)
+trLow  = ta.lowest(low, trLen)
+trHigh = ta.highest(high, trLen)
+
+// =====================================================================================================================
+// TRADE MEMORY
+// =====================================================================================================================
+var int   tDir = 0            // the open trade: +1 / -1 / 0
+var float tEntry = na         // signal close (levels are measured from it)
+var int   tBar = na
+var float tQty0 = na          // the would-be size (paper trades trade PAPER x this)
+var bool  tPaper = false
+var float tAmount = na        // margin of the trade (fixed base method)
+var float npAtEntry = 0.0
+var float lvML = na
+var float lvSL = na
+var float lvTS = na
+var float tcDist = na        // Signal candle +/- ATR trailing: the distance (ATR of the signal candle), fixed for the trade
+var float stStart = na
+var float stGap = na
+var float stBegin = na
+var float stFirst = na
+var float best = na
+var float tp1P = na
+var float tp2P = na
+var float tp3P = na
+var bool  tp1Done = false
+var bool  tp2Done = false
+var bool  tp3Done = false
+var float beTrig = na
+var bool  beDone = true
+var float lastTotal = na
+var float peak = strategy.initial_capital
+var int   offLeft = 0
+var int   reBlock = 0
+var bool  firstDone = false
+var int   lastDirE = 0
+var bool  oSet = false        // a flip opened the new side before the old trade was counted: keep the old one's
+var bool  oPaper = false      //   paper flag and amount for its count on the next candle
+var float oAmount = na
+var int   wDir = 0
+var int   wBars = 0
+var bool  wFromFlip = false
+
+curDir = int(math.sign(strategy.position_size))
+
+// ---- a trade finished since the last candle (closed by a stop / target / flip)
+if tDir != 0 and curDir != tDir
+    pnl = strategy.netprofit - npAtEntry
+    wasPaper = oSet ? oPaper : tPaper
+    amt = oSet ? oAmount : tAmount
+    oSet := false
+    if not wasPaper
+        if sizeMethod != "Allocation % of balance" and not na(amt)
+            lastTotal := pnl > 0 ? amt + pnl * lockPct / 100.0 : amt + pnl
+        if shOn and pnl > 0 and strategy.equity > peak
+            offLeft := shTrades
+        peak := math.max(peak, strategy.equity)
+    else
+        offLeft := math.max(offLeft - 1, 0)
+    reBlock := tDir
+    tDir := 0
+if tDir == 0 and curDir != 0
+    tDir := curDir
+    npAtEntry := strategy.netprofit
+
+// =====================================================================================================================
+// IN A TRADE: flip / hold, trailing, Break-Even, time stop, TP fills
+// =====================================================================================================================
+int flippedTo = 0
+int closingDir = 0
+bool ruleClose = false        // closed by the trailing level / the time stop: no entry on this candle (like the bot)
+if tDir != 0 and curDir == tDir and bar_index > tBar
+    // TP fills and the best price (read at this candle close)
+    best := tDir == 1 ? math.max(best, high) : math.min(best, low)
+    if not na(tp1P) and not tp1Done
+        tp1Done := tDir == 1 ? high >= tp1P : low <= tp1P
+    if not na(tp2P) and tp1Done and not tp2Done
+        tp2Done := tDir == 1 ? high >= tp2P : low <= tp2P
+    if not na(tp3P) and tp2Done and not tp3Done
+        tp3Done := tDir == 1 ? high >= tp3P : low <= tp3P
+    // 11. Break-Even: Stop Loss to the entry price (only tightens)
+    if not beDone
+        tpHit = beTpOn and ((beTpN == 1 and tp1Done) or (beTpN == 2 and tp2Done) or (beTpN == 3 and tp3Done))
+        atrHit = not na(beTrig) and (tDir == 1 ? high >= beTrig : low <= beTrig)
+        if tpHit or atrHit
+            beDone := true
+            ep = strategy.position_avg_price
+            if tighter(tDir, ep, lvSL)
+                lvSL := ep
+    // 5 / 6. flip signal, Hold rule
+    bool doFlip = false
+    if dirF == -tDir
+        hOn  = flipSameHold ? holdOn : flipHoldOn
+        hLvl = flipSameHold ? holdLvl : flipHoldLvl
+        profit = tDir == 1 ? close - tEntry : tEntry - close
+        doFlip := not (hOn and profit > 0 and adx < hLvl)
+    if doFlip
+        flippedTo := dirF
+        closingDir := tDir
+    else
+        // 12. Trailing Stop
+        if trOn and trType == "Step" and not na(stGap)
+            move = tDir == 1 ? best - tEntry : tEntry - best
+            float lvl = na
+            if not na(stBegin)
+                if move >= stBegin
+                    k = math.floor((move - stBegin) / stGap + 1e-9)
+                    lvl := tDir == 1 ? stFirst + k * stGap : stFirst - k * stGap
+            else
+                k = math.floor(move / stGap + 1e-9)
+                if k >= 1
+                    lvl := tDir == 1 ? stStart + k * stGap : stStart - k * stGap
+            if tighter(tDir, lvl, lvTS)
+                lvTS := lvl
+        if trOn and trType != "Step"
+            cand = trType == "Lowest low / highest high" ? (tDir == 1 ? trLow : trHigh) : trType == "Signal candle high / low +/- ATR" ? (na(tcDist) ? na : (tDir == 1 ? low - tcDist : high + tcDist)) : (trMa == "MA 1" ? ma1 : ma2)
+            inCharge = tighter(tDir, lvTS, lvSL) ? lvTS : lvSL
+            inCharge := tighter(tDir, inCharge, lvML) ? inCharge : lvML
+            if not na(cand) and tighter(tDir, cand, lvTS) and tighter(tDir, cand, inCharge)
+                safe = tDir == 1 ? cand < close : cand > close
+                if safe
+                    lvTS := cand
+                else if trType == "Lowest low / highest high" or trType == "Signal candle high / low +/- ATR"
+                    strategy.close_all(comment = "Trailing Stop")
+                    closingDir := tDir
+                    ruleClose := true
+        // 10. Time stop: open N candles and not in profit
+        if tsOn and closingDir == 0 and bar_index - tBar >= tsN
+            inProfit = tDir == 1 ? close > tEntry : close < tEntry
+            if not inProfit
+                strategy.close_all(comment = "Time stop")
+                closingDir := tDir
+                ruleClose := true
+
+// =====================================================================================================================
+// 7. ENTRY WAIT + first trade + re-entry
+// =====================================================================================================================
+flatNow = tDir == 0 or flippedTo != 0 or closingDir != 0
+firstOk = not freshFirst or firstDone or (dirE != 0 and lastDirE != 0 and dirE != lastDirE)
+int blk = closingDir != 0 ? closingDir : reBlock
+if not noMidTrend
+    blk := 0
+    reBlock := 0
+bool reOk = true
+if blk != 0
+    if flatNow and closingDir == 0 and dirE != blk
+        reBlock := 0
+    else
+        reOk := dirE != blk
+int ready = 0
+if not ruleClose           // closed by the trailing level / the time stop: the next candle is judged fresh
+    if flippedTo != 0
+        wDir := flippedTo
+        wBars := 0
+        wFromFlip := true
+    else
+        if wDir != 0
+            sig = wFromFlip ? dirF : dirE
+            if flatNow and sig == wDir
+                wBars += 1
+            else
+                wDir := 0
+        if wDir == 0 and flatNow and dirE != 0 and firstOk and reOk
+            wDir := dirE
+            wBars := 0
+            wFromFlip := false
+need = wFromFlip ? (flipSameWait ? entryWait : flipWaitOwn) : entryWait
+if not ruleClose and wDir != 0 and wBars >= need
+    ready := wDir
+    wDir := 0
+if dirE != 0
+    lastDirE := dirE
+
+// =====================================================================================================================
+// OPEN (8. size, 9. max loss, 10. stop loss, 11. break-even, 12. trailing, 13. take profit, 14. shadow)
+// =====================================================================================================================
+bool opened = false
+if ready != 0 and flatNow
+    d = ready
+    withTrend = d == 1 ? ctLong : ctShort
+    isCounter = ctOn and ctBlock != "None" and not withTrend
+    isFixed = sizeMethod != "Allocation % of balance"
+    float margin = na
+    if isFixed
+        b0 = isCounter ? ctBase : baseAmt
+        margin := na(lastTotal) ? b0 : math.max(b0, lastTotal)
+        margin := b0 <= 0 ? 0.0 : margin
+    else
+        margin := strategy.equity * (isCounter ? ctAlloc : allocPct) / 100.0
+    L = isCounter ? ctLev : lev
+    qty = margin > 0 ? margin * L / close : 0.0
+    if qty > 0
+        paper = shOn and offLeft > 0
+        // 9. Max Loss per Trade
+        float ml = na
+        if mlOn
+            lossUsd = mlBasis == "Fixed $ amount" ? mlUsd : mlBasis == "% of entry amount" ? margin * mlPct / 100.0 : strategy.equity * mlPct / 100.0
+            ml := d == 1 ? close - lossUsd / qty : close + lossUsd / qty
+        // 10. Stop Loss (na = could not be worked out: set it manually)
+        float sl = na
+        if slOn
+            if slBasis == "% of ATR" or slBasis == "% of price movement"
+                dd = dist(slBasis, slVal, close, slAtr)
+                sl := na(dd) ? na : (d == 1 ? close - dd : close + dd)
+            else if slBasis == "Fixed $ amount"
+                sl := d == 1 ? close - slUsd / qty : close + slUsd / qty
+            else if slBasis == "Structure (swing low / high)"
+                sl := d == 1 ? slLow : slHigh
+            else if slBasis == "Chandelier"
+                dd = dist("% of ATR", slVal, close, slAtr)
+                sl := na(dd) ? na : (d == 1 ? slHigh - dd : slLow + dd)
+            else
+                sl := slMa == "MA 1" ? ma1 : ma2
+            if not na(sl) and (sl <= 0 or (d == 1 and sl >= close) or (d == -1 and sl <= close))
+                sl := na
+        // 12. Step Trailing Stop setup
+        stStart := na
+        stGap := na
+        stBegin := na
+        stFirst := na
+        if trOn and trType == "Step"
+            g = dist(trBasis, trGap, close, trAtr)
+            if not na(g) and g > 0
+                if trStart == "Begins at a price move"
+                    bg = dist(trBasis, trBegin, close, trAtr)
+                    lk = trBasis == "% of price movement" ? close * trLock / 100.0 : (na(trAtr) ? na : trAtr * trLock / 100.0)
+                    if not na(bg) and not na(lk) and lk < bg
+                        stGap := g
+                        stBegin := bg
+                        stFirst := d == 1 ? close + lk : close - lk
+                        stStart := d == 1 ? stFirst - g : stFirst + g
+                else
+                    float s0 = na
+                    if trStart == "Same as Stop Loss"
+                        s0 := sl
+                    else
+                        sd = dist(trBasis, trStartVal, close, trAtr)
+                        s0 := na(sd) ? na : (d == 1 ? close - sd : close + sd)
+                    if not na(s0)
+                        stGap := g
+                        stStart := s0
+        // 13. Take profit
+        tp1P := na
+        tp2P := na
+        tp3P := na
+        if tpOn
+            d1 = dist(tpBasis, tp1Val, close, tpAtr)
+            d2 = dist(tpBasis, tp2Val, close, tpAtr)
+            d3 = dist(tpBasis, tp3Val, close, tpAtr)
+            tp1P := tp1On and not na(d1) ? (d == 1 ? close + d1 : close - d1) : na
+            tp2P := tp2On and not na(d2) ? (d == 1 ? close + d2 : close - d2) : na
+            tp3P := tp3On and not na(d3) ? (d == 1 ? close + d3 : close - d3) : na
+        // 11. Break-Even
+        beDone := not beOn
+        beTrig := na
+        if beOn and beAtrOn
+            bd = dist("% of ATR", beAtrVal, close, beAtr)
+            beTrig := na(bd) ? na : (d == 1 ? close + bd : close - bd)
+        // the entry (a flip closes the old side in the same order)
+        tradeQty = paper ? qty * PAPER : qty
+        if tDir != 0
+            oSet := true
+            oPaper := tPaper
+            oAmount := tAmount
+        strategy.entry(d == 1 ? "L" : "S", d == 1 ? strategy.long : strategy.short, qty = tradeQty, comment = paper ? "PAPER" : (d == 1 ? "Long" : "Short"))
+        opened := true
+        firstDone := true
+        tEntry := close
+        tBar := bar_index
+        tQty0 := tradeQty
+        tPaper := paper
+        tAmount := margin
+        lvML := ml
+        lvSL := sl
+        lvTS := na
+        tcDist := na
+        if trOn and trType == "Signal candle high / low +/- ATR"
+            tcd = dist("% of ATR", trCVal, close, trAtr)
+            if not na(tcd) and tcd > 0
+                tcDist := tcd
+                lvTS := d == 1 ? low - tcd : high + tcd
+        best := close
+        tp1Done := false
+        tp2Done := false
+        tp3Done := false
+
+// a flip that does not open the new side now (wait / rules): close and stay flat
+if flippedTo != 0 and not opened
+    strategy.close_all(comment = "FLIP")
+
+// =====================================================================================================================
+// EXITS: the nearest stop (Trailing Stop, Stop Loss, Max Loss) + the take-profit targets
+// =====================================================================================================================
+inTrade = opened or (tDir != 0 and curDir == tDir and closingDir == 0 and flippedTo == 0)
+if inTrade
+    d = opened ? ready : tDir
+    eid = d == 1 ? "L" : "S"
+    stopLv = tighter(d, lvTS, lvSL) ? lvTS : lvSL
+    stopLv := tighter(d, stopLv, lvML) ? stopLv : lvML
+    q1 = tp1On ? tQty0 * tp1Pct / 100.0 : 0.0
+    q2 = tp2On ? tQty0 * tp2Pct / 100.0 : 0.0
+    q3 = tp3On ? tQty0 * tp3Pct / 100.0 : 0.0
+    if not na(tp1P) and not tp1Done and q1 > 0
+        strategy.exit(eid + " TP1", eid, qty = q1, limit = tp1P, stop = stopLv, comment = "TP1")
+    if not na(tp2P) and not tp2Done and q2 > 0
+        strategy.exit(eid + " TP2", eid, qty = q2, limit = tp2P, stop = stopLv, comment = "TP2")
+    if not na(tp3P) and not tp3Done and q3 > 0
+        strategy.exit(eid + " TP3", eid, qty = q3, limit = tp3P, stop = stopLv, comment = "TP3")
+    if not na(stopLv)
+        strategy.exit(eid + " STOP", eid, stop = stopLv, comment = "Stop")
+
+// =====================================================================================================================
+// PLOTS
+// =====================================================================================================================
+plot(tDir != 0 or opened ? lvSL : na, "Stop Loss", color.orange, style = plot.style_linebr)
+plot(tDir != 0 or opened ? lvML : na, "Max Loss", color.red, style = plot.style_linebr)
+plot(tDir != 0 or opened ? lvTS : na, "Trailing Stop", color.blue, style = plot.style_linebr)
+plot(tDir != 0 or opened ? tp1P : na, "TP1", color.green, style = plot.style_linebr)
+plot(tDir != 0 or opened ? tp2P : na, "TP2", color.green, style = plot.style_linebr)
+plot(tDir != 0 or opened ? tp3P : na, "TP3", color.green, style = plot.style_linebr)

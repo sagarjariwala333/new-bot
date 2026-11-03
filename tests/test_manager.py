@@ -35,7 +35,7 @@ class TestManualStartRefusedDuringSingletonConflict(unittest.IsolatedAsyncioTest
 
         from app.store import PairConfig
         self.acc = self.store.create_account("Main", "key", "secret", True)
-        self.store.add_pair(self.acc.id, tv.pair_config(symbol="BTCUSDT"))
+        self.store.add_pair(self.acc.id, tv.hub_pair_config(symbol="BTCUSDT"))
 
     def tearDown(self):
         singleton_lock._lock_held = True  # see test_singleton_lock.py's own tearDown for why
@@ -82,7 +82,7 @@ class TestStartAllEnabledIsolation(unittest.IsolatedAsyncioTestCase):
         self.acc = self.store.create_account("Main", "key", "secret", True)
         from app.store import PairConfig
         for sym in ("AAAUSDT", "BBBUSDT", "CCCUSDT"):
-            pc = tv.pair_config(symbol=sym)
+            pc = tv.hub_pair_config(symbol=sym)
             self.store.add_pair(self.acc.id, pc)
             self.store.set_pair_enabled(self.acc.id, sym, True)
 
@@ -152,7 +152,7 @@ class TestManagerRestartAfterError(unittest.TestCase):
         self.store = store_module.Store()
         self.acc = self.store.create_account("Main", "key", "secret", True)
         from app.store import PairConfig
-        self.store.add_pair(self.acc.id, tv.pair_config(symbol="BTCUSDT"))
+        self.store.add_pair(self.acc.id, tv.hub_pair_config(symbol="BTCUSDT"))
 
         self.manager = BotManager()
         self.manager.store = self.store

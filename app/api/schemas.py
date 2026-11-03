@@ -111,6 +111,28 @@ class PairCreate(BaseModel):
         return v if v is None else _validate_leverage(v)
 
 
+class PlanBody(BaseModel):
+    """A complete Strategy Hub plan (validated by app/strategy_hub.py, not here)."""
+    plan: dict
+
+
+class LibrarySave(BaseModel):
+    """Save to library: the strategy on screen, by name, with where it came from (app/strategy_library.py)."""
+    name: str
+    plan: dict
+    platform: str
+    account_id: str
+    symbol: str
+    timeframe: str | None = None
+
+
+class LossLimitsSave(BaseModel):
+    """Loss limits of the account and entire levels (app/loss_limits.py). Each of daily / weekly is a USDT amount, and daily_pct / weekly_pct a % of the account balance at the start of the
+    period; empty = not used."""
+    entire: dict | None = None
+    accounts: dict | None = None
+
+
 class PairUpdate(BaseModel):
     timeframe: str | None = None
     hma_length: int | None = Field(None, ge=1, le=500)

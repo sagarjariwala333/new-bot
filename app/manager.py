@@ -175,6 +175,12 @@ class BotManager:
             )
         key = _key(account_id, symbol)
         existing = self.instances.get(key)
+        if existing and getattr(existing, "_shadow_only", False):
+            # a stopped pair whose shadow runs: the real start replaces it (checked before the shadow is stopped)
+            self._check_may_start(account_id, symbol)
+            await existing.stop()
+            self.instances.pop(key, None)
+            existing = None
         if not (existing and existing._task is not None and not existing._task.done()):
             self._check_may_start(account_id, symbol)
         # Judge liveness by the actual asyncio task, not the status string.
@@ -217,7 +223,8 @@ class BotManager:
         cancelled; self-cancellation from within one's own synchronous
         tick would be a much harder thing to reason about correctly."""
         for key, inst in list(self.instances.items()):
-            if inst._pending_restart_on_flat and inst.state.status == "IDLE":
+            if (inst._pending_restart_on_flat and inst.state.status == "IDLE"
+                    and getattr(inst, "_hub_busy", False) is not True):
                 inst._log("Applying a deferred config update now that this pair is flat.")
                 await self.restart(inst.account_id, inst.symbol)
 
@@ -254,6 +261,46 @@ class BotManager:
                 True,
             )
 
+
+    # ---------------------------------------------------------------- SHADOW ONLY (owner rule 2026-10-24)
+    async def pause(self, account_id: str, symbol: str):
+        """The Stop button: real trading stops on the pair. A Strategy Hub pair with Shadow mode picked keeps its
+        shadow running (no real trading at all); any other pair stops fully, as before."""
+        key = _key(account_id, symbol)
+        instance = self.instances.get(key)
+        store.set_pair_enabled(account_id, symbol, False)
+        if instance:
+            await instance.stop(keep_shadow=True)
+
+    async def start_shadow_only(self, account_id: str, symbol: str):
+        """Runs a STOPPED pair's shadow only (e.g. after a process restart). Never trades. Returns the instance, or
+        None when the pair has no Strategy Hub plan with Shadow mode picked."""
+        if not singleton_lock.is_lock_held():
+            raise RuntimeError("Refusing to run the shadow - a singleton-lock conflict was detected for this process.")
+        startup_guard.require_storage_ok()
+        key = _key(account_id, symbol)
+        existing = self.instances.get(key)
+        if existing and existing._task is not None and not existing._task.done():
+            return existing
+        instance = self._build_instance(account_id, symbol)
+        if not instance._hub_shadow_on():
+            await instance.client.close()
+            return None
+        instance._shadow_only = True
+        self.instances[key] = instance
+        instance.start()
+        return instance
+
+    async def refresh_shadow_only(self, account_id: str, symbol: str):
+        """A stopped pair's plan changed: its shadow restarts with the new plan (or ends if Shadow mode is off now)."""
+        key = _key(account_id, symbol)
+        existing = self.instances.get(key)
+        if existing and getattr(existing, "_shadow_only", False):
+            await existing.stop()
+            self.instances.pop(key, None)
+            return await self.start_shadow_only(account_id, symbol)
+        return None
+
     def get(self, account_id: str, symbol: str) -> BotInstance | None:
         return self.instances.get(_key(account_id, symbol))
 
@@ -271,6 +318,11 @@ class BotManager:
         for acc in store.list_accounts():
             for symbol, pc in acc.pairs.items():
                 if not pc.enabled:
+                    if (getattr(pc, "plan", None) or {}).get("shadow", {}).get("on"):
+                        try:
+                            await self.start_shadow_only(acc.id, symbol)
+                        except Exception as e:
+                            log.error(f"Could not run the shadow of {label}{acc.name}/{symbol} at startup: {e}")
                     continue
                 key = _key(acc.id, symbol)
                 try:

@@ -131,6 +131,10 @@ class PairConfig:
     telegram_enabled: bool | None = None
     ws_staleness_seconds: float | None = None   # pause NEW entries (never exits) if the price feed goes quiet this long
 
+    # STRATEGY HUB: the complete strategy plan for this pair (see app/strategy_hub.py). None = the pair runs
+    # the old Base V3 strategy. There is NO default plan: it exists only if the owner saved one.
+    plan: dict | None = None
+
 
 def _clean_pair_dict(raw: dict, cls) -> dict:
     """Keeps only fields the dataclass knows (ignores anything else in the file)."""

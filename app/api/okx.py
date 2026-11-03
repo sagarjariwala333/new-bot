@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Depends, Response
 
 from app.api.schemas import (
     OKXAccountCreate, OKXAccountUpdate, OKXPairCreate, OKXPairUpdate,
-    WalkForwardRequest, MonteCarloRequest,
+    WalkForwardRequest, MonteCarloRequest, PlanBody,
 )
 from app.okx_store import okx_store, OKXPairConfig
 from app.okx_manager import okx_manager
@@ -27,7 +27,9 @@ from app import base_v3_tracker
 from app.auth import require_auth, require_csrf
 from app import ledger
 from app import analysis
+from app import hub_backtest
 from app.instance import _params_from_pair
+from app import hub_api
 from app import default_settings as ds
 
 router = APIRouter(prefix="/api/okx")
@@ -154,13 +156,48 @@ async def update_okx_pair(account_id: str, symbol: str, body: OKXPairUpdate):
         # 2026-09-15, owner decision - see app/api/__init__.py's update_pair
         # for the full reasoning. Same deferred-update behavior, separate
         # implementation.
-        if inst.state.status in ("IN_POSITION", "UNPROTECTED", "CLOSING"):
+        if inst.state.status in ("IN_POSITION", "UNPROTECTED", "CLOSING") or getattr(inst, "_hub_busy", False) is True:
             inst._pending_restart_on_flat = True
             inst._log("Config updated - will apply once this pair is flat (a position is "
                       "currently open or being closed).")
         else:
             await okx_manager.restart(account_id, symbol)
     return asdict(pc)
+
+
+@router.get("/accounts/{account_id}/pairs/{symbol}/plan", dependencies=[auth_dep])
+async def get_okx_pair_plan(account_id: str, symbol: str):
+    acc = okx_store.get_account(account_id)
+    if acc is None or symbol not in acc.pairs:
+        raise HTTPException(404, "pair not found")
+    return hub_api.plan_view(acc.pairs[symbol])
+
+
+@router.put("/accounts/{account_id}/pairs/{symbol}/plan", dependencies=mutating_deps)
+async def set_okx_pair_plan(account_id: str, symbol: str, body: PlanBody):
+    acc = okx_store.get_account(account_id)
+    if acc is None or symbol not in acc.pairs:
+        raise HTTPException(404, "pair not found")
+    from app.api import _refuse_if_frozen
+    _refuse_if_frozen(acc.pairs[symbol], symbol, "editing the strategy plan")
+    try:
+        return await hub_api.apply_plan(okx_store, okx_manager, account_id, symbol, body.plan, platform="okx")
+    except hub_api.PlanRefused as e:
+        raise HTTPException(400, str(e))
+
+
+@router.delete("/accounts/{account_id}/pairs/{symbol}/plan", dependencies=mutating_deps)
+async def remove_okx_pair_plan(account_id: str, symbol: str):
+    """Remove plan: takes the strategy off the pair (it goes into the library history first)."""
+    acc = okx_store.get_account(account_id)
+    if acc is None or symbol not in acc.pairs:
+        raise HTTPException(404, "pair not found")
+    from app.api import _refuse_if_frozen
+    _refuse_if_frozen(acc.pairs[symbol], symbol, "removing the strategy plan")
+    try:
+        return await hub_api.remove_plan(okx_store, okx_manager, account_id, symbol, "okx")
+    except hub_api.PlanRefused as e:
+        raise HTTPException(409, str(e))
 
 
 @router.delete("/accounts/{account_id}/pairs/{symbol}", dependencies=mutating_deps)
@@ -204,7 +241,7 @@ async def stop_okx_pair(account_id: str, symbol: str):
     if acc is not None and symbol in acc.pairs:
         from app.api import _refuse_if_frozen
         _refuse_if_frozen(acc.pairs[symbol], symbol, "stopping")
-    await okx_manager.stop(account_id, symbol)
+    await okx_manager.pause(account_id, symbol)    # a hub pair with Shadow mode keeps its shadow running
     return {"stopped": True}
 
 
@@ -302,7 +339,7 @@ async def _fetch_okx_history(account_id: str, symbol: str, timeframe: str, limit
         "open_time", "open", "high", "low", "close", "volume", "close_time",
         "qav", "trades", "tbbav", "tbqav", "ignore",
     ])
-    for col in ["open", "high", "low", "close"]:
+    for col in ["open", "high", "low", "close", "volume"]:
         df[col] = df[col].astype(float)
     df["open_time"] = df["open_time"].astype("int64")
     return df.iloc[:-1].reset_index(drop=True)  # drop the still-forming candle
@@ -314,16 +351,13 @@ async def okx_walk_forward(account_id: str, symbol: str, body: WalkForwardReques
     if acc is None or symbol not in acc.pairs:
         raise HTTPException(404, "pair not found")
     pc = acc.pairs[symbol]
+    if not getattr(pc, "plan", None):
+        raise HTTPException(400, "This pair has no Strategy Hub plan. Save a plan in the Strategy Hub first - the "
+                                 "Analysis tab tests the pair's own Hub strategy.")
     df = await _fetch_okx_history(account_id, symbol, pc.timeframe, body.limit)
     try:
-        p = _params_from_pair(pc)
-    except RuntimeError as e:
-        raise HTTPException(400, str(e))
-    try:
-        return analysis.walk_forward_analysis(df, p, n_folds=body.n_folds,
-                                               initial_equity=body.initial_equity,
-                                               commission_pct=body.commission_pct,
-                                               slippage_pct=body.slippage_pct)
+        return hub_backtest.walk_forward(df, pc.plan, n_folds=body.n_folds, initial_equity=body.initial_equity,
+                                         commission_pct=body.commission_pct, slippage_pct=body.slippage_pct)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -334,18 +368,16 @@ async def okx_monte_carlo(account_id: str, symbol: str, body: MonteCarloRequest)
     if acc is None or symbol not in acc.pairs:
         raise HTTPException(404, "pair not found")
     pc = acc.pairs[symbol]
+    if not getattr(pc, "plan", None):
+        raise HTTPException(400, "This pair has no Strategy Hub plan. Save a plan in the Strategy Hub first - the "
+                                 "Analysis tab tests the pair's own Hub strategy.")
     df = await _fetch_okx_history(account_id, symbol, pc.timeframe, body.limit)
     try:
-        p = _params_from_pair(pc)
-    except RuntimeError as e:
+        return hub_backtest.monte_carlo(df, pc.plan, n_sims=body.n_sims, initial_equity=body.initial_equity,
+                                        commission_pct=body.commission_pct, slippage_pct=body.slippage_pct,
+                                        seed=body.seed)
+    except ValueError as e:
         raise HTTPException(400, str(e))
-    trades = analysis.simulate_trades(df, p, initial_equity=body.initial_equity,
-                                      commission_pct=body.commission_pct, slippage_pct=body.slippage_pct)
-    if not trades:
-        raise HTTPException(400, "No simulated trades in this history window - widen `limit` or check "
-                                  "the pair's signal frequency.")
-    return analysis.monte_carlo_simulation([t.pnl for t in trades], n_sims=body.n_sims,
-                                           initial_equity=body.initial_equity, seed=body.seed)
 
 
 # ---------------------------------------------------------------- BASE V3 tracker tab
@@ -362,13 +394,15 @@ def get_tracker(account_id: str, symbol: str):
     if inst is not None:
         t = inst.tracker
     else:
-        t = base_v3_tracker.load("okx", account_id, symbol,
-                                 acc.pairs[symbol].tracker_start_balance)
+        from app.api import _tracker_view_settings
+        t = base_v3_tracker.load("okx", account_id, symbol, _tracker_view_settings(acc.pairs[symbol])[0])
+    from app.api import _tracker_view_settings
     sh = t.get_shadow()
+    _, _use_shadow, _shadow_trades = _tracker_view_settings(acc.pairs[symbol])
     return {
         "summary": t.summary(),
-        "shadow_trades_setting": acc.pairs[symbol].shadow_trades,
-        "use_shadow": acc.pairs[symbol].use_shadow,
+        "shadow_trades_setting": _shadow_trades,
+        "use_shadow": _use_shadow,
         "real_trades": list(t.real_trades),
         "paper_trades": list(sh.history),
         "open_paper_trade": sh.current,

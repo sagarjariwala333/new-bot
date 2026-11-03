@@ -96,6 +96,8 @@ class OKXPairConfig:
     ws_staleness_seconds: float | None = None
     # OKX-specific: which price OKX's stop trigger watches (blank until entered).
     trigger_px_type: str | None = None
+    # STRATEGY HUB plan for this pair (see store.PairConfig.plan). None = old Base V3 strategy.
+    plan: dict | None = None
 
 
 @dataclass

@@ -64,6 +64,9 @@ from app import position_state
 from app import reconciliation
 from app import base_v3_tracker as tracker_mod
 from app.ws_feed import MarkPriceFeed, OKXMarkPriceFeed, NullMarkFeed
+from app.hub_trading import HubMixin
+from app import hub_state
+from app import strategy_hub as hub_mod
 
 MAX_LOG_LINES = 300
 
@@ -218,7 +221,7 @@ class RuntimeState:
     updated_at: float = field(default_factory=time.time)
 
 
-class BotInstance:
+class BotInstance(HubMixin):
     def __init__(self, account_id: str, account_name: str, symbol: str,
                  api_key: str | None, api_secret: str | None, testnet: bool, pair_config: PairConfig,
                  adapter: BaseExchangeAdapter | None = None, platform: str = "binance"):
@@ -306,8 +309,12 @@ class BotInstance:
         # BASE V3 tracker (separate memory per platform + account + pair):
         # decides shadow mode only, never touches a real order. Loaded here
         # so it (and the last processed candle) survive restarts.
-        self.tracker = tracker_mod.load(self.platform, account_id, symbol,
-                                        pair_config.tracker_start_balance)
+        # A Strategy Hub pair takes the tracker starting amount from its plan's Shadow box.
+        _plan_cfg = getattr(pair_config, "plan", None) or None
+        _tracker_start = pair_config.tracker_start_balance
+        if _plan_cfg and (_plan_cfg.get("shadow") or {}).get("on"):
+            _tracker_start = _plan_cfg["shadow"].get("tracker_start") or _tracker_start
+        self.tracker = tracker_mod.load(self.platform, account_id, symbol, _tracker_start or 1.0)
         # One-shot alert latches (reset when the situation clears).
         self._foreign_position_alerted: bool = False
         self._topup_alerted: bool = False
@@ -315,6 +322,10 @@ class BotInstance:
         # "what's my account's total open exposure across my sibling pairs?"
         # without instance.py importing manager.py (avoids a circular import).
         self.manager = None
+        # SHADOW ONLY (2026-10-24): the pair is stopped for real trading but its shadow keeps running.
+        self._shadow_only: bool = False
+        # STRATEGY HUB: the saved plan of this pair (None = the pair runs the old Base V3 strategy).
+        self._hub_init()
 
     # ---------------------------------------------------------------- logging
     def _log(self, msg: str):
@@ -336,7 +347,16 @@ class BotInstance:
         self.mark_feed.start()
         self._task = asyncio.create_task(self._run())
 
-    async def stop(self):
+    async def stop(self, keep_shadow: bool = False):
+        """keep_shadow=True (Stop on the pair, STOP ALL): a Strategy Hub pair with Shadow mode picked keeps running
+        in SHADOW ONLY - no real trading at all (no entries, no managing of a real trade; resting exchange orders
+        stay as they are), the shadow keeps following the plan (owner rule 2026-10-24). Anything else stops fully."""
+        if keep_shadow and self._hub_shadow_on() and self._task is not None and not self._task.done():
+            self._shadow_only = True
+            self.state.status = "STOPPED"
+            self._log("Stopped: no real trading on this pair. The shadow keeps running.")
+            await self._notify(tg.notify_stopped(self.account_name, self.symbol, self.pc.telegram_enabled))
+            return
         # 2026-09-15 fix (owner request): plain stop() only ever paused the
         # loop - it never closed an open position (by design, for a normal
         # "pause to reconfigure" use case, where resting SL/TP orders keep
@@ -409,9 +429,21 @@ class BotInstance:
             # close overlapped with this) - let that finish rather than
             # racing a second close attempt against the first.
             await self._retry_close()
-        await self.stop()
+        await self.stop(keep_shadow=True)
 
     async def _run(self):
+        if self._shadow_only:
+            # SHADOW ONLY start (a stopped pair whose shadow keeps running, e.g. after a process restart): no
+            # position checks, no stream, no real trading - candles and the live price for the shadow only.
+            self.state.status = "STOPPED"
+            self._log("Shadow only: real trading is stopped on this pair; the shadow keeps running.")
+            while not self._stop_requested:
+                try:
+                    await self._tick_shadow_only()
+                except Exception as e:
+                    self._log(f"Shadow tick failed ({e}) - trying again at the next tick.")
+                await self._sleep_until_next_tick()
+            return
         # Fail CLOSED: if we can't confirm the account is in one-way position
         # mode, this bot's entire position-tracking model (one signed qty per
         # symbol) may not hold - refuse to trade rather than proceed on an
@@ -501,7 +533,44 @@ class BotInstance:
                                                     self.pc.telegram_enabled))
                 if await self._escalate_on_repeated_tick_failure():
                     break
-            await asyncio.sleep(max(self.pc.poll_seconds, 5))
+            await self._sleep_until_next_tick()
+
+    async def _sleep_until_next_tick(self):
+        """Waits the poll interval. A Strategy Hub pair with an open trade uses the wait to watch its stop
+        ladder on the LIVE price about every second (owner rule 2026-10-23: stops are live, never only at the
+        candle close): the Step Trailing Stop moves, and a memory level the price went through closes the trade.
+        Only the price feed is read here; the exchange is called only when something must change."""
+        total = max(self.pc.poll_seconds, 5)
+        if not self._is_hub():
+            await asyncio.sleep(total)
+            return
+        end = time.monotonic() + total
+        wake = self._hub_close_wake_in()       # wake right at the candle close (flip / entry at once)
+        if wake is not None:
+            end = min(end, time.monotonic() + max(wake, 0.0))
+        while not self._stop_requested:
+            left = end - time.monotonic()
+            if left <= 0:
+                return
+            await asyncio.sleep(min(1.0, left))
+            real = (not self._shadow_only) and self.state.status == "IN_POSITION" and bool(self.hub.ladder)
+            paper = self._hub_book_open()
+            if not real and not paper:
+                continue
+            mark = self._hub_live_price()
+            if mark is None:
+                continue   # no live price: the next tick checks with the exchange price
+            if paper:
+                try:
+                    await self._hub_shadow_live(mark)   # the shadow follows the live price too (paper only)
+                except Exception as e:
+                    self._log(f"Live shadow check failed ({e}) - the next tick checks again.")
+            if real:
+                try:
+                    if await self._hub_ladder_check(mark):
+                        return   # the trade was closed: run the next tick now
+                except Exception as e:
+                    self._log(f"Live stop check failed ({e}) - the stop on the exchange stays; the next tick checks again.")
 
     async def _escalate_on_repeated_tick_failure(self) -> bool:
         """2026-09-16 fix (audit finding #1). Called from both exception
@@ -615,7 +684,17 @@ class BotInstance:
         separate Binance system from regular orders since the 2025-12-09
         migration - so this checks the algo order list, not the regular one;
         this bot never creates resting regular orders (entries/closes are
-        MARKET, filled instantly)."""
+        MARKET, filled instantly). A Strategy Hub pair also has take-profit LIMIT orders (regular orders):
+        those are recorded and cancelled first."""
+        if self._is_hub():
+            try:
+                await self._hub_cancel_tp_orders()
+            except Exception as e:
+                self._log(f"Take-profit order cleanup had a problem ({e}) - continuing.")
+            try:
+                await self._hub_cancel_stop_child()
+            except Exception as e:
+                self._log(f"Stop-limit order cleanup had a problem ({e}) - continuing.")
         try:
             open_orders = await self.client.get_open_algo_orders(self.symbol)
         except ExchangeAPIError as e:
@@ -698,7 +777,10 @@ class BotInstance:
                         pass
 
             # Keep exactly one of our own stops (dedupe any phantom leftovers).
-            self.state.sl_order_id, self.state.sl_price = await self._dedupe_own_algo_orders("STOP_MARKET")
+            if self._is_hub():
+                self.state.sl_order_id, self.state.sl_price = await self._hub_reconcile_stops()
+            else:
+                self.state.sl_order_id, self.state.sl_price = await self._dedupe_own_algo_orders("STOP_MARKET")
 
             # Restore the Base V3 trade state saved at entry - cross-checked
             # against the real position first (a mismatching file is stale).
@@ -719,13 +801,15 @@ class BotInstance:
                           "tracking is unavailable for it, and its tracker % will be approximated "
                           "when it closes. The resting stop (if any) is kept exactly as it is.")
 
-            # Only IN_POSITION (protected) if a real stop is confirmed resting.
-            if self.state.sl_order_id:
+            # Only IN_POSITION (protected) if a real stop is confirmed resting - unless a hub plan has
+            # max loss switched off (then there is no stop to expect).
+            hub_no_stop = self._is_hub() and not self._hub_any_stop()
+            if self.state.sl_order_id or hub_no_stop:
                 self.state.status = "IN_POSITION"
                 if self.state.stop_target is None:
                     self.state.stop_target = self.state.sl_price
                 self._log(f"Resumed - existing open {direction} position, qty {self.state.qty}, "
-                          f"stop confirmed resting at {self.state.sl_price}.")
+                          f"stop {'confirmed resting at ' + str(self.state.sl_price) if self.state.sl_order_id else 'not used (no stop is picked)'}.")
                 await self._notify(tg.notify_resumed(self.account_name, self.symbol, direction,
                                                      self.pc.telegram_enabled))
             else:
@@ -745,13 +829,24 @@ class BotInstance:
             # cancel here would remove manual or foreign orders on this symbol,
             # which this bot must never touch.
             await self._cancel_own_orders()
+            if self._is_hub() and self.hub.tp is not None:
+                self.hub.tp = None      # no position: no take-profit memory
+                hub_state.save(self.hub)
 
         # 2026-10-01: with per-trade leverage, a resumed position may be a counter-trend trade
         # opened at a different leverage than pc.leverage. Never touch leverage under an open
         # position (it would move its liquidation price); each new entry sets its own leverage.
+        # AUDIT FIX B / C (owner 2026-10-26 "Ok fix all"): never touch leverage OR the margin mode under an open
+        # position - on OKX the margin-mode call also re-sends a leverage (it went to 1x after a restart), and on
+        # Binance a changed Isolated / Cross is refused while a position is open (the pair could not start).
+        # A hub pair sets its margin mode again at every entry.
         if not self.state.direction:
-            await self.client.set_leverage(self.symbol, int(self.pc.leverage))
-        await self.client.set_margin_type(self.symbol, self.pc.isolated_margin)
+            start_lev = self._plan["sizing"]["leverage"] if self._is_hub() else self.pc.leverage
+            await self.client.set_leverage(self.symbol, int(start_lev))
+            await self.client.set_margin_type(self.symbol, self.pc.isolated_margin)
+        else:
+            self._log("A position is open: leverage and margin mode are left as they are on the exchange "
+                      "(set again at the next entry).")
 
     def _restore_trade_state(self, persisted):
         self.state.equity_at_entry = persisted.equity_at_entry
@@ -862,6 +957,9 @@ class BotInstance:
 
     # ---------------------------------------------------------------- main tick
     async def _tick(self):
+        if self._shadow_only:
+            await self._tick_shadow_only()   # stopped for real trading: only the shadow runs
+            return
         # Highest priority, every single tick, before anything else: if a
         # previous cycle left this position unprotected (stop placement
         # failed after a market entry), retry resolving that BEFORE
@@ -875,6 +973,8 @@ class BotInstance:
         # next candle, until exchange truth actually confirms it.
         if self.state.status == "CLOSING":
             await self._retry_close()
+            if self._is_hub() and self.state.status == "IDLE" and self.hub.open_now:
+                await self._hub_continue()   # the flip close is now confirmed flat: continue the flip at once
             return
 
         # Stale mark-price feed: edge-triggered alert; only ever pauses NEW
@@ -893,6 +993,10 @@ class BotInstance:
             self._feed_unhealthy_alerted = False
 
         await self._maybe_check_withdraw_alert()
+
+        if self._is_hub():
+            await self._tick_hub()
+            return
 
         p = _params_from_pair(self.pc)
         snap, ind = await self._fetch_snapshot(p)
@@ -1065,11 +1169,16 @@ class BotInstance:
                 msg = (f"Position size on {self.symbol} is now {real_qty}, bigger than the {bot_qty} "
                        f"the bot opened (manual top-up?). The fixed stop at {self.state.sl_price} "
                        f"will close the WHOLE position, so the loss there would be larger than "
-                       f"{self.pc.stop_loss_pct_equity}% of balance. The bot will not move the stop. "
+                       f"{self._hub_max_loss_text() if self._is_hub() else str(self.pc.stop_loss_pct_equity) + '% of balance'}. The bot will not move the stop. "
                        f"The tracker will only count the bot's own {bot_qty}.")
                 self._log(msg)
                 await self._notify(tg.notify_error(self.account_name, self.symbol, msg,
                                                    self.pc.telegram_enabled))
+        if self._is_hub() and real_qty < self.state.qty - 1e-9:
+            try:
+                await self._hub_outside_partial(real_qty)   # a part closed outside the bot: ledger + trade total
+            except Exception as e:
+                self._log(f"Could not record the part closed outside the bot ({e}).")
         if abs(real_qty - self.state.qty) > 1e-9:
             self._log(f"Real position size changed {self.state.qty} -> {real_qty} - tracking the real size.")
             self.state.qty = real_qty
@@ -1549,45 +1658,81 @@ class BotInstance:
             self._reset_position_state()
             return
 
+        if self._is_hub() and not self._hub_any_stop():
+            self.state.status = "IN_POSITION"   # no stop is picked: nothing to protect with
+            return
+
+        if self._is_hub():
+            # STOP LADDER: the nearest level goes on the exchange again; if that fails, flatten (below).
+            lad = self._hub_ladder_ensure()
+            try:
+                await self._hub_ladder_fill_max_loss()
+            except Exception as e:
+                self._log(f"Could not work out the Max Loss level ({e}).")
+            if lad is not None and hub_mod.nearest_level(lad["direction"], lad)[0] is None:
+                self.state.status = "IN_POSITION"   # e.g. only a Step Trailing Stop that is not in charge yet
+                return
+            try:
+                self.state.sl_order_id = None
+                self.state.status = "IN_POSITION"
+                closed = await self._hub_sync_exchange_stop(None, first=True)
+            except Exception as e:
+                self.state.status = "UNPROTECTED"
+                self._log(f"Retry to protect position also failed ({e}) - attempting emergency flatten.")
+            else:
+                if closed or self.state.sl_order_id:
+                    if not closed:
+                        self._log(f"Recovered - stop now resting at {self.state.sl_price}.")
+                        await self._notify(tg.notify_sl_update(self.account_name, self.symbol, direction,
+                                                               self.state.sl_price, False, self.pc.telegram_enabled))
+                    return
+                self.state.status = "UNPROTECTED"
+                self._log("Retry to protect position placed no stop - attempting emergency flatten.")
+
         # BASE V3: re-place the SAME fixed stop the trade was opened with -
         # never a recalculated one (prompt Part 20). Only if no stop was ever
         # recorded for this position (e.g. a position adopted at startup with
         # no saved state) is one computed, from the saved balance-at-entry if
         # available, otherwise from the current available balance - logged
         # loudly, because protecting a real position beats leaving it naked.
-        p = _params_from_pair(self.pc)
-        try:
-            target = self.state.stop_target
-            if target is None:
-                persisted = position_state.load_position_state(self.account_id, self.symbol)
-                if persisted and position_state.matches_resumed_position(persisted, direction, entry_price):
-                    self._restore_trade_state(persisted)
-                    target = self.state.stop_target
-            if target is None:
-                basis = self.state.equity_at_entry
-                if not basis:
-                    basis = await self.client.get_available_balance()
-                    self._log(f"No saved fixed stop and no saved balance-at-entry for this position - "
-                              f"computing a protective stop from the CURRENT available balance "
-                              f"({basis:.2f}) as a best effort.")
-                    self.state.equity_at_entry = basis
-                target = strat.stop_price(direction, entry_price, basis, self.state.bot_qty or qty, p)
-                self.state.stop_target = target
-                self._persist_trade_state()
-            sl_order, sl_price = await self._place_stop_order(direction, target)
-        except StopAlreadyCrossedError as crossed:
-            self._log(f"The fixed stop {crossed.requested} is already crossed (mark {crossed.mark}) - "
-                      f"the stop has effectively been hit; flattening.")
-        except Exception as e:
-            self._log(f"Retry to protect position also failed ({e}) - attempting emergency flatten.")
-        else:
-            self.state.status = "IN_POSITION"
-            self.state.sl_price = sl_price
-            self.state.sl_order_id = sl_order.get("algoId")
-            self._log(f"Recovered - fixed stop now resting at {sl_price}.")
-            await self._notify(tg.notify_sl_update(self.account_name, self.symbol, direction, sl_price,
-                                                   False, self.pc.telegram_enabled))
-            return
+        if not self._is_hub():   # BASE V3 path (a hub pair protects with its ladder above)
+            p = None if self._is_hub() else _params_from_pair(self.pc)
+            try:
+                target = self.state.stop_target
+                if target is None:
+                    persisted = position_state.load_position_state(self.account_id, self.symbol)
+                    if persisted and position_state.matches_resumed_position(persisted, direction, entry_price):
+                        self._restore_trade_state(persisted)
+                        target = self.state.stop_target
+                if target is None:
+                    basis = self.state.equity_at_entry
+                    if not basis:
+                        basis = await self.client.get_available_balance()
+                        self._log(f"No saved fixed stop and no saved balance-at-entry for this position - "
+                                  f"computing a protective stop from the CURRENT available balance "
+                                  f"({basis:.2f}) as a best effort.")
+                        self.state.equity_at_entry = basis
+                    if self._is_hub():
+                        target = self._hub_stop_target(direction, entry_price, self.state.bot_qty or qty,
+                                                       self.state.leverage or self._plan["sizing"]["leverage"], basis)
+                    else:
+                        target = strat.stop_price(direction, entry_price, basis, self.state.bot_qty or qty, p)
+                    self.state.stop_target = target
+                    self._persist_trade_state()
+                sl_order, sl_price = await self._place_stop_order(direction, target)
+            except StopAlreadyCrossedError as crossed:
+                self._log(f"The fixed stop {crossed.requested} is already crossed (mark {crossed.mark}) - "
+                          f"the stop has effectively been hit; flattening.")
+            except Exception as e:
+                self._log(f"Retry to protect position also failed ({e}) - attempting emergency flatten.")
+            else:
+                self.state.status = "IN_POSITION"
+                self.state.sl_price = sl_price
+                self.state.sl_order_id = sl_order.get("algoId")
+                self._log(f"Recovered - fixed stop now resting at {sl_price}.")
+                await self._notify(tg.notify_sl_update(self.account_name, self.symbol, direction, sl_price,
+                                                       False, self.pc.telegram_enabled))
+                return
 
         # Placing protection failed again - flatten rather than leave it naked.
         # Re-fetch the REAL position size right before closing (2026-09-14
@@ -1907,6 +2052,14 @@ class BotInstance:
             reason = "SL"
         else:
             return  # not our fixed stop (Base V3 places no other algo orders) - ignore safely
+        if self._is_hub() and self.hub.ladder:
+            ex = self.hub.ladder.get("ex") or {}
+            if ex.get("kind") == "limit" and ex.get("algo_id") == algo_id and not ex.get("triggered"):
+                # A stop-LIMIT that triggered has only PLACED its limit order; the trade closes when it fills.
+                # _finalize_external_close below confirms with the exchange before anything is finalized.
+                ex["triggered"] = True
+                hub_state.save(self.hub)
+                self._log(f"The {ex.get('name')} stop-limit triggered at {ex.get('price')} - its limit order is working.")
 
         matched_order_id = None
         actual_order_id = o.get("ai")
@@ -2036,6 +2189,14 @@ class BotInstance:
         if not exit_price:
             exit_price = self.state.sl_price
 
+        if self._is_hub() and self.hub.tp:
+            qty = await self._hub_qty_after_tp(qty)
+            if qty <= 0:
+                self._log("Position fully closed by the take-profit orders (each fill is already in the ledger).")
+                await self._cancel_own_orders()
+                self._reset_position_state()
+                return
+
         self._log(f"Position closed externally (confirmed {reason}, via {source}).")
         await self._cancel_own_orders()
         pnl = None
@@ -2088,13 +2249,16 @@ class BotInstance:
         return total if found_any else None
 
     async def _record_ledger(self, direction, qty, exit_price, pnl, reason, confirmed: bool = True,
-                              exit_order_id: int | None = None):
+                              exit_order_id: int | None = None, include_entry_commission: bool = True):
         """Writes the trade to the ledger. Returns the PnL actually recorded
         (NET of real commission when it could be fetched, otherwise gross),
         or None if nothing could be recorded."""
         if not direction or not qty or not self.state.entry_price:
             return None
-        commission = await self._fetch_actual_commission([self.state.entry_order_id, exit_order_id])
+        # A partial exit (Strategy Hub take profit) counts only its OWN commission; the entry commission is
+        # counted once, on the final close of the trade.
+        ids = [self.state.entry_order_id, exit_order_id] if include_entry_commission else [exit_order_id]
+        commission = await self._fetch_actual_commission(ids)
         commission_included = commission is not None
         net_pnl = pnl
         if commission_included and pnl is not None:
@@ -2102,6 +2266,7 @@ class BotInstance:
         elif not commission_included:
             self._log("Could not fetch real commission for this trade - ledger PnL is GROSS "
                       "(pre-fees), not net. Never estimated as a substitute.")
+        self._hub_note_result(net_pnl)   # fixed base amount: every fill of the trade is added up
         ledger.record_trade(ledger.TradeRecord(
             account_id=self.account_id, symbol=self.symbol, direction=direction,
             qty=qty, entry_price=self.state.entry_price, exit_price=exit_price or 0.0,
@@ -2153,22 +2318,32 @@ class BotInstance:
             self._log(f"Tracker not updated for this close ({reason}): balance at entry unknown.")
             return
         result_pct = bot_pnl / basis * 100.0
-        p = _params_from_pair(self.pc)
+        if self._is_hub():
+            # Strategy Hub: the Shadow box of the plan decides (OFF = the tracker still follows the results).
+            use_shadow = bool(self._plan["shadow"]["on"])
+            shadow_trades = self._plan["shadow"]["trades"]
+        else:
+            p = _params_from_pair(self.pc)
+            use_shadow, shadow_trades = p.use_shadow, p.shadow_trades
         started = tracker_mod.apply_real_close(
             self.tracker, result_pct=result_pct, pnl=bot_pnl, direction=direction,
             entry_price=self.state.entry_price, exit_price=exit_price, reason=reason,
-            balance_at_entry=basis, use_shadow=p.use_shadow, approximated=approximated)
+            balance_at_entry=basis, use_shadow=use_shadow, approximated=approximated)
         tracker_mod.save(self.tracker)
         self._log(f"Tracker: {result_pct:+.3f}% -> {self.tracker.balance:,.2f} "
                   f"(high {self.tracker.peak:,.2f}){' [approximated basis]' if approximated else ''}.")
         if started:
+            if self._is_hub():
+                self.hub.shadow_wait = {"pend_dir": 0, "pend_bars": 0, "pend_from_flip": False}
+                hub_state.save(self.hub)
             msg = (f"New tracker high after a winning trade - SHADOW MODE ON: the next "
-                   f"{p.shadow_trades} trades are paper only (no real orders).")
+                   f"{shadow_trades} trades are paper only (no real orders).")
             self._log(msg)
             await self._notify(tg.notify_info(self.account_name, self.symbol, msg,
                                               self.pc.telegram_enabled, email_kind="Shadow Started"))
 
     def _reset_position_state(self):
+        closed_direction = self.state.direction
         self.state.status = "IDLE"
         self.state.direction = None
         self.state.entry_price = None
@@ -2191,11 +2366,23 @@ class BotInstance:
         self.state.entry_candle_time = None
         self.state.held_signal_count = 0
         self._topup_alerted = False
+        if self._is_hub() and self.hub.tp is not None:
+            self.hub.tp = None
+            hub_state.save(self.hub)
+        if self._is_hub():
+            # The stop ladder belongs to the trade that just closed. "Allow Mid-Trend Re-entry" OFF: this side is
+            # blocked until its entry signal has ended (see HubMixin._hub_reentry_ok).
+            self.hub.ladder = None
+            if closed_direction in ("LONG", "SHORT"):
+                self.hub.reentry_block = 1 if closed_direction == "LONG" else -1
+            hub_state.save(self.hub)
         # Must never linger past its own trade's lifetime - see
         # position_state.py's own docstring on why a stale file here would
         # be actively dangerous (a future restart could mistake it for the
         # NEXT trade's state).
         position_state.clear_position_state(self.account_id, self.symbol)
+        self._hub_result_finished()   # Cooldown after a loss: the trade's result ends / extends the losses in a row
+        self._hub_trade_finished()   # fixed base amount: the trade's total becomes the base of the next entry
         # Clear the real-time commission cache too, so it never grows
         # unbounded and never leaks into a future, unrelated trade.
         self._commission_cache.clear()
@@ -2212,11 +2399,13 @@ class BotInstance:
             "account_name": self.account_name,
             "symbol": self.symbol,
             "status": self.state.status,
+            "shadow_only": bool(self._shadow_only),
             "direction": self.state.direction,
             "entry_price": self.state.entry_price,
             "qty": self.state.qty,
             "sl_price": self.state.sl_price,
-            "strategy": strat.STRATEGY_NAME,
+            "strategy": "Strategy Hub" if self._is_hub() else strat.STRATEGY_NAME,
+            "hub": self._hub_status(),
             "base_v3": {
                 "fixed_stop": self.state.sl_price,
                 "stop_requested": self.state.stop_target,

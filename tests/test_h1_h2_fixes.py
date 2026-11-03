@@ -150,8 +150,8 @@ class TestManagersHonourTheStorageGuard(unittest.IsolatedAsyncioTestCase):
         self.okx.store = self.okx_store
         self.acc = self.store.create_account("T", "k", "s", True)
         self.oacc = self.okx_store.create_account("D", "k", "s", "p", demo=True)
-        self.store.add_pair(self.acc.id, tv.pair_config(symbol="AAAUSDT"))
-        self.okx_store.add_pair(self.oacc.id, tv.okx_pair_config(symbol="AAA-USDT-SWAP"))
+        self.store.add_pair(self.acc.id, tv.hub_pair_config(symbol="AAAUSDT"))
+        self.okx_store.add_pair(self.oacc.id, tv.okx_hub_pair_config(symbol="AAA-USDT-SWAP"))
         singleton_lock._lock_held = True
 
     def tearDown(self):
