@@ -60,6 +60,8 @@ class TestPlanValidation(unittest.TestCase):
                     p["ind"][b].update(type="ALMA", mode="Price crossed MA within N candles")
                 if b == "mx":
                     p["ind"][b].update(mode="MA 1 crossed MA 2 within N candles")
+                if b == "sup":
+                    p["ind"][b].update(modes=[H.SUP_FLIP])      # N is needed by the "Fresh flip" condition
                 if key == "modes":
                     if b in ("rsi", "macd"):
                         continue   # 2026-10-25: a plan without a Condition keeps the old one (see upgrade_plan)

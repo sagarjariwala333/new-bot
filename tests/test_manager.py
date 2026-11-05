@@ -134,6 +134,20 @@ class TestStartAllEnabledIsolation(unittest.IsolatedAsyncioTestCase):
         # Healthy pairs must NOT show up as failures.
         self.assertNotIn(_key(self.acc.id, "AAAUSDT"), self.manager.startup_failures)
 
+    async def test_a_shadow_only_pair_that_fails_to_start_does_not_stop_the_others(self):
+        # audit 2026-11-06: the error line used an undefined name (label), so a failing shadow-only start raised a
+        # NameError out of start_all_enabled and the pairs after it never started.
+        self.store.set_pair_enabled(self.acc.id, "AAAUSDT", False)
+        self.store.get_account(self.acc.id).pairs["AAAUSDT"].plan = {"shadow": {"on": True}}
+
+        async def failing_shadow(account_id, symbol):
+            raise RuntimeError("simulated shadow start failure")
+
+        self.manager.start_shadow_only = failing_shadow
+        await self.manager.start_all_enabled()          # must not raise
+        self.assertIn(_key(self.acc.id, "BBBUSDT"), self.manager.instances)
+        self.assertIn(_key(self.acc.id, "CCCUSDT"), self.manager.instances)
+
     async def test_successful_start_clears_a_previously_recorded_failure(self):
         key = _key(self.acc.id, "AAAUSDT")
         self.manager.startup_failures[key] = "stale failure from a previous attempt"

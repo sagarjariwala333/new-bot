@@ -123,8 +123,8 @@ def main():
         page.select_option("#hub-pair-select", "AAAUSDT"); wait(500)
         page.click('.hubx-item[data-fn="trail"]'); wait(150)
         opts = page.eval_on_selector_all("#hub_trail_type option", "o => o.map(x => x.value)")
-        check("Type has 4 choices, the old 3 still there + the new one",
-              opts[1:] == ["Step", "Lowest low / highest high", "Moving average", "Signal candle high / low +/- ATR"], str(opts))
+        check("Type has 5 choices, the old 4 still there + the new one",
+              opts[1:] == ["Step", "Lowest low / highest high", "Moving average", "Signal candle high / low +/- ATR", "Supertrend line"], str(opts))
         check("saved plan loads: type, 100 and 14", page.input_value("#hub_trail_type") == "Signal candle high / low +/- ATR"
               and page.input_value("#hub_trail_c_value") == "100" and page.input_value("#hub_trail_c_atr") == "14")
         check("only the 2 new boxes show (no Step boxes, no look-back, no MA)", vis("trail_c_value") and vis("trail_c_atr")

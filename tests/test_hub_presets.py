@@ -59,8 +59,8 @@ class TestPresets(unittest.TestCase):
         cls.by_name = {p["name"]: p for p in cls.presets}
 
     def test_the_presets_are_there(self):
-        self.assertEqual([p["name"] for p in self.presets], ["HMA Flip", "MACD Cross", "V3", "RSI MA Cross", "EMA Cross"])
-        self.assertEqual(len({p["id"] for p in self.presets}), 5)
+        self.assertEqual([p["name"] for p in self.presets], ["HMA Flip", "MACD Cross", "V3", "RSI MA Cross", "EMA Cross", "MA 1 over MA 2"])
+        self.assertEqual(len({p["id"] for p in self.presets}), 6)
 
     def test_no_numbers_in_any_plan(self):
         for p in self.presets:
@@ -86,7 +86,8 @@ class TestPresets(unittest.TestCase):
                   H.TP_FROM_SIGNAL, H.TRAIL_CANDLE, "ma2",
                   "Heikin Ashi", "ALL", "Price above / below MA", H.SIZE_ALLOC, H.STOP_BAL, H.CT_EMA,   # V3 (2026-11-02)
                   "ma1", H.RSI_MODES[3],   # RSI MA Cross (2026-11-02)
-                  H.MX_MODES[1]}   # EMA Cross (2026-11-03)
+                  H.MX_MODES[1],   # EMA Cross (2026-11-03)
+                  H.MX_MODES[0]}   # MA 1 over MA 2 (2026-11-03)
         for p in self.presets:
             for path, v in walk(p["plan"]):
                 self.assertTrue(isinstance(v, (bool, str)), (p["name"], path, v))
@@ -194,6 +195,12 @@ class TestPresets(unittest.TestCase):
             self.assertEqual(pl[k], {"on": False}, k)
         for k in ("shadow", "cooldown", "loss_limit", "sl", "combine_entry", "timeframe"):
             self.assertNotIn(k, pl, k)                                              # left for the owner
+
+    def test_ma_over_under_choices(self):
+        """MA 1 over MA 2 (owner 2026-11-03): MA Crossover for ENTRY with 'MA 1 above / below MA 2' and NOTHING else."""
+        pl = self.by_name["MA 1 over MA 2"]["plan"]
+        self.assertEqual(pl, {"ind": {"mx": {"entry": True, "modes": [H.MX_MODES[0]]}}})
+        self.assertEqual(H.MX_MODES[0], "MA 1 above / below MA 2")
 
     def test_option_texts_are_real_ones(self):
         self.assertIn("HMA", H.MA_TYPES)
@@ -423,6 +430,58 @@ class TestEmaCrossPlusNumbersIsAValidPlan(TestPresetPlusNumbersIsAValidPlan):
         full["ind"]["rsi"] = {"entry": True, "flip": False, "modes": ["Above / below level"], "length": 14, "level": 50.0}
         full["combine_entry"] = "ALL"
         self.assertIsNotNone(H.validate_plan(H.complete_plan(H.upgrade_plan(full))))
+
+
+class TestMaOverUnderPlusNumbersIsAValidPlan(TestPresetPlusNumbersIsAValidPlan):
+    """MA 1 over MA 2 with the owner's own choices and numbers keyed in (arbitrary ones here) is a valid plan."""
+
+    def full(self):
+        pre = self.by_name["MA 1 over MA 2"]["plan"]
+        return merge(merge(self.base(), pre), {
+            "chart_type": "Candles", "combine_entry": "ALL", "entry_wait": 0,
+            "ind": {"ma1": {"type": "EMA", "length": 9, "modes": ["MA rising / falling"]},
+                    "ma2": {"type": "SMA", "length": 21, "modes": ["MA rising / falling"]}},
+            "hold": {"on": False},
+            "sizing": {"method": H.SIZE_FIXED, "base_amount": 50.0, "leverage": 5, "stop_on": False},
+            "sl": {"on": False}, "trail": {"on": False}, "tp": {"on": False}, "be": {"on": False}})
+
+    def test_ma_over_under_with_choices_and_numbers(self):
+        plan = self.full(); plan["name"] = "MA 1 over MA 2"
+        self.assertIsNotNone(H.validate_plan(H.complete_plan(H.upgrade_plan(plan))))
+        with self.assertRaises(H.PlanError):
+            H.validate_plan(merge(self.base(), self.by_name["MA 1 over MA 2"]["plan"]))   # not a plan before he fills it
+
+    def test_each_missing_number_is_refused(self):
+        full = self.full(); full["name"] = "MA 1 over MA 2"
+        H.validate_plan(full)
+        for path in (("ind", "ma1", "length"), ("ind", "ma2", "length"), ("ind", "ma1", "type"), ("ind", "ma2", "type"),
+                     ("sizing", "base_amount"), ("sizing", "leverage")):
+            bad = copy.deepcopy(full)
+            d = bad
+            for k in path[:-1]:
+                d = d[k]
+            d.pop(path[-1])
+            with self.subTest(missing=path), self.assertRaises(H.PlanError):
+                H.validate_plan(bad)
+
+    def test_signal_is_ma1_above_or_below_ma2(self):
+        """Long while MA 1 is above MA 2, short while below (checked against a plain pandas EWM / rolling oracle)."""
+        import numpy as np, pandas as pd
+        rng = np.random.default_rng(5); n = 800
+        close = 100 + np.cumsum(rng.normal(0, 0.6, n))
+        op = np.r_[close[0], close[:-1]]
+        df = pd.DataFrame({"open_time": np.arange(n) * 3600000, "open": op, "close": close,
+                           "high": np.maximum(op, close) + 0.3, "low": np.minimum(op, close) - 0.3, "volume": np.full(n, 50.0)})
+        plan = self.full(); plan["name"] = "MA 1 over MA 2"
+        out = H.compute_hub(df, plan)
+        e = pd.Series(close).ewm(span=9, adjust=False).mean().values
+        f = pd.Series(close).rolling(21).mean().values
+        ok = ~np.isnan(f)
+        lg, sh = out["entry_long"].astype(bool).values, out["entry_short"].astype(bool).values
+        warm = 60                                                         # past the EMA start-up
+        self.assertTrue((lg[warm:] == (e > f)[warm:]).all())
+        self.assertTrue((sh[warm:] == (e < f)[warm:]).all())
+        self.assertTrue(lg[warm:].any() and sh[warm:].any())
 
 
 if __name__ == "__main__":

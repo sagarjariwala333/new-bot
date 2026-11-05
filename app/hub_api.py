@@ -43,11 +43,30 @@ def _old_plan_to_history(store, account_id: str, symbol: str, platform: str, not
         logging.getLogger("hub_api").error("Could not keep the old strategy of %s in the library history: %s", symbol, e)
 
 
-async def apply_plan(store, mgr, account_id: str, symbol: str, plan, platform: str = "binance") -> dict:
+def check_amend(amend) -> dict | None:
+    """The "Change an open trade" choice sent with a Save: {"when": "now" | "next", "stops": "tighter" | "looser"}.
+    "stops" is required (and only used) when "when" is "now". None = no choice sent = the old behaviour (the new rules
+    wait for the next trade)."""
+    if amend is None:
+        return None
+    if not isinstance(amend, dict):
+        raise PlanRefused("amend must be an object")
+    when = amend.get("when")
+    if when not in (hub.AMEND_NOW, hub.AMEND_NEXT):
+        raise PlanRefused("Choose when the change applies: to the open trade now, or from the next trade.")
+    stops = amend.get("stops")
+    if when == hub.AMEND_NOW and stops not in (hub.AMEND_TIGHTER, hub.AMEND_LOOSER):
+        raise PlanRefused("Choose how the stops may change: only tighter, or looser too.")
+    return {"when": when, "stops": stops if when == hub.AMEND_NOW else None}
+
+
+async def apply_plan(store, mgr, account_id: str, symbol: str, plan, platform: str = "binance", amend=None) -> dict:
     try:
         hub.validate_plan(plan)
     except hub.PlanError as e:
         raise PlanRefused(str(e))
+    amend = check_amend(amend)
+    amend_result = None
     _old_plan_to_history(store, account_id, symbol, platform, "changed", plan)
     pc = store.update_pair(account_id, symbol, {"plan": copy.deepcopy(plan)})
     inst = mgr.get(account_id, symbol)
@@ -70,9 +89,31 @@ async def apply_plan(store, mgr, account_id: str, symbol: str, plan, platform: s
             inst._pending_restart_on_flat = True
             inst._log("Plan updated - the new rules will be applied once this pair is flat "
                       "(a position is open, closing, or a flip is being completed).")
+            if amend is not None:
+                amend_result = await _amend_open_trade(inst, plan, amend)
         else:
             await mgr.restart(account_id, symbol)
-    return asdict(pc)
+    out = asdict(pc)
+    if amend is not None:
+        out["amend_result"] = amend_result or {"status": "no_open_trade"}
+    return out
+
+
+async def _amend_open_trade(inst, plan, amend: dict) -> dict:
+    """The owner's choice on Save while a trade is open. The full new plan is ALREADY saved (it applies from the next
+    trade); "now" additionally changes the allowed settings of the open trade. Never raises: a problem is returned."""
+    if amend["when"] == hub.AMEND_NEXT:
+        return {"status": "next"}
+    if inst.state.status != "IN_POSITION":
+        inst._log("Change open trade: the trade is not in a state to be changed right now "
+                  f"({inst.state.status}) - the new rules wait for the next trade.")
+        return {"status": "not_now", "why": f"The trade is {inst.state.status} - not changed. The new rules wait for the next trade."}
+    try:
+        res = await inst.hub_amend_open_trade(plan, amend["stops"])
+    except Exception as e:
+        inst._log(f"Change open trade FAILED ({e}) - the open trade keeps its rules; the new rules wait for the next trade.")
+        return {"status": "error", "why": str(e)}
+    return {"status": "done", **res}
 
 
 async def remove_plan(store, mgr, account_id: str, symbol: str, platform: str) -> dict:

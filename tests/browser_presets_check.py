@@ -1,6 +1,6 @@
 """
 browser_presets_check.py - OPTIONAL real-browser check of the PRESETS (2026-10-28): the Presets button on the Strategy Hub,
-Load of "HMA Flip", "MACD Cross", "V3", "RSI MA Cross" and "EMA Cross" (rule choices only, NO NUMBERS), nothing left over from the other preset,
+Load of "HMA Flip", "MACD Cross", "V3", "RSI MA Cross", "EMA Cross" and "MA 1 over MA 2" (rule choices only, NO NUMBERS), nothing left over from the other preset,
 a preset cannot be changed, and a preset with arbitrary numbers keyed in is accepted by the real library route
 (Playwright + Chromium). Backend = the REAL plan and library routes of app/api; no exchange calls.
 Run:  python tests/browser_presets_check.py     (arbitrary numbers only, NOT the owner's settings)
@@ -131,9 +131,9 @@ def main():
         # ---- the list; Load before a pair is chosen
         page.click("#hub-preset-open-btn"); wait(250)
         txt = page.inner_text("#preset-list")
-        check("the list shows all five presets", all(x in txt for x in ("HMA Flip", "MACD Cross", "V3", "RSI MA Cross", "EMA Cross")), txt[:200])
+        check("the list shows all six presets", all(x in txt for x in ("HMA Flip", "MACD Cross", "V3", "RSI MA Cross", "EMA Cross", "MA 1 over MA 2")), txt[:200])
         check("each has Details and a Load button, nothing to delete or edit",
-              page.locator("#dlg-presets .preset-load").count() == 5 and page.locator("#dlg-presets details").count() == 5
+              page.locator("#dlg-presets .preset-load").count() == 6 and page.locator("#dlg-presets details").count() == 6
               and page.locator("#dlg-presets .lib-del").count() == 0 and page.locator("#dlg-presets input").count() == 0)
         page.click('#dlg-presets .lib-row[data-id="hma_flip"] .preset-load'); wait(200)
         check("Load before a pair is chosen is refused with a message",
@@ -385,6 +385,51 @@ def main():
         # ADX / RSI can be ticked after Load (owner: "I may want to use next time")
         tick("#hub_adx_entry"); tick("#hub_rsi_entry")
         check("EMA Cross: ADX and RSI can be ticked on top after Load", on("adx_entry") and on("rsi_entry"))
+
+        # ---- MA 1 over MA 2 onto BBBUSDT: nothing left over from EMA Cross (owner 2026-11-03)
+        page.select_option("#hub-pair-select", "BBBUSDT"); wait(500)
+        load_preset("ma_over_under")
+        check("MA 1 over MA 2: loaded, name set, this pair's timeframe untouched", "MA 1 over MA 2" in page.inner_text("#hub-msg")
+              and page.input_value("#hub_name") == "MA 1 over MA 2" and val("timeframe") == "1h", page.inner_text("#hub-msg"))
+        check("MA 1 over MA 2: MA Crossover ticked for ENTRY, only 'MA 1 above / below MA 2'",
+              on("mx_entry") and not on("mx_flip") and ticks("mx_modes") == ["MA 1 above / below MA 2"], str(ticks("mx_modes")))
+        check("MA 1 over MA 2: average types, lengths and the two MA conditions are empty (owner's pick)",
+              val("ma1_type") == "" and val("ma2_type") == "" and val("ma1_length") == "" and val("ma2_length") == ""
+              and ticks("ma1_modes") == [] and ticks("ma2_modes") == [] and not on("ma1_entry") and not on("ma2_entry"))
+        check("MA 1 over MA 2: no other indicator ticked", not any(on(b + "_entry") or on(b + "_flip") for b in ("adx", "rsi", "macd", "candle", "ci")))
+        check("MA 1 over MA 2: chart type, Combination, Entry size method, Trailing Stop type are NOT set",
+              val("chart_type") == "" and val("combine_entry") == "" and val("trail_type") == ""
+              and page.evaluate("[...document.querySelectorAll('#hub_size_method input:checked')].length") == 0)
+        check("MA 1 over MA 2: left as a new form starts - Hold rule picked, Fresh Reversal + No Mid-Trend Re-entry ticked, flip boxes Yes",
+              on("hold_on") and on("wfr") and on("reentry") and on("flip_same_entry") and on("flip_same_hold") and on("flip_same_wait"))
+        check("MA 1 over MA 2: BE, TP, Trailing Stop, Shadow, Cooldown, Loss limit, counter-trend not ticked",
+              not any(on(x) for x in ("be_on", "tp_on", "trail_on", "shadow_on", "cooldown_on", "loss_on", "counter_on")))
+        check("MA 1 over MA 2 menu: only the core ones and the form's own Hold rule",
+              picked() == {"pair", "chart", "ind", "combine", "flipact", "hold", "wait", "size", "sl"}, str(sorted(picked())))
+        check("MA 1 over MA 2: nothing left over from EMA Cross", not on("trail_on") and val("trail_c_atr") == "" and val("chart_type") == "")
+        check("MA 1 over MA 2 NO NUMBERS: every number box is empty except the 3 starting boxes", numbers_filled() == STARTS, str(numbers_filled()))
+        check("MA 1 over MA 2: Execute stays off until every function is opened", page.is_disabled("#hub-execute-btn"))
+        # the owner picks and keys in his own choices (arbitrary ones here); Hold rule unticked (it needs ADX)
+        page.click("#hub-edit-btn"); wait(150)                          # Edit selection -> click Hold rule to unpick it -> Confirm selection
+        page.click('.hubx-item[data-fn="hold"]'); wait(150)
+        page.click("#hub-confirm-btn"); wait(200)
+        check("MA 1 over MA 2: Hold rule can be unpicked in the menu", not on("hold_on"))
+        setv("chart_type", "Candles"); setv("combine_entry", "ALL"); setv("ma1_type", "EMA"); setv("ma2_type", "SMA")
+        tick('#hub_ma1_modes input[value="MA rising / falling"]'); tick('#hub_ma2_modes input[value="MA rising / falling"]')
+        setv("ma1_length", 9); setv("ma2_length", 21)
+        tick('#hub_size_method input[value="' + FIXED + '"]'); setv("base_amount", 50); setv("leverage", 3)
+        setv("sl_basis", "% of price movement"); setv("sl_value", 3)
+        page.click("#hub-lib-save-btn"); wait(250)
+        check("MA 1 over MA 2: Save to library is offered and the name is MA 1 over MA 2", page.input_value("#lib-save-name") == "MA 1 over MA 2")
+        page.click("#lib-save-ok"); wait(600)
+        saved = L.list_all()["saved"]
+        check("MA 1 over MA 2 with the owner's choices and numbers keyed in, the real library route accepts it",
+              len(saved) == 6 and saved[0]["name"] == "MA 1 over MA 2", page.inner_text("#lib-save-msg") + page.inner_text("#hub-msg"))
+        sp = saved[0]["plan"] if saved else {}
+        check("MA 1 over MA 2: the saved plan holds the preset's choices",
+              sp.get("ind", {}).get("mx", {}).get("entry") is True and sp["ind"]["mx"]["modes"] == ["MA 1 above / below MA 2"]
+              and sp["ind"]["ma1"]["type"] == "EMA" and sp["ind"]["ma2"]["type"] == "SMA"
+              and sp["ind"]["ma1"]["length"] == 9 and sp["ind"]["ma2"]["length"] == 21 and sp["ind"]["ma1"]["entry"] is False, str(sp)[:300])
 
         # ---- a preset cannot be changed
         page.evaluate("try { HUB_PRESETS[0].plan.chart_type = 'Renko'; HUB_PRESETS.push({}); } catch (e) {}")

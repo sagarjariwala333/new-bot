@@ -114,6 +114,15 @@ class PairCreate(BaseModel):
 class PlanBody(BaseModel):
     """A complete Strategy Hub plan (validated by app/strategy_hub.py, not here)."""
     plan: dict
+    # "Change an open trade" choice: {"when": "now" | "next", "stops": "tighter" | "looser"} (checked in hub_api)
+    amend: dict | None = None
+
+
+class MenuLayoutBody(BaseModel):
+    """The owner's look of the Strategy Hub menu (names, sub-texts, order). Checked in hub_menu_layout."""
+    order: list[str] = []
+    names: dict[str, str] = {}
+    descs: dict[str, str] = {}
 
 
 class LibrarySave(BaseModel):

@@ -71,6 +71,8 @@ class HubState:
                                  # which one rests on the exchange) - see hub_trading "STOP LADDER"
     reentry_block: int = 0       # "Allow Mid-Trend Re-entry" OFF: direction of the last closed trade (+1 / -1);
                                  # no new entry that way until the entry signal has ended. 0 = no block.
+    reentry_forced: bool = False  # the last close was by "Exit when" (wait for a fresh signal): the block above holds even
+                                  # when "Allow Mid-Trend Re-entry" is ON, until the entry signal has ended.
     outside_closed_qty: float = 0.0   # part of the open trade closed outside the bot, already recorded
     outside_fill_ids: list = field(default_factory=list)   # fill ids of those outside closes
     res_open: bool = False            # a trade is open and its result is being added up (Cooldown after a loss)
@@ -78,6 +80,7 @@ class HubState:
     loss_streak: int = 0              # losing trades in a row
     cooldown_through: int | None = None   # last blocked signal candle (open time ms); None = no cooldown running
     shadow_book: dict | None = None   # SHADOW: the paper copy of the plan that runs all the time (app/shadow_book.py)
+    sr_origin: int = 0                # Support / Resistance: how the open trade was entered (0 not by it, 1 bounce, 2 breakout, 3 retest)
 
 
 def _path(platform: str, account_id: str, symbol: str) -> Path:

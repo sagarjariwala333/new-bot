@@ -212,7 +212,7 @@
 <div id="login-overlay">
   <div class="box">
     <div style="font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:12px; text-align:center;">
-      Futures Bot <span style="color:var(--blue); margin-left:4px;">v1.3.1</span>
+      Futures Bot <span style="color:var(--blue); margin-left:4px;">v1.3.2</span>
     </div>
     <div id="login-view">
       <h2 style="margin-top:0;">Sign in</h2>
@@ -255,11 +255,11 @@
       <div id="reset-msg" class="msg"></div>
     </div>
     <div style="margin-top:16px; padding-top:12px; border-top:1px solid var(--border); font-size:11px; color:var(--muted); text-align:center;">
-      v1.3.1 · 2026-11-03 (EMA Cross)
+      v1.3.2 · 2026-11-06 (Audit Fixes)
     </div>
   </div>
   <div style="position:absolute; bottom:16px; font-size:11px; color:var(--muted); opacity:0.75; text-align:center; left:0; right:0;">
-    Futures Bot v1.3.1 (2026-11-03 EMA Cross)
+    Futures Bot v1.3.2 (2026-11-06 Audit Fixes)
   </div>
 </div>
 
@@ -278,7 +278,7 @@
 
 <div class="topbar">
   <div>
-    <h1>Futures Bot <span style="font-size:11px; font-weight:400; color:var(--muted); opacity:0.8; margin-left:8px;">v1.3.1 (2026-11-03 EMA Cross)</span></h1>
+    <h1>Futures Bot <span style="font-size:11px; font-weight:400; color:var(--muted); opacity:0.8; margin-left:8px;">v1.3.2 (2026-11-06 Audit Fixes)</span></h1>
     <div class="sub">Binance: 12 accounts × 3 pairs · OKX: 5 accounts × 5 pairs · every setting is editable per pair (changes to a pair with an open trade apply once it is flat).</div>
   </div>
   <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
@@ -434,11 +434,18 @@
         <span><b style="color:#5b8def">▲▼●</b> Real trades</span>
         <span><b style="color:#f5a742">△▽○</b> Shadow trades</span>
         <span><b style="color:#f5b942">- - -</b> Stops and targets of the open real trade<span data-ih="chart.levels"></span></span>
+        <span id="chart-sr-legend" style="display:none;"><b style="color:#ff5c72">━</b><b style="color:#35d68a">━</b> Support / Resistance <b style="color:#b07cff">B K R</b><span data-ih="chart.sr"></span></span>
       </div>
       <div id="chart-tip" class="chart-tip"></div>
       <canvas id="chart-price" class="chart-cv chart-cv-price"></canvas>
       <div class="chart-label">Shadow tracker (paper equity of the shadow)<span data-ih="chart.shadow"></span></div>
       <canvas id="chart-shadow" class="chart-cv chart-cv-shadow"></canvas>
+      <div id="chart-sr" style="display:none;">
+        <div class="chart-label">Support / Resistance levels now<span data-ih="chart.srtable"></span></div>
+        <div id="chart-sr-cols" class="chart-legend"></div>
+        <div class="table-scroll"><table id="chart-sr-table"></table></div>
+        <div id="chart-sr-note" class="sub"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -495,7 +502,10 @@
   <div id="hub-form" style="display:none;">
     <div class="hubx-main">
       <div class="panel hubx-menu">
-        <div id="hub-menu-title" class="hubx-menu-title"></div>
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;">
+          <div id="hub-menu-title" class="hubx-menu-title" style="margin:0;"></div>
+          <span><button id="hub-menu-edit-btn" type="button" class="ghost" style="padding:2px 8px; font-size:12px;">✎ Edit menu</button><span data-ih="menu.edit"></span></span>
+        </div>
         <div id="hub-menu" class="hubx-menu-list"></div>
         <div id="hub-progress" class="sub" style="margin:10px 0 0;"></div>
       </div>
@@ -525,9 +535,38 @@
   <div class="empty" id="hub-empty">Choose the account above to start. Then pick the pair in "Pair".</div>
 </div>
 
+<dialog id="dlg-hub-menu" style="max-width:760px; width:94vw;">
+  <h2>Edit the menu</h2>
+  <div class="sub">Change the name and the grey text of any function, and its place in the menu. Same for all strategies and all devices. It only changes how the menu looks: no rule, number or open trade is touched.</div>
+  <div id="hub-menu-rows" style="max-height:58vh; overflow-y:auto; margin-top:10px;"></div>
+  <div id="hub-menu-msg" class="msg"></div>
+  <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
+    <button id="hub-menu-save" type="button" style="background:#1a5c2e;">Save menu</button>
+    <button id="hub-menu-reset" type="button" class="ghost">Back to the original menu</button>
+    <button id="hub-menu-cancel" type="button" class="ghost">Cancel</button>
+  </div>
+</dialog>
+
 <dialog id="dlg-hub-review">
   <h2 id="hub-review-title">Review before saving</h2>
-  <div id="hub-review-body" style="max-height:55vh; overflow-y:auto;"></div>
+  <div id="hub-review-body" style="max-height:45vh; overflow-y:auto;"></div>
+  <div id="hub-amend-box" style="display:none; margin-top:12px; padding:10px 12px; border:1px solid #8a6d1d; border-radius:6px; background:#2a2410;">
+    <b>A trade is open on this pair.</b> Choose when these changes apply:
+    <div style="margin:6px 0 0 4px; line-height:1.8;">
+      <input type="radio" id="amend-now" name="amend-when" value="now"> <label for="amend-now">Apply to the open trade now <span data-ih="amend.now"></span></label><br>
+      <input type="radio" id="amend-next" name="amend-when" value="next"> <label for="amend-next">Apply from the next trade <span data-ih="amend.next"></span></label>
+    </div>
+    <div id="amend-stops" style="display:none; margin:6px 0 0 24px; line-height:1.8;">
+      <div class="sub">How may the stops (Max Loss, Stop Loss, Trailing Stop) change?</div>
+      <input type="radio" id="amend-tighter" name="amend-stops" value="tighter"> <label for="amend-tighter">Only tighter (a stop is only moved if it protects more) <span data-ih="amend.tighter"></span></label><br>
+      <input type="radio" id="amend-looser" name="amend-stops" value="looser"> <label for="amend-looser">Allow looser too (the new level is used as it is) <span data-ih="amend.looser"></span></label>
+    </div>
+    <div class="sub" style="margin-top:8px;">
+      Can change on the open trade: Trailing Stop, Stop Loss, Max Loss per Trade, Break-Even, Take profit, Exit when, Hold rule ADX level.
+      A changed Take profit cancels the waiting Take profit order on the exchange and places the new one.<br>
+      Always from the next trade: entry signals and indicators, flip rules, Indicator Combination, entry size, leverage, chart type, timeframe.
+    </div>
+  </div>
   <div style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap;">
     <button id="hub-review-apply" style="background:#1a5c2e;">Confirm and save</button>
     <button class="ghost" onclick="document.getElementById('dlg-hub-review').close()">Cancel</button>
@@ -880,6 +919,57 @@ const HELP_LEAD = ["What it is", "What it does", "Choices / ON and OFF", "Exampl
 const HELP = {
   // ---- Strategy Hub: top ----
   "lib.open": ["Library", "Your saved strategies, and the old versions of every pair's strategy.", "Opens the library. From there you can Load a strategy into the Strategy Hub for the pair you chose (to test it on a different pair), or Delete it.", "", "", "Choose the account and the pair first, then Load."],
+  "fn.sr": ["Support / Resistance", "Finds the range from the chart. You tick the entries and exits you want.", "The chart decides the levels, not you: tops and bottoms found from the candles, and a sloping line if you tick it. Price above a level makes it a support, price below it a resistance, and a broken level changes role. Entries and exits are checked at the candle close, on the normal candles. Nothing is ticked or filled in for you.", "Picked = ON. Not picked = OFF.", "", "Optional function. Pick it in the menu to use it. To combine it with other indicators, also tick it in Indicators; or tick \"its own strategy\" here."],
+  "ind.sr": ["Support / Resistance", "The range from the chart: a bounce, a breakout or a retest gives LONG or SHORT.", "Ticked in ENTRY and / or FLIP, it works like the other indicators (ALL / ANY / At least N, and it can be the Main). Its numbers are in the Support / Resistance function of the menu.", "", "", "The function must be picked in the menu. Ticking it here picks it for you."],
+  "card.srfind": ["FIND THE RANGE", "Where the chart looks for the levels.", "Tick one or more. The nearest level above the price is the top, the nearest below is the bottom.", "", "", ""],
+  "card.srzone": ["ZONE", "A band around each level and the stop outside it.", "Both are a % of the ATR, so they follow the market. Both are optional.", "", "", ""],
+  "card.srbounce": ["ENTRY BOUNCE", "Trade the turn at the edge of the range.", "Long: the candle reaches the bottom and closes back up. Short: it reaches the top and closes back down. The bot enters at market on that candle close.", "", "", ""],
+  "card.srbx": ["EXIT BOUNCE", "Where a bounce trade is closed.", "Tick any. The first one that happens closes the trade at the candle close. Choose where these apply in USE IN THE STRATEGY.", "", "", ""],
+  "card.srbrk": ["ENTRY BREAKOUT", "Trade a break out of the range.", "Long: a candle closes above the top. Short: a candle closes below the bottom. Only the first closing candle counts. The filters below are checked on that candle.", "", "", ""],
+  "card.srbx2": ["EXIT BREAKOUT", "Where a breakout or retest trade is closed.", "Choose where it applies in USE IN THE STRATEGY.", "", "", ""],
+  "card.srretest": ["ENTRY RETEST", "Trade the return to a broken level.", "After a break up, the old top becomes a support. Long: price comes back to it, holds, and the candle closes above it and is bullish. Short is the reverse. The level is locked at the break, with its slope if it was a diagonal.", "", "", ""],
+  "card.srwait": ["WHAT ENDS THE RETEST WAIT", "How long the bot waits for the retest.", "Tick any. If more than one is ticked, whichever happens first ends the wait. If a bounce and a breakout ever fire in opposite directions on one candle, the bot goes flat on that candle, locks the broken level and waits the same way.", "", "", ""],
+  "card.sruse": ["USE IN THE STRATEGY", "How Support / Resistance joins your strategy.", "Tick any. Its entries can be its own strategy, one more block in the Indicators list, or both.", "", "", ""],
+  "sr_hhll": ["Highest high / lowest low", "The top and bottom of the last N candles.", "The highest high of the last N candles is a top and the lowest low is a bottom.", "Tick it to use it.", "", "Works on the normal candles."],
+  "sr_hhll_n": ["N candles", "How far back the highest high and lowest low are taken.", "The last N closed candles before the one being judged.", "A whole number, 2 or more.", "20 = the last 20 candles.", ""],
+  "sr_swing": ["Swing points", "Turning points: a high (low) that is higher (lower) than the candles on each side.", "A swing point is only known N candles after it formed, so the bot never uses it early. The nearest ones above and below the price are the top and the bottom.", "Tick it to use it.", "", ""],
+  "sr_swing_n": ["Swing point: candles on each side (N)", "How many candles on each side must be lower (higher).", "Bigger N = fewer, stronger swing points that show up later. Used by Swing points and by the Diagonal line.", "A whole number, 1 or more.", "3 = 3 candles on each side.", ""],
+  "sr_diag": ["Diagonal line", "A sloping line through swing points.", "A line through the last 2 or 3 swing highs (a top line) and the last 2 or 3 swing lows (a bottom line). Its price moves with every candle. When one breaks, the bot locks that line with its slope for the retest.", "Tick it to use it. Untick it for flat levels only.", "", ""],
+  "sr_diag_points": ["Diagonal: swing points used", "Through how many swing points the line goes.", "2 = the line through the last two. 3 = the best-fit line through the last three.", "2 or 3.", "", ""],
+  "sr_count": ["How many nearest tops and bottoms", "How many levels on each side the bot keeps.", "1 = only the nearest top and bottom (the range). 2 = also the next ones. Your own number works too. The nearest one on each side is the range that the entries use; the others are shown on the chart and in the table.", "A whole number, 1 or more.", "2 = the nearest 2 tops and the nearest 2 bottoms.", ""],
+  "sr_zone_on": ["Zone width", "A band around a level, so a near touch counts.", "Long bounce / retest: the candle low only has to come within the zone of the level. Short: the high.", "Tick it to use it.", "", ""],
+  "sr_zone_pct": ["Zone width (% of ATR)", "How wide the band is.", "100 = one ATR. The ATR length is below.", "A number, 0 or more.", "25 = a quarter of an ATR.", ""],
+  "sr_stop_on": ["Stop outside the zone", "A stop for Support / Resistance trades, outside the level.", "Long: below the level, minus the zone, minus this % of ATR. Short: above. For a breakout or retest the level is the broken one. It is fixed at the entry. If the normal Stop Loss is on too, the nearer one is used.", "Tick it to use it.", "", "It only applies to trades that Support / Resistance entered."],
+  "sr_stop_pct": ["Stop outside the zone by (% of ATR)", "How far outside the zone the stop goes.", "100 = one ATR.", "A number, 0 or more.", "25 = a quarter of an ATR.", ""],
+  "sr_atr_length": ["ATR length", "Candles used for the ATR of Support / Resistance.", "Used by the zone, the stop, the close-beyond filter and the run-away check.", "A whole number, 1 or more.", "14", ""],
+  "sr_bounce_long": ["Long", "Long when the candle reaches the bottom and closes back up.", "Its low reaches the bottom (or its zone), it closes above the bottom and it is a bullish candle.", "Tick it to use it.", "", ""],
+  "sr_bounce_short": ["Short", "Short when the candle reaches the top and closes back down.", "Its high reaches the top (or its zone), it closes below the top and it is a bearish candle.", "Tick it to use it.", "", ""],
+  "sr_bounce_edges": ["Edges only, no trade in the middle", "Enter only near the edge of the range.", "A bounce is skipped if its close is further from the edge than the width you key in.", "Tick it to use it.", "", ""],
+  "sr_edge_pct": ["Edge width (% of the range)", "How close to the edge counts as the edge.", "Measured from the bottom for a long and from the top for a short.", "A number above 0, up to 50.", "25 = the lowest quarter of the range for a long.", ""],
+  "sr_bx_other": ["At the other end of the range", "Close when the price reaches the other side.", "A long closes when the high reaches the top. A short closes when the low reaches the bottom.", "Tick it to use it.", "", ""],
+  "sr_bx_mid": ["At the middle line", "Close when the price reaches the middle.", "The middle is halfway between the bottom and the top.", "Tick it to use it.", "", ""],
+  "sr_bx_break": ["If the range breaks against you", "Close when the price closes outside the range against the trade.", "A long closes when a candle closes below the bottom. A short closes when a candle closes above the top.", "Tick it to use it.", "", ""],
+  "sr_brk_long": ["Long", "Long when a candle closes above the top.", "Only the first closing candle counts.", "Tick it to use it.", "", ""],
+  "sr_brk_short": ["Short", "Short when a candle closes below the bottom.", "Only the first closing candle counts.", "Tick it to use it.", "", ""],
+  "sr_brk_close_on": ["Close beyond the level by", "The close must be a clear distance past the level.", "A close only just past the level does not count as a break.", "Tick it to use it.", "", ""],
+  "sr_brk_close_pct": ["Close beyond the level by (% of ATR)", "How far past the level the close must be.", "100 = one ATR.", "A number, 0 or more.", "10 = a tenth of an ATR.", ""],
+  "sr_brk_vol_on": ["Volume above the average", "The breakout candle must have strong volume.", "Its volume must be at least the average of the previous candles times your factor.", "Tick it to use it.", "", ""],
+  "sr_brk_vol_mult": ["Volume above the average by (times)", "How many times the average.", "The average does not include the breakout candle.", "A number, 0.1 or more.", "1.5 = 50% above the average.", ""],
+  "sr_brk_vol_len": ["Volume average length (candles)", "How many candles the average uses.", "The candles right before the breakout candle.", "A whole number, 1 or more.", "20", ""],
+  "sr_brk_exit_inside": ["If a candle closes back inside the range", "Close a breakout or retest trade when the break fails.", "After a break up, a close below the broken level closes a long. After a break down, a close above it closes a short.", "Tick it to use it.", "", ""],
+  "sr_retest_long": ["Long", "Long when the old top is retested from above.", "After a break up: a candle touches the old top (or its zone), holds, closes above it and is bullish. The bot enters at market on that close.", "Tick it to use it.", "", ""],
+  "sr_retest_short": ["Short", "Short when the old bottom is retested from below.", "After a break down: a candle touches the old bottom (or its zone), holds, closes below it and is bearish. The bot enters at market on that close.", "Tick it to use it.", "", ""],
+  "sr_wait_fail": ["The level fails", "The wait ends when a candle closes back through the level.", "Example: after a break up, a candle closes below the old top.", "Tick it to use it.", "", ""],
+  "sr_wait_newrange": ["A new range forms", "The wait ends when a nearer level appears.", "A level between the price and the locked level has formed on the retest side, so the nearest level is no longer the locked one.", "Tick it to use it.", "", ""],
+  "sr_wait_runaway": ["Price runs away", "The wait ends when the price gets far from the level.", "After a break up: a close above the level by the % of ATR you key in. After a break down: below.", "Tick it to use it.", "", ""],
+  "sr_wait_runaway_pct": ["Price runs away by (% of ATR)", "How far from the level counts as running away.", "100 = one ATR.", "A number above 0.", "300 = three ATR.", ""],
+  "sr_wait_none": ["Nothing ends it", "The wait goes on until the retest happens.", "Only the retest, or a new break, ends it.", "Tick it to use it.", "", "The bot can wait a long time. A new break replaces the old level."],
+  "sr_alone": ["Its own strategy", "Add the Support / Resistance entries to the entry signal.", "The bot enters on a bounce, breakout or retest you ticked, even if no other indicator is ticked.", "Tick it to use it.", "", "You can also tick Support / Resistance in Indicators: both can be used together."],
+  "sr_exit_sr_only": ["Exits apply to Support / Resistance trades only", "The ticked exits close only trades that Support / Resistance entered.", "A bounce trade uses the bounce exits. A breakout or retest trade uses the breakout exit.", "Tick it to use it.", "", "Used only when you ticked an exit above."],
+  "sr_exit_all": ["Exits apply to every trade", "The ticked exits close any open trade.", "Any ticked exit, bounce or breakout, closes any trade, whatever opened it.", "Tick it to use it.", "", "Used only when you ticked an exit above. After an exit the bot waits flat for a fresh signal."],
+  "chart.sr": ["Support / Resistance", "The levels the bot works out, drawn on the chart.", "Solid lines: the nearest top (red) and bottom (green). Dashed: the next ones. Dotted: the middle. Purple: a broken level locked for the retest. Letters: B = bounce, K = breakout, R = retest signal.", "", "", "Read only. It is drawn from the same calculation the bot trades on, up to the last closed candle."],
+  "chart.srtable": ["Levels now", "The levels as the bot sees them now.", "One row per level. Tick the columns you want to see. A diagonal line shows its price now and its slope per candle.", "", "", "Read only."],
+  "fn.exitwhen": ["Exit when", "Closes the open trade when the moving average(s) curve against it.", "At a candle close, if the signal you chose is against the trade (long: the average value is lower than on the candle before, short: higher), the bot closes the trade. Then it waits for a fresh entry signal, or flips to the other side, as you choose. A flip signal on the same candle is done first.", "Picked = ON. Not picked = OFF.", "", "Optional function. Pick it in the menu to use it. It uses the MA 1 and MA 2 numbers in Indicators."],
   "fn.cooldown": ["Cooldown after a loss", "After a losing trade the pair waits a number of candles before it enters again.", "When a trade has closed completely and its result (every part added up, net of fees) is below 0, the next candle closes are skipped: no new entry on them. An entry that a flip would make at the same moment is skipped too. A trade that ends at 0 or in profit starts nothing. It only stops a NEW entry. It never touches a trade that is open. Shadow mode, Analysis and the Pine script do not use it.", "Candles to wait. Optional: Losses in a row before the wait starts (empty = after every loss).", "Wait 3, after every loss: the trade loses, the next 3 candle closes are skipped, then the bot may enter again.", "The wait is counted in the candles of this pair's timeframe."],
   "cd_candles": ["Candles to wait", "How many candle closes are skipped after a loss.", "The candle close right after the loss is the first one skipped. 1 = skip that one close, 3 = skip three closes.", "", "3 on a 1h pair = about 3 hours with no new entry.", "Whole number, 1 or more."],
   "cd_losses": ["Losses in a row before the wait starts", "Optional. Start the wait only after this many losing trades in a row.", "Empty = the wait starts after every loss. 2 = the first loss does nothing, the second loss in a row starts the wait. A win (or a trade that ends at 0) starts the count again from 0. While the row stays at or above this number, every new loss starts the wait again.", "", "2: loss, loss = wait. Loss, win, loss = no wait.", "Whole number, 1 or more."],
@@ -916,7 +1006,7 @@ const HELP = {
   "be_after_atr": ["After ATR", "The Stop Loss moves to the entry price after the price moves this much in your favour.", "Measured in % of ATR from the entry price. The ATR is read at the entry candle and stays fixed. Checked on the live price.", "Ticked = on.", "100 with ATR 2, long at 100: at 102 the Stop Loss goes to 100.", ""],
   "be_atr_value": ["ATR (%)", "How far the price must move in your favour.", "100 = 1x ATR, 50 = 0.5x ATR, 200 = 2x ATR.", "", "100 = 1x ATR.", ""],
   "be_atr_length": ["ATR length", "How many candles the ATR uses.", "Normal candles, read at the entry candle, fixed for the trade.", "", "14 = a 14-candle ATR.", ""],
-  "fn.trail": ["Trailing Stop", "A stop that follows the price and only tightens.", "It replaces the Stop Loss on the exchange once it takes charge (at its first checkpoint, or when its level is tighter than the stop in charge). It never loosens. You choose one type: Step (moves live with the price), Lowest low / highest high, or Moving average (both get a new level when a candle closes). The stop always rests on the exchange and triggers on the live price, never waiting for the candle close.", "Picked = ON. Not picked = OFF, and the Stop Loss just stays where it is.", "", "Optional function. Pick it in the menu to use it."],
+  "fn.trail": ["Trailing Stop", "A stop that follows the price and only tightens.", "It replaces the Stop Loss on the exchange once it takes charge (at its first checkpoint, or when its level is tighter than the stop in charge). It never loosens. You choose one type: Step (moves live with the price), Lowest low / highest high, Moving average, Signal candle high / low +/- ATR, or Supertrend line (all four get a new level when a candle closes). The stop always rests on the exchange and triggers on the live price, never waiting for the candle close.", "Picked = ON. Not picked = OFF, and the Stop Loss just stays where it is.", "", "Optional function. Pick it in the menu to use it."],
   "fn.tp": ["Take profit", "Targets that close part of the trade when the price reaches them.", "Up to 3 targets, measured in % of ATR or % of price movement from your entry. Each target closes a share of the position. The next target is placed only after the one before it is hit. What the targets do not close keeps running with the trend until a Stop Loss, Trailing Stop, flip or Max Loss per Trade closes it.", "Picked = ON. Not picked = OFF, and no take profit is used.", "30, 30, 30: the targets close 90% and the other 10% rides the trend.", "Optional function. Pick it in the menu to use it."],
   "fn.shadow": ["Shadow mode", "A paper copy of your whole strategy that runs all the time.", "It shadows the real trade all the way: the same entries, flips, hold rule, Stop Loss, Max Loss per Trade, Trailing Stop and Take Profit, on the live price, but it never sends an order. It does NOT pause when real trading pauses (trades off, Stop on the pair, STOP ALL). Trades off: after a real trade closes in profit and your tracker reaches a new high, the next N trades are off (only the shadow takes them); then real trading goes live again.", "Picked = ON. Not picked = OFF (the default).", "", "Its paper equity is the shadow tracker on the Chart tab. Not all strategies use it: trend following does; day trade and scalping don't. Optional function. Pick it in the menu to use it."],
 
@@ -970,7 +1060,7 @@ const HELP = {
   "lock_pct": ["% of last profit added to the next entry", "An optional share of the last profit that goes into the next entry. The rest is locked out.", "Next entry = the entry just closed + this % of its profit. A loss comes off in full. The base is still the minimum.", "Empty = off, and the whole total is carried.", "Entry 100, profit 10, 50%: next entry is 105. Entry 100, loss 20: next entry is 80, or the base if the base is higher.", ""],
   "leverage": ["Leverage", "How many times your margin is multiplied into the position.", "Position size = margin x leverage. Higher leverage gives bigger gains and bigger losses, and brings the liquidation price closer.", "", "Margin 100 at 10x opens 1000.", "The bot sets this leverage on the exchange for the pair."],
   "counter_on": ["Counter-trend size", "A second size used when an entry goes against the trend.", "Ticked: an entry with the trend uses the size above; an entry against the trend uses its own amount and leverage below. What counts as counter trend is your CTREND tick in Indicators (any trend indicator, e.g. MA 1 = EMA 200).", "Ticked = two sizes. Not ticked = one size for all entries.", "", "0 against the trend = no counter-trend entry at all."],
-  "counter_by": ["Counter trend decided by", "What decides if an entry is WITH or AGAINST the trend.", "EMA length: the chart close against the EMA below (as before). An indicator (MA 1, MA 2, MA Crossover, ADX / DI, RSI, MACD, Candle colour, Structure break): the entry is with the trend when that indicator says the same side as the entry, using its own conditions; anything else is against the trend. Every entry counts, a flip too (a flip is an entry the other way).", "EMA length, MA 1, MA 2, MA Crossover, ADX / DI, RSI, MACD, Candle colour, Structure break.", "MACD as Main for ENTRY, MA 1 = EMA 50 here: a long with the close above EMA 50 = full size, below = the against-the-trend size.", "It is the same setting as the CTREND tick in Indicators: change one and the other follows. Choppiness, Volume and ATR cannot decide it (they have no side). Structure break gives a side only on the breakout candle."],
+  "counter_by": ["Counter trend decided by", "What decides if an entry is WITH or AGAINST the trend.", "EMA length: the chart close against the EMA below (as before). An indicator (MA 1, MA 2, MA Crossover, ADX / DI, RSI, MACD, Candle colour, Structure break): the entry is with the trend when that indicator says the same side as the entry, using its own conditions; anything else is against the trend. Bollinger Bands (the half): a long in the lower half of the band and a short in the upper half is with the trend; the other half, and the middle line itself, is against it. Every entry counts, a flip too (a flip is an entry the other way).", "EMA length, MA 1, MA 2, MA Crossover, ADX / DI, RSI, MACD, Candle colour, Structure break, Bollinger Bands (the half).", "MACD as Main for ENTRY, MA 1 = EMA 50 here: a long with the close above EMA 50 = full size, below = the against-the-trend size.", "It is the same setting as the CTREND tick in Indicators: change one and the other follows. Choppiness, Volume and ATR cannot decide it (they have no side). Structure break gives a side only on the breakout candle."],
   "ind.col_ctrend": ["CTREND column", "Tick the ONE indicator that decides the counter trend.", "It does not have to be ticked for ENTRY or FLIP. At every entry (and every flip) it decides which size is used: with the trend = the normal size, against = the size in Entry size. Ticking it turns on the second size in Entry size.", "One only. Untick = the EMA length decides (as before).", "", "Same setting as 'Counter trend decided by' in Entry size."],
   "counter_ema": ["Trend EMA length", "The EMA used to decide the trend.", "Chart close above this EMA = up-trend. Below it = down-trend. A long is with the trend in an up-trend. A short is with the trend in a down-trend.", "", "EMA 200: close above the 200 EMA means up-trend.", ""],
   "counter_alloc": ["Allocation % against the trend", "The share of your available balance used for trades AGAINST the trend.", "Same as Allocation %, but only for trades against the trend. 0 = NO counter-trend entries at all (a flip into that side closes and stays flat).", "", "5 = 5% for counter-trend trades. 0 = none.", "Shown only when the size method is Allocation %."],
@@ -991,9 +1081,13 @@ const HELP = {
   "sl_time_on": ["Time stop", "Optional. Closes a trade that goes nowhere.", "At each candle close: if the trade has been open N candles and is not in profit, it is closed.", "Ticked = on. Not ticked = off.", "N 5: after 5 candles, a trade not in profit is closed at that candle close.", ""],
   "sl_time_candles": ["Time stop: N candles", "How many candles the trade may be open before the time stop checks it.", "Counted from the entry candle. Checked at each candle close from then on.", "", "5 = from the 5th candle close after the entry.", ""],
   "trail_c_value": ["Distance (% of ATR)", "Signal candle type: how far beyond the candle the stop sits.", "Long: the low of the candle minus this distance. Short: the high of the candle plus it. 100 = 1 ATR, 200 = 2 ATR, 50 = 0.5 ATR. The ATR is the ATR of the signal candle and stays the same for the whole trade.", "A number above 0.", "Long, signal candle low 98, ATR 2, Distance 100: the stop starts at 96. The next candle closes with a low of 99: the stop moves up to 97. A candle with a lower low never moves it down.", "The stop only moves nearer to the price, into profit, and never further from it. When the live price touches it, the trade closes. The Stop Loss and Max Loss stay behind it."],
+  "trail_c_start": ["May take charge (tick one)", "Signal candle type: when the trailing stop may take over from the Stop Loss.", "Tighter than the Stop Loss: it takes charge as soon as its level is nearer to the price than the stop in charge (this can be before the trade is in profit). Only once in profit: it waits until a candle CLOSES at least the profit distance beyond the entry price. From then on it only tightens.", "Tighter than the Stop Loss, Only once in profit.", "Long at 100, signal ATR 2, in profit by 100 (= 1 ATR): the first candle that closes at 102 or higher lets it take charge, at that candle's low minus the distance. Until then the Stop Loss stays in charge.", "The level is still the candle low (long) or high (short) minus / plus the distance, so it can sit a little below the entry even when it takes charge. Nothing is set at the entry in this choice. A saved plan without this choice keeps Tighter than the Stop Loss."],
+  "trail_c_profit": ["In profit by (% of ATR)", "Only once in profit: how far beyond the entry a candle must close.", "100 = 1 ATR, 50 = 0.5 ATR, 200 = 2 ATR. The ATR is the ATR of the signal candle (same ATR length as the distance) and stays fixed for the trade. Judged at the candle close, not on the live price.", "A number above 0.", "Entry 100, ATR 2, key in 100: a candle must close at 102 or higher (long) or 98 or lower (short).", "If the ATR is not ready at the entry there is no trailing for that trade."],
+  "sl_struct_mode": ["Structure found by (tick one)", "Stop Loss Structure: how the level is found.", "Lowest low / highest high of N candles: long = the lowest low of the last N candles, short = the highest high. Real swing point: long = the latest swing low below the entry candle close, short = the latest swing high above it. A swing low is a low with N higher lows on each side, so it is known only N candles after it formed (nothing looks ahead).", "Lowest low / highest high of N candles, Real swing point (N candles each side).", "Real swing point, N 3: the Stop Loss is the latest low that has 3 higher lows before it and 3 after it.", "If no swing point is found yet, or it lands on the wrong side of the entry price, the SL cannot be worked out: the trade still opens and you get a Telegram + email. A saved plan without this choice keeps the lowest low / highest high."],
+  "sl_struct_n": ["Swing point: candles on each side (N)", "Real swing point: how many candles must be lower (higher) on each side.", "A swing low needs N higher lows on its left and N higher lows on its right. A bigger N finds fewer but stronger swing points, and each is known N candles later.", "A whole number, 1 or more.", "3 = the low has 3 higher lows before it and 3 after it.", ""],
   "trail_c_atr": ["ATR length", "Signal candle type: how many candles the ATR uses.", "The ATR is read on the normal candles at the signal candle and stays fixed for the trade.", "", "14 = a 14-candle ATR.", ""],
   "trail_len": ["Look-back candles", "Lowest low / highest high type: how many candles the stop looks back over.", "Long: the stop is the lowest low of the last N candles. Short: the highest high. The level is worked out when a candle closes. It takes charge when it is tighter than the stop in charge, and only tightens. The new stop is placed first, then the old one is removed.", "", "10 = the lowest low of the last 10 candles.", "If the price is already through the new level, the bot closes at market."],
-  "trail_type": ["Type", "Which kind of Trailing Stop you use.", "Step: starts at a level you choose and moves one gap each time the price moves one gap in your favour, live. Lowest low / highest high: follows the lowest low (long) or highest high (short) of the last N candles. Moving average: follows MA 1 or MA 2. Signal candle high / low +/- ATR: the stop starts beyond the signal candle and, at every candle close, is set again from the candle that just closed. All four only tighten and rest on the exchange.", "Step, Lowest low / highest high, Moving average, Signal candle high / low +/- ATR.", "", "You choose one type."],
+  "trail_type": ["Type", "Which kind of Trailing Stop you use.", "Step: starts at a level you choose and moves one gap each time the price moves one gap in your favour, live. Lowest low / highest high: follows the lowest low (long) or highest high (short) of the last N candles. Moving average: follows MA 1 or MA 2. Signal candle high / low +/- ATR: the stop starts beyond the signal candle and, at every candle close, is set again from the candle that just closed. Supertrend line: follows the Supertrend line of the candle that just closed (it uses the Supertrend numbers in Indicators; a line on the wrong side of the price does not take charge). All five only tighten and rest on the exchange.", "Step, Lowest low / highest high, Moving average, Signal candle high / low +/- ATR, Supertrend line.", "", "You choose one type."],
   "trail_basis": ["Measured on", "Step type: how the start and the gap are measured.", "% of ATR or % of price movement, from the entry price. One choice for both the start and the gap.", "% of ATR, % of price movement.", "", ""],
   "trail_start": ["Start", "Step type: where the Trailing Stop starts.", "Same as Stop Loss: it starts at the Stop Loss price. Own value: you key in the start, in the same Measured on as the gap. You would set it the same as the Stop Loss or less. Begins at a price move: the Stop Loss is in charge until the price has moved your Begins value; then the stop goes to your Stop goes to value and then moves every step.", "Same as Stop Loss, Own value, Begins at a price move.", "Begins at a price move, % of ATR, entry 100, ATR 10: Begins 50, Stop goes to 0, Then moves every 25. Price 105 -> stop 100 (breakeven), 107.5 -> 102.5, 110 -> 105.", "Same as Stop Loss needs Stop Loss picked. A bigger own value is not blocked."],
   "trail_begin_value": ["Begins when the price moves (%)", "How far the price must move in your favour before the Trailing Stop takes charge.", "Until then, the Stop Loss is in charge. The moment the live price touches it, the stop jumps to Stop goes to. Counted from the entry price. % of ATR: 100 = 1 ATR, 50 = 0.5 ATR. % of price movement: 2 = 2% (not 200).", "", "Entry 100, ATR 10, key in 50 (% of ATR): it begins at 105 (long) or 95 (short).", "The ATR is the one of the entry candle and stays fixed for the trade."],
@@ -1027,6 +1121,8 @@ const HELP = {
   "ind.vol": ["Volume", "How much was traded in the candle.", "Volume must be at least its average times your factor.", "", "", "It does not pick a side. It says OK for both LONG and SHORT. It reads the normal candles."],
   "ind.atr": ["ATR (movement)", "How much the price is moving.", "ATR must be at least its average times your factor. The market is moving enough.", "", "", "It does not pick a side. It says OK for both LONG and SHORT."],
   "ind.st": ["Structure break", "A break of the recent high or low.", "Close above the highest high of the last N candles = LONG. Close below the lowest low of the last N candles = SHORT.", "", "", ""],
+  "ind.bb": ["Bollinger Bands", "A band around a moving average that widens and narrows with the price swings.", "Long when the low of the chart candle touches the bottom limit, short when the high touches the top limit, on the signal candle or within the last N candles. The CTREND tick of Bollinger is the Bollinger half: a long in the lower half of the band (a short in the upper half) is with the trend, the other half is against it.", "", "", "It reads the chart candles. Used with Candle colour on Heikin Ashi it is the classic reversal setup."],
+  "ind.sup": ["Supertrend", "A trend line that sits below the price in an up trend and above it in a down trend.", "Long while the trend is up, short while it is down, or a fresh flip of the trend. The ATR length and Factor set how far the line is from the price. The Trailing Stop can follow this line.", "", "", "It reads the chart candles."],
 
   // ---- Strategy Hub: indicator numbers ----
   "ma_type": ["Type", "How the average is worked out.", "SMA = plain average. EMA and WMA = recent candles count more. HMA = very fast, little lag. ALMA = smooth, little lag.", "SMA, EMA, WMA, HMA, ALMA.", "", "It is worked out on the chart close of your chart type."],
@@ -1070,6 +1166,26 @@ const HELP = {
   "atr_avg_length": ["Average length", "How many candles the average of ATR uses.", "ATR is compared with its own average.", "", "", ""],
   "atr_mult": ["Factor", "How much above its average ATR must be.", "ATR must be at least its average times this factor.", "", "Factor 1: ATR must be at least its average.", ""],
   "st_length": ["N candles", "How many candles back the high and the low are taken from.", "Close above the highest high of the last N candles = LONG. Close below the lowest low of the last N candles = SHORT.", "", "N = 20: a break of the 20-candle high or low.", ""],
+  "candle_prev_opposite": ["Previous candle was the opposite colour", "The candle before the signal candle must be the other colour.", "ON: a long needs the signal candle up AND the candle before it down. A short needs the signal candle down AND the candle before it up. OFF: the colour of the signal candle alone counts.", "ON / OFF.", "Heikin Ashi: a red candle, then a green one = a long signal. Two greens in a row = no signal.", "It only makes the signal rarer, it never adds one. It reads the chart candles (Heikin Ashi or Renko)."],
+  "ind.eb": ["EMA Band", "Three EMAs of the same length: one on the high (top line), one on the close (middle line), one on the low (bottom line).", "Long when the close crosses above the bottom line and / or the top line (the ones you tick). Short when the close crosses below the top line and / or the bottom line. Any ticked crossing is enough on its own. A crossing counts when the close is on the new side and was on the other side of that line within the last N candles. The middle line is not used by any rule. The CTREND tick of the EMA Band means it decides which trades are with the trend and which are against it, for the trade size.", "", "", "It reads the chart candles. Tick at least one crossing."],
+  "eb_length": ["EMA length (all three lines)", "One length for all three EMAs.", "The top line is the EMA of the high, the middle line the EMA of the close and the bottom line the EMA of the low, all with this length.", "A whole number, 1 or more.", "20 = three EMAs of 20 candles.", ""],
+  "eb_n": ["N candles (came from the other side)", "How far back the close must have been on the other side of the line.", "Long above a line: the close was below that line on at least one of the last N candles before the signal candle. Short below a line: the close was above it. The signal then stays on while the close stays on the new side, until that window passes.", "A whole number, 1 or more.", "N = 1: the candle just before the signal candle was on the other side. N = 3: any of the 3 candles before.", ""],
+  "eb_long_low": ["Long: close above the bottom line", "A long when the close crosses above the EMA of the low.", "Tick to use it. Tick this and the top-line box too: either one is enough.", "Tick or leave empty.", "", ""],
+  "eb_long_high": ["Long: close above the top line", "A long when the close crosses above the EMA of the high.", "Tick to use it. Tick this and the bottom-line box too: either one is enough.", "Tick or leave empty.", "", ""],
+  "eb_short_high": ["Short: close below the top line", "A short when the close crosses below the EMA of the high.", "Tick to use it. Tick this and the bottom-line box too: either one is enough.", "Tick or leave empty.", "", ""],
+  "eb_short_low": ["Short: close below the bottom line", "A short when the close crosses below the EMA of the low.", "Tick to use it. Tick this and the top-line box too: either one is enough.", "Tick or leave empty.", "", ""],
+  "ind.sar": ["Parabolic SAR", "A trailing dot that sits below the price in an up trend and above it in a down trend.", "Long while the dots are below the close, short while they are above it. The dots flip when the price touches them. The CTREND tick of Parabolic SAR means it decides which trades are with the trend and which are against it, for the trade size.", "", "", "It reads the chart candles. It flips back and forth in a sideways market. Not checked against TradingView here."],
+  "sar_step": ["Step", "How fast the dots move toward the price.", "The start and the increase of the acceleration. A bigger step makes the dots follow the price closer and flip sooner.", "A number above 0.", "", ""],
+  "sar_limit": ["Maximum", "The most the acceleration can reach.", "The acceleration grows by the step on each new high (low) up to this maximum. It must be the same as or larger than the step.", "A number above 0.", "", ""],
+  "bb_length": ["Length", "How many candles the middle line uses.", "The middle line is a simple average of the chart close over this many candles. The top and bottom limits are set around it.", "A whole number, 2 or more.", "20 = the average of the last 20 candles.", ""],
+  "bb_mult": ["Multiplier", "How wide the band is.", "The top and bottom limits are the middle line plus and minus this many standard deviations. A bigger number gives a wider band, touched less often.", "A number above 0.", "2 = the usual width.", ""],
+  "bb_n": ["N candles (touch within)", "How long a touch of the band keeps counting.", "Long: the low of the candle touched the bottom limit on the signal candle or within the last N candles. Short: the high touched the top limit. 0 = the signal candle only.", "A whole number, 0 or more.", "N = 1: a touch on the candle before the signal candle still counts.", "Not needed when Bollinger is used only for the counter-trend size (the half)."],
+  "sup_modes": ["Conditions (tick 1 or more)", "How Supertrend gives LONG or SHORT.", "Trend direction: long while the trend is up (the line is below the price), short while it is down. Fresh flip within N candles: the trend turned that way on the signal candle or within the last N candles. Tick both: both must agree.", "Trend direction, Fresh flip within N candles.", "", ""],
+  "sup_atr_length": ["ATR length", "How many candles the ATR uses.", "The line sits a number of ATRs (the Factor) away from the middle of the candle. A longer ATR reacts slower.", "A whole number, 1 or more.", "10 = a 10-candle ATR.", "The Trailing Stop type Supertrend line uses this number too."],
+  "sup_factor": ["Factor", "How far the line is from the price.", "The ATR is multiplied by this number to place the line. A bigger factor gives fewer, later trend changes.", "A number above 0.", "3 = the line sits 3 ATR from the middle of the candle.", "The Trailing Stop type Supertrend line uses this number too."],
+  "sup_n": ["N candles (for the fresh flip)", "How long a fresh flip keeps counting.", "Used only for Fresh flip. The signal stays on for the flip candle and N more candles. 0 = the flip candle only.", "A whole number, 0 or more.", "", ""],
+  "exit_signal": ["Signal", "What makes Exit when close the trade.", "Both: MA 1 and MA 2 must both curve against the trade. MA 2 only: the slower one alone is enough. Curving against means the value after the candle close is lower than the one before (for a long) or higher (for a short). It is checked at candle close only.", "Both MA 1 and MA 2, or MA 2 only.", "Long, both: MA 1 and MA 2 both lower than on the candle before = close the long.", "It uses the MA 1 and MA 2 numbers in Indicators (fill them in even if the MAs are not ticked). A flip signal on the same candle is done first."],
+  "exit_after": ["After the close", "What the bot does after Exit when closes the trade.", "Wait: the bot stays flat. It enters only on a fresh entry signal: the same side waits until its signal has ended, even if mid-trend re-entry is allowed. Flip: the bot closes and also opens the other side, as in a flip (the flip wait applies).", "Close and wait for a fresh signal, or close and flip to the other side.", "", "Open trades are judged only by their own price action and these averages. Nothing else closes them."],
 
   // ---- Default Settings and the Add pair form ----
   "pf.timeframe": ["Candle timeframe", "The size of one candle for the pair.", "The bot reads the market once each time a candle closes. This is the same timeframe as in the Strategy Hub, Pair.", "OKX has no 8h candle.", "4h = one decision every 4 hours.", "Changing it changes every signal."],
@@ -1105,6 +1221,11 @@ const HELP = {
   "an.commission": ["Commission per fill (%)", "The trading fee the test assumes for each fill.", "The test takes this fee off every simulated fill.", "", "0.05 = 0.05% per fill.", ""],
   "an.slippage": ["Slippage per fill (%, approximation)", "The price slip the test assumes for each fill.", "The test makes every simulated fill a little worse by this %.", "", "0.02 = 0.02% per fill.", "It is only an approximation."],
   "mc.sims": ["Number of simulations", "How many times the test reshuffles your past trades.", "Monte Carlo takes the real results of the simulated trades and mixes them many times, to show a range of possible equity curves and drawdowns.", "", "1000 = 1000 reshuffles.", "The trades come from the pair's own Strategy Hub plan. Results compound on the equity, like the bot's sizing."],
+  "menu.edit": ["Edit menu", "Change the name and the grey text of every function, and the order of the menu.", "Opens a window with one row per function: a position number, the name, the grey text, and the buttons up, down and back-to-original. Type a new position number or use the arrows. Save keeps it on the server, so it is the same on every device and for all strategies.", "A box left empty gets the original text.", "", "It only changes how the menu looks. No rule, number or open trade is touched."],
+  "amend.now": ["Apply to the open trade now", "The changes you made are used by the trade that is open right now.", "Only the settings that can change on an open trade are applied: Trailing Stop, Stop Loss, Max Loss per Trade, Break-Even, Take profit, Exit when and the Hold rule ADX level. The new stop levels are worked out as if the new setting had been on from the entry (signal candle, entry price, entry amount). A changed Take profit cancels the waiting Take profit order on the exchange and places the new one. Everything else you changed (entry, flip, size, leverage, chart, timeframe) is saved and starts from the next trade.", "You must pick this or 'Apply from the next trade'. Then pick how the stops may change.", "", "Stops that rest on the exchange are moved by the bot. Test it on testnet first."],
+  "amend.next": ["Apply from the next trade", "The open trade keeps its own rules. The new plan starts from the next trade.", "Nothing on the open trade is touched: its stops, Take profit and exits stay as they are. The whole new plan is saved and starts once the pair is flat.", "You must pick this or 'Apply to the open trade now'.", "", "This is how Save worked before."],
+  "amend.tighter": ["Only tighter", "A stop on the open trade moves only if the new level protects MORE than the one it has now.", "Applies to Max Loss per Trade, Stop Loss and the Trailing Stop. A new level that protects less is NOT used, and a stop that you turned off is NOT taken away. The answer after saving lists what was changed and what was kept.", "Pick this or 'Allow looser too' (only asked when you apply to the open trade now).", "Long trade, Stop Loss now 97: new 98 is used, new 95 is kept out.", "Take profit, Break-Even, Exit when and the Hold rule are not stops: they change as you set them."],
+  "amend.looser": ["Allow looser too", "The new stop level is used as it is, also when it protects less than the one the trade has now.", "Applies to Max Loss per Trade, Stop Loss and the Trailing Stop. A stop you turned off is removed. A looser stop means the trade can lose more before it is stopped.", "Pick this or 'Only tighter' (only asked when you apply to the open trade now).", "Long trade, Stop Loss now 97: new 95 is used.", "The stop on the exchange is moved to the new level."],
   "chart.pair": ["Pair", "The account and pair whose chart you want to see.", "The real candles of that pair, in the pair's own timeframe, with its real trades, its shadow trades and the shadow tracker. It updates every 5 seconds while this tab is open.", "", "", "Read only: nothing on this tab trades."],
   "chart.price": ["Real price", "The real candles of the pair from the exchange (green up, red down).", "Blue marks are your real trades (triangle = entry, dot = exit). Orange hollow marks are the shadow's paper trades. Move the mouse over a candle to see its open, high, low and close, and the shadow tracker at that time.", "", "", ""],
   "chart.levels": ["Stops and targets", "The levels of the open REAL trade.", "Max Loss per Trade, Stop Loss, Trailing Stop (the one on the exchange is marked) and the take-profit targets that are still waiting.", "", "", "Shown only while a real trade is open."],
@@ -2322,12 +2443,15 @@ document.getElementById('ds-live').onchange = async (ev) => {
 // Every field starts BLANK; the server refuses a plan that misses a number that is used.
 // ======================================================================
 const HUB_MA_TYPES = ['SMA', 'EMA', 'WMA', 'HMA', 'ALMA'];
+const HUB_SUP_MODES = ['Trend direction', 'Fresh flip within N candles'];
+const HUB_EXIT_SIGNALS = ['Both MA 1 and MA 2 curve against the trade', 'MA 2 only (the slower one) curves against the trade'];
+const HUB_EXIT_AFTERS = ['Close and wait for a fresh signal', 'Close and flip to the other side'];
 const HUB_RSI_MODES = ['Above / below level', 'Overbought / oversold', 'Divergence', 'RSI crosses its own MA'];
 const HUB_MACD_MODES = ['Histogram above / below 0', 'Zero line'];
 // COUNTER TREND decided by (owner 2026-10-25): the EMA length box, or one indicator that gives a side
-const HUB_CT_BLOCKS = ['ma1', 'ma2', 'mx', 'adx', 'rsi', 'macd', 'candle', 'st'];
+const HUB_CT_BLOCKS = ['ma1', 'ma2', 'mx', 'adx', 'rsi', 'macd', 'candle', 'st', 'bb', 'eb', 'sar'];
 const HUB_CT_OPTS = [['EMA', 'EMA length (below)'], ['ma1', 'MA 1'], ['ma2', 'MA 2'], ['mx', 'MA Crossover'], ['adx', 'ADX / DI'],
-                     ['rsi', 'RSI'], ['macd', 'MACD'], ['candle', 'Candle colour'], ['st', 'Structure break']];
+                     ['rsi', 'RSI'], ['macd', 'MACD'], ['candle', 'Candle colour'], ['st', 'Structure break'], ['bb', 'Bollinger Bands (the half)'], ['eb', 'EMA Band'], ['sar', 'Parabolic SAR']];
 const hubHas = (v, x) => Array.isArray(v) && v.includes(x);
 const HUB_MA_MODES = ['Price above / below MA', 'MA rising / falling', 'Price crossed MA within N candles', 'Pullback to MA (bounce)'];
 const HUB_MX_MODES = ['MA 1 above / below MA 2', 'MA 1 crossed MA 2 within N candles'];
@@ -2353,8 +2477,11 @@ const HUB_SL_MISSING = 'No SL was set for this trade. Set it manually.';
 const HUB_TRAIL_STEP = 'Step';
 const HUB_TRAIL_LLHH = 'Lowest low / highest high';
 const HUB_TRAIL_MA = 'Moving average';
+const HUB_TCS_TIGHTER = 'Tighter than the Stop Loss', HUB_TCS_PROFIT = 'Only once in profit';   // 2026-11-05
+const HUB_SLS_EXTREME = 'Lowest low / highest high of N candles', HUB_SLS_SWING = 'Real swing point (N candles each side)';   // 2026-11-05
 const HUB_TRAIL_CANDLE = 'Signal candle high / low +/- ATR';   // 4th type (2026-10-28)
-const HUB_TRAIL_TYPES = [HUB_TRAIL_STEP, HUB_TRAIL_LLHH, HUB_TRAIL_MA, HUB_TRAIL_CANDLE];
+const HUB_TRAIL_SUP = 'Supertrend line';   // 5th type (2026-11-04)
+const HUB_TRAIL_TYPES = [HUB_TRAIL_STEP, HUB_TRAIL_LLHH, HUB_TRAIL_MA, HUB_TRAIL_CANDLE, HUB_TRAIL_SUP];
 const HUB_START_SL = 'Same as Stop Loss';
 const HUB_START_OWN = 'Own value';
 const HUB_START_BEGIN = 'Begins at a price move';
@@ -2375,11 +2502,13 @@ const HUB_FUNCS = [
   { id: 'maxloss', name: 'Max Loss per Trade', sw: 'stop_on', desc: 'The last line of defense: the most one trade may lose. You choose what it is measured on.' },
   { id: 'sl', name: 'Stop Loss', sw: 'sl_on', core: true, desc: 'Always in the menu. No SL set: the trade still opens and you get an email to set it manually. Optional time stop.' },
   { id: 'be', name: 'Break-Even', sw: 'be_on', desc: 'The Stop Loss moves to the entry price: After TP 1 / 2 / 3, and / or After ATR (100 = 1x ATR).' },
-  { id: 'trail', name: 'Trailing Stop', sw: 'trail_on', desc: 'Replaces the Stop Loss once it takes charge and only tightens: Step, lowest low / highest high, or a moving average.' },
+  { id: 'trail', name: 'Trailing Stop', sw: 'trail_on', desc: 'Replaces the Stop Loss once it takes charge and only tightens: Step, lowest low / highest high, a moving average, the signal candle, or the Supertrend line.' },
   { id: 'tp', name: 'Take profit', sw: 'tp_on', desc: 'Up to 3 targets in % of ATR or % of price movement. Each one closes part of the position.' },
   { id: 'shadow', name: 'Shadow mode', sw: 'shadow_on', desc: 'A paper copy of the strategy that runs all the time; after a new high, the next N trades are off.' },
   { id: 'cooldown', name: 'Cooldown after a loss', sw: 'cooldown_on', desc: 'After a losing trade the pair waits N candles before it enters again.' },
   { id: 'losslimit', name: 'Loss limit', sw: 'loss_on', desc: 'No new entry once the closed loss of the day / week of this pair reaches your amount. Open trades are not touched.' },
+  { id: 'exitwhen', name: 'Exit when', sw: 'exit_on', desc: 'Close the trade when the moving average(s) curve against it. Then wait for a fresh signal, or flip to the other side.' },
+  { id: 'sr', name: 'Support / Resistance', sw: 'sr_on', desc: 'The range from the chart: trade the bounce, the breakout and the retest, with your own exits. Nothing is ticked for you.' },
 ];
 
 function hubMaParams(b) {
@@ -2394,7 +2523,8 @@ function hubMaParams(b) {
 }
 const HUB_BLOCKS = [
   { k: 'candle', t: 'Candle colour (Heikin Ashi / Renko only)', d: 'Up candle (close above open) = long, down candle = short. Works only with Heikin Ashi or Renko.', p: [
-    { k: 'strong', l: 'Strong candle only', t: 'bool', h: 'Long also needs no lower wick. Short also needs no upper wick.' }] },
+    { k: 'strong', l: 'Strong candle only', t: 'bool', h: 'Long also needs no lower wick. Short also needs no upper wick.' },
+    { k: 'prev_opposite', l: 'Previous candle was the opposite colour', t: 'bool', h: 'Long also needs the candle before the signal candle to be a down candle. Short also needs it to be an up candle.' }] },
   { k: 'ma1', t: 'MA 1', d: 'A moving average: price above / below it, its slope, or a price cross.', p: hubMaParams('ma1') },
   { k: 'ma2', t: 'MA 2', d: 'A second moving average, same choices as MA 1.', p: hubMaParams('ma2') },
   { k: 'mx', t: 'MA Crossover', d: 'Long when MA 1 is above MA 2, short when below, or a fresh cross. Needs the MA 1 and MA 2 numbers.', p: [
@@ -2439,6 +2569,26 @@ const HUB_BLOCKS = [
     { k: 'rising', l: 'ATR must be rising', t: 'bool', h: 'ATR must also be higher than on the candle before (the movement is expanding).' }] },
   { k: 'st', t: 'Structure break', d: 'Long when the close breaks above the highest high of the last N candles, short below the lowest low.', p: [
     { k: 'length', l: 'N candles', t: 'int', min: 1, h: 'How many candles back the highest high and lowest low are taken from.' }] },
+  { k: 'bb', t: 'Bollinger Bands', d: 'Long when the low of the candle touches the bottom limit, short when the high touches the top limit, on the signal candle or within the last N candles.', p: [
+    { k: 'length', l: 'Length', t: 'int', min: 2, h: 'How many candles the middle line (a simple average of the chart close) uses.' },
+    { k: 'mult', l: 'Multiplier', t: 'num', min: 0.0001, h: 'How far the top and bottom limits are from the middle line, in standard deviations.' },
+    { k: 'n', l: 'N candles (touch within)', t: 'int', min: 0, h: 'The touch counts on the signal candle and the N candles before it. 0 = the signal candle only. Not needed when Bollinger is used only for the counter-trend size.' }] },
+  { k: 'sup', t: 'Supertrend', d: 'Long while the trend is up (the line is below the price), short while it is down. Or a fresh flip of the trend.', p: [
+    { k: 'modes', l: 'Conditions (tick 1 or more)', t: 'multi', o: HUB_SUP_MODES, dflt: [HUB_SUP_MODES[0]], h: 'Trend direction: long while the trend is up, short while it is down. Fresh flip: the trend turned that way on the signal candle or within the last N candles. Tick both: both must agree.' },
+    { k: 'atr_length', l: 'ATR length', t: 'int', min: 1, h: 'Candles used for the ATR that sets how far the line is from the price.' },
+    { k: 'factor', l: 'Factor', t: 'num', min: 0.0001, h: 'The ATR is multiplied by this. A bigger factor puts the line further from the price.' },
+    { k: 'n', l: 'N candles (for the fresh flip)', t: 'int', min: 0, h: 'Used only for the fresh flip. The signal stays on for that candle and N more.', when: ['sup_modes', v => hubHas(v, HUB_SUP_MODES[1])] }] },
+  { k: 'eb', t: 'EMA Band', d: 'Three EMAs of the same length on the high, the close and the low. Long when the close crosses above the bottom and / or top line, short when it crosses below the top and / or bottom line.', p: [
+    { k: 'length', l: 'EMA length (all three lines)', t: 'int', min: 1, h: 'The same length for the EMA of the high (top line), the close (middle line) and the low (bottom line).' },
+    { k: 'n', l: 'N candles (came from the other side)', t: 'int', min: 1, h: 'The close must have been on the other side of that line within the last N candles. 1 = the candle just before.' },
+    { k: 'long_low', l: 'Long: close crosses above the bottom line (EMA of low)', t: 'bool', h: 'Tick to use this crossing for a long.' },
+    { k: 'long_high', l: 'Long: close crosses above the top line (EMA of high)', t: 'bool', h: 'Tick to use this crossing for a long.' },
+    { k: 'short_high', l: 'Short: close crosses below the top line (EMA of high)', t: 'bool', h: 'Tick to use this crossing for a short.' },
+    { k: 'short_low', l: 'Short: close crosses below the bottom line (EMA of low)', t: 'bool', h: 'Tick to use this crossing for a short.' }] },
+  { k: 'sar', t: 'Parabolic SAR', d: 'Long while the dots are below the price, short while they are above it.', p: [
+    { k: 'step', l: 'Step', t: 'num', min: 0.0001, h: 'The start and the increase of the acceleration, as in the usual Parabolic SAR.' },
+    { k: 'limit', l: 'Maximum', t: 'num', min: 0.0001, h: 'The acceleration never goes above this. It must be the same as or larger than the step.' }] },
+  { k: 'sr', t: 'Support / Resistance', d: 'A range found from the chart: a bounce at its edge, a breakout, or a retest of the broken level. Its tick boxes and numbers are in the Support / Resistance function of the menu.', p: [] },
 ];
 
 function hubTpLevel(i) {
@@ -2526,7 +2676,9 @@ const HUB_FN_CARDS = {
       { id: 'sl_value', l: 'Value (%)', t: 'num', min: 0.0001, path: ['sl', 'value'], when: ['sl_basis', v => [HUB_BASIS_ATR, HUB_BASIS_PRICE, HUB_SL_CHAND].includes(v)], h: HUB_VALUE_HINT + ' Chandelier: % of ATR.' },
       { id: 'sl_atr', l: 'ATR length', t: 'int', min: 1, path: ['sl', 'atr_length'], when: ['sl_basis', v => v === HUB_BASIS_ATR || v === HUB_SL_CHAND], h: 'Candles used for the ATR. Read at the entry candle and fixed for the trade.' },
       { id: 'sl_usd', l: 'Loss (USDT)', t: 'num', min: 0.01, path: ['sl', 'usd'], when: ['sl_basis', v => v === HUB_SL_USD], h: 'Where the trade loses this many USDT.' },
-      { id: 'sl_length', l: 'N candles', t: 'int', min: 1, path: ['sl', 'length'], when: ['sl_basis', v => v === HUB_SL_STRUCT || v === HUB_SL_CHAND], h: 'Structure: long = the lowest low of the last N candles, short = the highest high. Chandelier: long = the highest high of N candles minus Value % of ATR, short = the lowest low plus.' },
+      { id: 'sl_length', l: 'N candles', t: 'int', min: 1, path: ['sl', 'length'], when: ['sl_basis', v => v === HUB_SL_STRUCT || v === HUB_SL_CHAND], cond: () => hubValue(hubField('sl_basis')) === HUB_SL_CHAND || hubValue(hubField('sl_struct_mode')) !== HUB_SLS_SWING, h: 'Structure: long = the lowest low of the last N candles, short = the highest high. Chandelier: long = the highest high of N candles minus Value % of ATR, short = the lowest low plus.' },
+      { id: 'sl_struct_mode', l: 'Structure found by (tick one)', t: 'pick1', o: [HUB_SLS_EXTREME, HUB_SLS_SWING], path: ['sl', 'struct_mode'], dflt: HUB_SLS_EXTREME, when: ['sl_basis', v => v === HUB_SL_STRUCT], h: 'Lowest low / highest high of the last N candles, or a real swing point (a low with N higher lows on each side; a high with N lower highs on each side).' },
+      { id: 'sl_struct_n', l: 'Swing point: candles on each side (N)', t: 'int', min: 1, path: ['sl', 'struct_n'], when: ['sl_struct_mode', v => v === HUB_SLS_SWING], h: 'A swing low needs N higher lows on each side. It is known only N candles after it formed.' },
       { id: 'sl_ma', l: 'Which MA', t: 'sel', o: ['MA 1', 'MA 2'], path: ['sl', 'ma'], when: ['sl_basis', v => v === HUB_SL_MA], h: 'The MA value at the entry. Uses the numbers of that MA in Indicators (fill them in even if the MA is not ticked).' },
       { id: 'sl_time_on', l: 'Time stop', t: 'bool', path: ['sl', 'time_on'], dflt: false, h: 'Optional. At each candle close: open N candles and not in profit = close it.' },
       { id: 'sl_time_candles', l: 'Time stop: N candles', t: 'int', min: 1, path: ['sl', 'time_candles'], when: ['sl_time_on', v => v === true], h: 'Open this many candles and not in profit = close at the candle close.' }] },
@@ -2543,7 +2695,7 @@ const HUB_FN_CARDS = {
   trail: [
     { id: 'stop', t: 'Trailing Stop', f: [
       { id: 'trail_on', l: 'Use Trailing Stop', t: 'bool', path: ['trail', 'on'], auto: true },
-      { id: 'trail_type', l: 'Type', t: 'sel', o: HUB_TRAIL_TYPES, path: ['trail', 'type'], when: ['trail_on', v => v === true], h: 'Step moves live with the price. The other three get a new level when a candle closes. All only tighten.' },
+      { id: 'trail_type', l: 'Type', t: 'sel', o: HUB_TRAIL_TYPES, path: ['trail', 'type'], when: ['trail_on', v => v === true], h: 'Step moves live with the price. The other four get a new level when a candle closes. All only tighten. Supertrend line uses the Supertrend numbers in Indicators.' },
       { id: 'trail_basis', l: 'Measured on', t: 'sel', o: HUB_BASES, path: ['trail', 'basis'], when: ['trail_type', v => v === HUB_TRAIL_STEP], h: 'Used for the start and the gap.' },
       { id: 'trail_start', l: 'Start', t: 'sel', o: [HUB_START_SL, HUB_START_OWN, HUB_START_BEGIN], path: ['trail', 'start'], when: ['trail_type', v => v === HUB_TRAIL_STEP], h: 'Where the trailing stop starts: at the Stop Loss price, your own value, or when the price has moved your Begins value.' },
       { id: 'trail_start_value', l: 'Start value (%)', t: 'num', min: 0.0001, path: ['trail', 'start_value'], when: ['trail_start', v => v === HUB_START_OWN], h: 'From the entry price. ' + HUB_VALUE_HINT },
@@ -2555,7 +2707,9 @@ const HUB_FN_CARDS = {
       { id: 'trail_len', l: 'Look-back candles', t: 'int', min: 1, path: ['trail', 'length'], when: ['trail_type', v => v === HUB_TRAIL_LLHH], h: 'Long: the lowest low of the last N candles. Short: the highest high.' },
       { id: 'trail_ma', l: 'Which MA', t: 'sel', o: ['MA 1', 'MA 2'], path: ['trail', 'ma'], when: ['trail_type', v => v === HUB_TRAIL_MA], h: 'Uses the numbers of that MA in Indicators (fill them in even if the MA is not ticked).' },
       { id: 'trail_c_value', l: 'Distance (% of ATR)', t: 'num', min: 0.0001, init: 100, path: ['trail', 'value'], when: ['trail_type', v => v === HUB_TRAIL_CANDLE], h: 'How far beyond the signal candle the stop sits. 100 = 1 ATR, 200 = 2 ATR, 50 = 0.5 ATR.' },
-      { id: 'trail_c_atr', l: 'ATR length', t: 'int', min: 1, path: ['trail', 'atr_length'], when: ['trail_type', v => v === HUB_TRAIL_CANDLE], h: 'Candles used for the ATR. Read at the signal candle and fixed for the trade.' }] },
+      { id: 'trail_c_atr', l: 'ATR length', t: 'int', min: 1, path: ['trail', 'atr_length'], when: ['trail_type', v => v === HUB_TRAIL_CANDLE], h: 'Candles used for the ATR. Read at the signal candle and fixed for the trade.' },
+      { id: 'trail_c_start', l: 'May take charge (tick one)', t: 'pick1', o: [HUB_TCS_TIGHTER, HUB_TCS_PROFIT], path: ['trail', 'candle_start'], dflt: HUB_TCS_TIGHTER, when: ['trail_type', v => v === HUB_TRAIL_CANDLE], h: 'Tighter than the Stop Loss: as soon as its level is nearer than the stop in charge. Only once in profit: after a candle closes far enough beyond the entry.' },
+      { id: 'trail_c_profit', l: 'In profit by (% of ATR)', t: 'num', min: 0.0001, path: ['trail', 'candle_profit'], when: ['trail_c_start', v => v === HUB_TCS_PROFIT], h: 'A candle must CLOSE at least this far beyond the entry price. 100 = 1 ATR, 50 = 0.5 ATR. The ATR is the signal candle ATR.' }] },
   ],
   tp: [
     { id: 'tp', t: 'Take profit', f: [
@@ -2572,6 +2726,12 @@ const HUB_FN_CARDS = {
       { id: 'shadow_slip', l: 'Paper slippage (ticks)', t: 'int', min: 0, path: ['shadow', 'slippage_ticks'], when: ['shadow_on', v => v === true], h: 'Applied to the paper entry price.' },
       { id: 'shadow_start', l: 'Tracker starting amount (USDT)', t: 'num', min: 0.01, path: ['shadow', 'tracker_start'], when: ['shadow_on', v => v === true], h: 'Only for the high-watermark of your results. Never used for a real order.' }] },
   ],
+  exitwhen: [
+    { id: 'exitwhen', t: 'Exit when', f: [
+      { id: 'exit_on', l: 'Use Exit when', t: 'bool', path: ['exit_when', 'on'], auto: true },
+      { id: 'exit_signal', l: 'Signal', t: 'sel', o: HUB_EXIT_SIGNALS, path: ['exit_when', 'signal'], when: ['exit_on', v => v === true], h: 'Both: MA 1 and MA 2 must both curve against the trade. MA 2 only: the slower one alone. Curving against = the value after the candle close is lower than the one before (long) or higher (short). It uses the MA 1 and MA 2 numbers in Indicators.' },
+      { id: 'exit_after', l: 'After the close', t: 'sel', o: HUB_EXIT_AFTERS, path: ['exit_when', 'after'], when: ['exit_on', v => v === true], h: 'Wait: the bot stays flat until a fresh entry signal (the same side waits until its signal has ended). Flip: the bot also opens the other side.' }] },
+  ],
   cooldown: [
     { id: 'cooldown', t: 'Cooldown after a loss', f: [
       { id: 'cooldown_on', l: 'Use cooldown after a loss', t: 'bool', path: ['cooldown', 'on'], auto: true },
@@ -2585,6 +2745,55 @@ const HUB_FN_CARDS = {
       { id: 'loss_daily_pct', l: 'Daily % of the balance', t: 'num', min: 0.01, path: ['loss_limit', 'daily_pct'], when: ['loss_on', v => v === true], h: 'No new entry for the rest of the day (Singapore time) once this pair has closed down this % of the account balance at the start of the day. Empty = no daily % limit. You can use the USDT amount and the % together: the first one reached counts.' },
       { id: 'loss_weekly', l: 'Weekly amount (USDT)', t: 'num', min: 0.01, path: ['loss_limit', 'weekly'], when: ['loss_on', v => v === true], h: 'No new entry for the rest of the week (Monday start, Singapore time) once this pair has closed down this much. Empty = no weekly limit.' },
       { id: 'loss_weekly_pct', l: 'Weekly % of the balance', t: 'num', min: 0.01, path: ['loss_limit', 'weekly_pct'], when: ['loss_on', v => v === true], h: 'No new entry for the rest of the week (Monday start, Singapore time) once this pair has closed down this % of the account balance at the start of the week. Empty = no weekly % limit. You can use the USDT amount and the % together: the first one reached counts.' }] },
+  ],
+  sr: [
+    { id: 'srfind', t: 'FIND THE RANGE', f: [
+      { id: 'sr_on', l: 'Use Support / Resistance', t: 'bool', path: ['sr', 'on'], auto: true },
+      { id: 'sr_hhll', l: 'Highest high / lowest low of the last N candles', t: 'bool', path: ['sr', 'find_hhll'], when: ['sr_on', v => v === true], h: 'The top and the bottom of the last N candles.' },
+      { id: 'sr_hhll_n', l: 'N candles', t: 'int', min: 2, path: ['sr', 'hhll_n'], when: ['sr_hhll', v => v === true], h: 'How many candles back.' },
+      { id: 'sr_swing', l: 'Swing points', t: 'bool', path: ['sr', 'find_swing'], when: ['sr_on', v => v === true], h: 'Turning points found from the candles. Known only N candles after they form.' },
+      { id: 'sr_diag', l: 'Diagonal line', t: 'bool', path: ['sr', 'diagonal'], when: ['sr_on', v => v === true], h: 'A sloping line through the last 2 or 3 swing points. Untick it for flat levels only.' },
+      { id: 'sr_swing_n', l: 'Swing point: candles on each side (N)', t: 'int', min: 1, path: ['sr', 'swing_n'], anyOf: ['sr_swing', 'sr_diag'], h: 'Used by Swing points and the Diagonal line.' },
+      { id: 'sr_diag_points', l: 'Diagonal: through how many swing points (2 or 3)', t: 'int', min: 2, max: 3, path: ['sr', 'diag_points'], when: ['sr_diag', v => v === true], h: '2 = the last two. 3 = the best-fit line through the last three.' },
+      { id: 'sr_count', l: 'How many nearest tops and bottoms (1, 2 or your number)', t: 'int', min: 1, path: ['sr', 'count'], when: ['sr_on', v => v === true], h: 'The nearest top and bottom are the range. More are shown on the chart and in the table.' },] },
+    { id: 'srzone', t: 'ZONE', f: [
+      { id: 'sr_zone_on', l: 'Zone width', t: 'bool', path: ['sr', 'zone_on'], when: ['sr_on', v => v === true], h: 'A band around each level, so a near touch counts.' },
+      { id: 'sr_zone_pct', l: 'Zone width (% of ATR)', t: 'num', min: 0, path: ['sr', 'zone_atr_pct'], when: ['sr_zone_on', v => v === true], h: '100 = one ATR.' },
+      { id: 'sr_stop_on', l: 'Stop outside the zone', t: 'bool', path: ['sr', 'stop_zone_on'], when: ['sr_on', v => v === true], h: 'A stop for Support / Resistance trades, outside the zone.' },
+      { id: 'sr_stop_pct', l: 'Stop outside the zone by (% of ATR)', t: 'num', min: 0, path: ['sr', 'stop_zone_atr_pct'], when: ['sr_stop_on', v => v === true], h: '100 = one ATR.' },
+      { id: 'sr_atr_length', l: 'ATR length', t: 'int', min: 1, path: ['sr', 'atr_length'], anyOf: ['sr_zone_on', 'sr_stop_on', 'sr_brk_close_on', 'sr_wait_runaway'], h: 'Candles used for the ATR of Support / Resistance.' },] },
+    { id: 'srbounce', t: 'ENTRY BOUNCE', f: [
+      { id: 'sr_bounce_long', l: 'Long: reaches the bottom and closes back up', t: 'bool', path: ['sr', 'bounce_long'], when: ['sr_on', v => v === true], h: 'Market entry on that candle close.' },
+      { id: 'sr_bounce_short', l: 'Short: reaches the top and closes back down', t: 'bool', path: ['sr', 'bounce_short'], when: ['sr_on', v => v === true], h: 'Market entry on that candle close.' },
+      { id: 'sr_bounce_edges', l: 'Edges only, no trade in the middle', t: 'bool', path: ['sr', 'bounce_edges'], when: ['sr_on', v => v === true], h: 'Skip a bounce that closes far from the edge.' },
+      { id: 'sr_edge_pct', l: 'Edge width (% of the range)', t: 'num', min: 0.0001, max: 50, path: ['sr', 'bounce_edge_pct'], when: ['sr_bounce_edges', v => v === true], h: 'From each end of the range, up to 50.' },] },
+    { id: 'srbx', t: 'EXIT BOUNCE', f: [
+      { id: 'sr_bx_other', l: 'At the other end of the range', t: 'bool', path: ['sr', 'bx_other'], when: ['sr_on', v => v === true], h: 'Long closes at the top, short at the bottom.' },
+      { id: 'sr_bx_mid', l: 'At the middle line', t: 'bool', path: ['sr', 'bx_mid'], when: ['sr_on', v => v === true], h: 'Halfway between the bottom and the top.' },
+      { id: 'sr_bx_break', l: 'If the range breaks against you', t: 'bool', path: ['sr', 'bx_break'], when: ['sr_on', v => v === true], h: 'A close outside the range against the trade.' },] },
+    { id: 'srbrk', t: 'ENTRY BREAKOUT', f: [
+      { id: 'sr_brk_long', l: 'Long: a candle closes above the top', t: 'bool', path: ['sr', 'brk_long'], when: ['sr_on', v => v === true], h: 'Only the first closing candle counts.' },
+      { id: 'sr_brk_short', l: 'Short: a candle closes below the bottom', t: 'bool', path: ['sr', 'brk_short'], when: ['sr_on', v => v === true], h: 'Only the first closing candle counts.' },
+      { id: 'sr_brk_close_on', l: 'Close beyond the level by a % of ATR', t: 'bool', path: ['sr', 'brk_close_on'], when: ['sr_on', v => v === true], h: 'A close only just past the level does not count.' },
+      { id: 'sr_brk_close_pct', l: 'Close beyond the level by (% of ATR)', t: 'num', min: 0, path: ['sr', 'brk_close_atr_pct'], when: ['sr_brk_close_on', v => v === true], h: '100 = one ATR.' },
+      { id: 'sr_brk_vol_on', l: 'Volume above the average', t: 'bool', path: ['sr', 'brk_vol_on'], when: ['sr_on', v => v === true], h: 'The breakout candle needs strong volume.' },
+      { id: 'sr_brk_vol_mult', l: 'Volume above the average by (times)', t: 'num', min: 0.1, path: ['sr', 'brk_vol_mult'], when: ['sr_brk_vol_on', v => v === true], h: '1.5 = 50% above the average.' },
+      { id: 'sr_brk_vol_len', l: 'Volume average length (candles)', t: 'int', min: 1, path: ['sr', 'brk_vol_len'], when: ['sr_brk_vol_on', v => v === true], h: 'The candles right before the breakout candle.' },] },
+    { id: 'srbx2', t: 'EXIT BREAKOUT', f: [
+      { id: 'sr_brk_exit_inside', l: 'If a candle closes back inside the range', t: 'bool', path: ['sr', 'brk_exit_inside'], when: ['sr_on', v => v === true], h: 'The break failed.' },] },
+    { id: 'srretest', t: 'ENTRY RETEST', f: [
+      { id: 'sr_retest_long', l: 'Long: the old top is retested from above and holds', t: 'bool', path: ['sr', 'retest_long'], when: ['sr_on', v => v === true], h: 'Needs a break up first. Market entry on the candle close.' },
+      { id: 'sr_retest_short', l: 'Short: the old bottom is retested from below and holds', t: 'bool', path: ['sr', 'retest_short'], when: ['sr_on', v => v === true], h: 'Needs a break down first. Market entry on the candle close.' },] },
+    { id: 'srwait', t: 'WHAT ENDS THE RETEST WAIT', f: [
+      { id: 'sr_wait_fail', l: 'The level fails: a candle closes back through it', t: 'bool', path: ['sr', 'wait_fail'], when: ['sr_on', v => v === true], h: 'Ends the wait.' },
+      { id: 'sr_wait_newrange', l: 'A new range forms: a nearer level appears', t: 'bool', path: ['sr', 'wait_newrange'], when: ['sr_on', v => v === true], h: 'Ends the wait.' },
+      { id: 'sr_wait_runaway', l: 'Price runs away from the level', t: 'bool', path: ['sr', 'wait_runaway'], when: ['sr_on', v => v === true], h: 'Ends the wait.' },
+      { id: 'sr_wait_runaway_pct', l: 'Price runs away by (% of ATR)', t: 'num', min: 0.0001, path: ['sr', 'wait_runaway_atr_pct'], when: ['sr_wait_runaway', v => v === true], h: '100 = one ATR.' },
+      { id: 'sr_wait_none', l: 'Nothing ends it', t: 'bool', path: ['sr', 'wait_none'], when: ['sr_on', v => v === true], h: 'The wait goes on until the retest happens.' },] },
+    { id: 'sruse', t: 'USE IN THE STRATEGY', f: [
+      { id: 'sr_alone', l: 'Its own strategy: add its entries to the entry signal', t: 'bool', path: ['sr', 'alone'], when: ['sr_on', v => v === true], h: 'You can also tick Support / Resistance in Indicators. Both together are fine.' },
+      { id: 'sr_exit_sr_only', l: 'Exits apply to Support / Resistance trades only', t: 'bool', path: ['sr', 'exit_sr_only'], when: ['sr_on', v => v === true], h: 'A bounce trade uses the bounce exits, a breakout or retest trade the breakout exit.' },
+      { id: 'sr_exit_all', l: 'Exits apply to every trade', t: 'bool', path: ['sr', 'exit_all'], when: ['sr_on', v => v === true], h: 'Any ticked exit closes any open trade.' },] },
   ],
 };
 
@@ -2622,7 +2831,7 @@ function hubRowHtml(f) {
     ctl = `<label>${hubEsc(f.l)}${ih(helpKey(f.id))}</label><select id="${id}"><option value="">— choose —</option>${opts}</select>`;
   } else {
     const step = f.t === 'int' ? '1' : 'any';
-    ctl = `<label>${hubEsc(f.l)}${ih(helpKey(f.id))}</label><input id="${id}" type="number" step="${step}" ${f.min !== undefined ? `min="${f.min}"` : ''} inputmode="decimal" placeholder="enter a number">`;
+    ctl = `<label>${hubEsc(f.l)}${ih(helpKey(f.id))}</label><input id="${id}" type="number" step="${step}" ${f.min !== undefined ? `min="${f.min}"` : ''} ${f.max !== undefined ? `max="${f.max}"` : ''} inputmode="decimal" placeholder="enter a number">`;
   }
   return `<div class="hubx-row" data-fid="${f.id}"><div class="hubx-ctl">${ctl}</div>${hint}</div>`;
 }
@@ -2644,7 +2853,7 @@ function hubBuildForm() {
     const cards = HUB_FN_CARDS[fn.id];
     html += `<div class="hubx-pane" id="hubpane_${fn.id}" style="display:none;">`;
     html += `<div class="hubx-head"><div class="sub" id="hubstep_${fn.id}" style="margin-bottom:2px;"></div>`
-      + `<div class="hubx-title">${hubEsc(fn.name)}${ih('fn.' + fn.id)}</div><div class="hubx-desc">${hubEsc(fn.desc)}</div></div>`;
+      + `<div class="hubx-title"><span id="hubtitle_${fn.id}">${hubEsc(fn.name)}</span>${ih('fn.' + fn.id)}</div><div class="hubx-desc" id="hubdesc_${fn.id}">${hubEsc(fn.desc)}</div></div>`;
     if (fn.id === 'pair') {
       html += `<div class="hubx-row"><div class="hubx-ctl"><label>Pair${ih('hub.pair')}</label><select id="hub-pair-select"><option value="">— choose the account first —</option></select></div>`
         + `<div class="hubx-hint">The market this strategy trades. It must already be added to the account in the Binance or OKX tab.</div></div>`;
@@ -2703,6 +2912,8 @@ function hubBuildForm() {
   // capture: the CTREND tick updates Entry size first (a click fires "input" then "change"; both run hubRefresh)
   panes.addEventListener('input', hubCtTicked, true);
   panes.addEventListener('change', hubCtTicked, true);
+  panes.addEventListener('input', hubSrTicked, true);
+  panes.addEventListener('change', hubSrTicked, true);
   panes.addEventListener('input', hubPick1, true);
   panes.addEventListener('change', hubPick1, true);
   document.getElementById('hub-pair-select').onchange = (e) => hubPairChosen(e.target.value);
@@ -2761,6 +2972,10 @@ function hubValue(f) {
   return raw;
 }
 function hubVisible(f) {
+  if (f.anyOf) {   // shown when any of the listed boxes is ticked (and shown)
+    return f.anyOf.some(id => { const src = hubAllFields.find(x => x.id === id); return !!src && hubVisible(src) && hubValue(src) === true; });
+  }
+  if (f.cond && !f.cond()) return false;   // an extra rule that is more than "one box has one value"
   if (!f.when) return true;
   const src = hubAllFields.find(x => x.id === f.when[0]);
   if (!(!!src && hubVisible(src) && f.when[1](hubValue(src)))) return false;
@@ -2796,7 +3011,9 @@ function hubSizeLines() {
     const by = hubCtBy();
     const nm = Object.fromEntries(HUB_BLOCKS.map(b => [b.k, b.t]));
     let txt = 'Nothing yet: tick CTREND on one indicator in Indicators.';
-    if (by && by !== 'EMA') {
+    if (by === 'bb') {
+      txt = 'Bollinger half - CTREND in Indicators. A long in the lower half of the band (a short in the upper half) uses the normal size; the other half, and the middle line itself, uses the size against the trend.';
+    } else if (by && by !== 'EMA') {
       const blk = by === 'ma1' || by === 'ma2' ? ` (${hubEl(by + '_type').value || '?'} ${hubEl(by + '_length').value || '?'})` : '';
       txt = `${nm[by] || by}${blk} - CTREND in Indicators`;
     } else if (by === 'EMA' && hubEl('counter_ema').value) txt = `EMA ${hubEl('counter_ema').value} (older plan) - tick CTREND in Indicators to change it`;
@@ -2828,6 +3045,11 @@ function hubSizeLines() {
     pv.textContent = txt;
   }
 }
+// Ticking Support / Resistance in the Indicators list picks the function in the menu for you.
+function hubSrTicked(ev) {
+  const t = ev.target;
+  if (t && t.checked && (t.id === 'hub_sr_entry' || t.id === 'hub_sr_flip')) hubUi.picked.sr = true;
+}
 function hubCtTicked(ev) {
   const t = ev.target;
   if (!t || !t.classList || !t.classList.contains('hub-ct')) return;
@@ -2854,12 +3076,21 @@ function hubBlockNeeded(k) {
   // a "Moving average" Trailing Stop uses the numbers of its MA
   if ((k === 'ma1' || k === 'ma2') && hubEl('trail_on').checked && hubValue(hubField('trail_type')) === HUB_TRAIL_MA
       && hubValue(hubField('trail_ma')) === (k === 'ma1' ? 'MA 1' : 'MA 2')) return true;
+  // a "Supertrend line" Trailing Stop uses the Supertrend numbers
+  if (k === 'sup' && hubEl('trail_on').checked && hubValue(hubField('trail_type')) === HUB_TRAIL_SUP) return true;
+  // Exit when uses the MA numbers (MA 2 always, MA 1 unless "MA 2 only")
+  if (hubEl('exit_on') && hubEl('exit_on').checked) {
+    if (k === 'ma2') return true;
+    if (k === 'ma1' && hubValue(hubField('exit_signal')) !== HUB_EXIT_SIGNALS[1]) return true;
+  }
   return false;
 }
 function hubRefresh() {
   if (!hubAllFields.length) return;
   // an optional function is ON when it is picked in the menu
   for (const fn of HUB_FUNCS) if (fn.sw) hubEl(fn.sw).checked = !!hubUi.picked[fn.id];
+  // Support / Resistance not picked: it cannot be ticked in Indicators either (the bot refuses that)
+  if (!hubUi.picked.sr) for (const w of ['sr_entry', 'sr_flip']) { const el = hubEl(w); if (el) el.checked = false; }
   const plainCandles = hubValue(hubField('chart_type')) === 'Candles';
   hubCtSync();
   const ownFlip = hubEl('flip_same_entry') ? !hubEl('flip_same_entry').checked : true;
@@ -2896,7 +3127,106 @@ function hubMainOptions(want) {
 }
 
 // ---------------------------------------------------------------- the Layout 2 screen (menu + panes + bottom bar)
-function hubPickedFuncs() { return HUB_FUNCS.filter(f => hubUi.picked[f.id]); }
+function hubPickedFuncs() { return hubFns().filter(f => hubUi.picked[f.id]); }
+
+// ---------------------------------------------------------------- the owner's own menu look (names, texts, order)
+// Saved on the server (same on every device). It only changes how the menu looks; the HUB_FUNCS list above stays the
+// original, and a function the owner did not change keeps its original text.
+let hubMenuCfg = { order: [], names: {}, descs: {} };
+let hubFnCache = null;
+let hubMenuDirty = true;
+let hubMenuLoaded = false;
+function hubFns() {
+  if (hubFnCache) return hubFnCache;
+  const byId = Object.fromEntries(HUB_FUNCS.map(f => [f.id, f]));
+  const ids = [];
+  (hubMenuCfg.order || []).forEach(i => { if (byId[i] && !ids.includes(i)) ids.push(i); });
+  HUB_FUNCS.forEach(f => { if (!ids.includes(f.id)) ids.push(f.id); });      // a new function: at the end
+  hubFnCache = ids.map(i => ({ ...byId[i], name: (hubMenuCfg.names || {})[i] || byId[i].name, desc: (hubMenuCfg.descs || {})[i] || byId[i].desc }));
+  return hubFnCache;
+}
+function hubMenuSet(cfg) {
+  hubMenuCfg = { order: cfg.order || [], names: cfg.names || {}, descs: cfg.descs || {} };
+  hubFnCache = null;
+  hubMenuDirty = true;
+}
+async function hubMenuLoad() {
+  if (hubMenuLoaded) return;
+  hubMenuLoaded = true;
+  try { hubMenuSet(await api('/api/hub-menu')); hubRefresh(); }
+  catch (e) { hubMenuLoaded = false; }          // not readable now: the original menu; tried again next time
+}
+let hubMenuRows = [];
+function hubMenuOriginal(id) { return HUB_FUNCS.find(f => f.id === id); }
+function hubMenuMove(from, to) {
+  to = Math.max(0, Math.min(hubMenuRows.length - 1, to));
+  if (from === to) return;
+  const [r] = hubMenuRows.splice(from, 1);
+  hubMenuRows.splice(to, 0, r);
+  hubMenuRender();
+}
+function hubMenuRender() {
+  const box = document.getElementById('hub-menu-rows');
+  box.innerHTML = '';
+  hubMenuRows.forEach((r, i) => {
+    const row = document.createElement('div');
+    row.className = 'hubm-row';
+    row.dataset.id = r.id;
+    row.style.cssText = 'display:grid; grid-template-columns:56px 1fr auto; gap:8px; align-items:start; padding:8px 0; border-bottom:1px solid var(--border);';
+    const pos = document.createElement('input');
+    pos.type = 'number'; pos.min = 1; pos.max = hubMenuRows.length; pos.value = i + 1; pos.className = 'hubm-pos';
+    pos.title = 'Position in the menu';
+    pos.onchange = () => { const n = parseInt(pos.value, 10); if (n >= 1) hubMenuMove(i, n - 1); else hubMenuRender(); };
+    const mid = document.createElement('div');
+    const nm = document.createElement('input');
+    nm.type = 'text'; nm.maxLength = 60; nm.value = r.name; nm.className = 'hubm-name'; nm.style.cssText = 'width:100%; font-weight:700;';
+    nm.oninput = () => { r.name = nm.value; };
+    const ds = document.createElement('input');
+    ds.type = 'text'; ds.maxLength = 300; ds.value = r.desc; ds.className = 'hubm-desc'; ds.style.cssText = 'width:100%; margin-top:4px;';
+    ds.oninput = () => { r.desc = ds.value; };
+    mid.append(nm, ds);
+    const btns = document.createElement('div');
+    btns.style.cssText = 'display:flex; gap:4px;';
+    const mk = (txt, title, fn) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'ghost'; b.textContent = txt; b.title = title; b.style.padding = '2px 8px'; b.onclick = fn; return b; };
+    btns.append(mk('▲', 'Move up', () => hubMenuMove(i, i - 1)), mk('▼', 'Move down', () => hubMenuMove(i, i + 1)),
+      mk('↺', 'Back to the original name and text', () => { const o = hubMenuOriginal(r.id); r.name = o.name; r.desc = o.desc; hubMenuRender(); }));
+    row.append(pos, mid, btns);
+    box.appendChild(row);
+  });
+}
+function hubMenuOpenEdit() {
+  hubMenuRows = hubFns().map(f => ({ id: f.id, name: f.name, desc: f.desc }));
+  document.getElementById('hub-menu-msg').className = 'msg';
+  hubMenuRender();
+  document.getElementById('dlg-hub-menu').showModal();
+}
+async function hubMenuSave() {
+  const msg = document.getElementById('hub-menu-msg');
+  const names = {}, descs = {};
+  hubMenuRows.forEach(r => {
+    const o = hubMenuOriginal(r.id);
+    const n = (r.name || '').trim(), d = (r.desc || '').trim();
+    if (n && n !== o.name) names[r.id] = n;           // an empty box = the original text
+    if (d && d !== o.desc) descs[r.id] = d;
+  });
+  try {
+    const out = await api('/api/hub-menu', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                                             body: JSON.stringify({ order: hubMenuRows.map(r => r.id), names, descs }) });
+    hubMenuSet(out);
+    document.getElementById('dlg-hub-menu').close();
+    hubRefresh();
+  } catch (e) {
+    msg.className = 'msg err';
+    msg.textContent = 'Not saved: ' + (e && e.message ? e.message : e);
+  }
+}
+document.getElementById('hub-menu-edit-btn').onclick = hubMenuOpenEdit;
+document.getElementById('hub-menu-save').onclick = hubMenuSave;
+document.getElementById('hub-menu-cancel').onclick = () => document.getElementById('dlg-hub-menu').close();
+document.getElementById('hub-menu-reset').onclick = () => {
+  hubMenuRows = HUB_FUNCS.map(f => ({ id: f.id, name: f.name, desc: f.desc }));
+  hubMenuRender();
+};
 
 function hubRenderUi() {
   const fill = hubUi.stage === 'fill';
@@ -2907,9 +3237,10 @@ function hubRenderUi() {
   const menu = document.getElementById('hub-menu');
   // The buttons are made once and only updated afterwards: a box that loses focus fires "change" between the
   // mouse going down and up on a menu row, and rebuilding the row there would swallow that click.
-  if (menu.children.length !== HUB_FUNCS.length) {
+  if (menu.children.length !== HUB_FUNCS.length || hubMenuDirty) {
+    hubMenuDirty = false;
     menu.innerHTML = '';
-    HUB_FUNCS.forEach(fn => {
+    hubFns().forEach(fn => {
       const b = document.createElement('button');
       b.type = 'button';
       b.dataset.fn = fn.id;
@@ -2919,7 +3250,7 @@ function hubRenderUi() {
       menu.appendChild(b);
     });
   }
-  HUB_FUNCS.forEach((fn, i) => {
+  hubFns().forEach((fn, i) => {
     const on = !!hubUi.picked[fn.id];
     const isActive = fill && hubUi.active === fn.id;
     const done = fill && on && !!hubUi.visited[fn.id] && !isActive;
@@ -2939,7 +3270,10 @@ function hubRenderUi() {
     `<div class="hubx-srow"><span class="n">${i + 1}</span><span class="nm">${hubEsc(fn.name)}${ih('fn.' + fn.id)}</span><span class="ds">${hubEsc(fn.desc)}</span></div>`).join('');
   // panes
   const activeIdx = sel.findIndex(f => f.id === hubUi.active);
-  for (const fn of HUB_FUNCS) {
+  for (const fn of hubFns()) {
+    const tt = document.getElementById(`hubtitle_${fn.id}`), td = document.getElementById(`hubdesc_${fn.id}`);
+    if (tt) tt.textContent = fn.name;
+    if (td) td.textContent = fn.desc;
     const pane = document.getElementById(`hubpane_${fn.id}`);
     pane.style.display = (fill && hubUi.active === fn.id) ? '' : 'none';
     const st = document.getElementById(`hubstep_${fn.id}`);
@@ -3003,6 +3337,10 @@ function hubBuildPlan() {
     for (let i = 0; i < 3; i++) if (plan.tp.levels[i] === undefined) plan.tp.levels[i] = { on: false };
   }
   if (plan.tp && !plan.tp.from) delete plan.tp.from;   // blank = Entry price (a plan without the key means that)
+  // 2026-11-05: the "how it always worked" choices are not written into the plan (a plan without the key means them),
+  // so saving an older plan again is not seen as a change to an open trade
+  if (plan.sl && plan.sl.struct_mode === HUB_SLS_EXTREME) { delete plan.sl.struct_mode; delete plan.sl.struct_n; }
+  if (plan.trail && plan.trail.candle_start === HUB_TCS_TIGHTER) { delete plan.trail.candle_start; delete plan.trail.candle_profit; }
   // Stop Loss (owner 2026-10-26): always in the menu, but "Measured on" left empty = no SL, saved as off (set it later)
   if (plan.sl && plan.sl.on && !plan.sl.basis) plan.sl = { on: false };
   const name = (document.getElementById('hub_name').value || '').trim();
@@ -3049,12 +3387,30 @@ function hubSlParts(get) {
   if ([HUB_BASIS_ATR, HUB_BASIS_PRICE, HUB_SL_CHAND].includes(b)) out.push(`Value: ${get('sl_value')} %${b === HUB_SL_CHAND ? ' of ATR' : ''}`);
   if (b === HUB_BASIS_ATR || b === HUB_SL_CHAND) out.push(`ATR length: ${get('sl_atr')}`);
   if (b === HUB_SL_USD) out.push(`Loss: ${get('sl_usd')} USDT`);
-  if (b === HUB_SL_STRUCT || b === HUB_SL_CHAND) out.push(`N candles: ${get('sl_length')}`);
+  if (b === HUB_SL_STRUCT && get('sl_struct_mode') === HUB_SLS_SWING) out.push(`Real swing point, ${get('sl_struct_n')} candles on each side`);
+  else if (b === HUB_SL_STRUCT || b === HUB_SL_CHAND) out.push(`N candles: ${get('sl_length')}`);
   if (b === HUB_SL_MA) out.push(`At: ${get('sl_ma')}`);
   out.push(get('sl_time_on') ? `Time stop: ${get('sl_time_candles')} candles, not in profit = close` : 'Time stop: OFF');
   return out;
 }
 
+function hubSrSummary(plan) {
+  const sr = plan.sr || {};
+  if (!sr.on) return ['Support / Resistance: OFF'];
+  const y = (k, t) => sr[k] ? t : null;
+  const find = [y('find_hhll', `highest high / lowest low of ${sr.hhll_n} candles`), y('find_swing', `swing points (${sr.swing_n} candles each side)`),
+    y('diagonal', `diagonal line through ${sr.diag_points} swing points`)].filter(Boolean).join(', ');
+  const ent = [y('bounce_long', 'bounce long'), y('bounce_short', 'bounce short'), y('brk_long', 'breakout long'), y('brk_short', 'breakout short'),
+    y('retest_long', 'retest long'), y('retest_short', 'retest short')].filter(Boolean).join(', ') || 'none';
+  const ex = [y('bx_other', 'other end'), y('bx_mid', 'middle line'), y('bx_break', 'range breaks'), y('brk_exit_inside', 'close back inside')].filter(Boolean).join(', ');
+  const where = [y('exit_sr_only', 'Support / Resistance trades'), y('exit_all', 'every trade')].filter(Boolean).join(' and ');
+  const wait = [y('wait_fail', 'level fails'), y('wait_newrange', 'new range forms'), y('wait_runaway', `price runs away ${sr.wait_runaway_atr_pct}% of ATR`), y('wait_none', 'nothing ends it')].filter(Boolean).join(', ');
+  const L = [`Support / Resistance: finds the range with ${find || '?'} (nearest ${sr.count} each side)`
+    + (sr.zone_on ? ` · zone ${sr.zone_atr_pct}% of ATR` : '') + (sr.stop_zone_on ? ` · stop outside the zone by ${sr.stop_zone_atr_pct}% of ATR` : '')];
+  L.push(`  Entries: ${ent}` + (sr.alone ? ' (its own strategy)' : '') + (ex ? ` · Exits: ${ex}, for ${where}` : ''));
+  if (wait) L.push(`  Retest wait ends when: ${wait}`);
+  return L;
+}
 function hubSummaryLines(plan) {
   const nm = Object.fromEntries(HUB_BLOCKS.map(b => [b.k, b.t]));
   const list = which => HUB_BLOCKS.filter(b => plan.ind && plan.ind[b.k] && plan.ind[b.k][which]).map(b => nm[b.k]).join(', ') || 'none';
@@ -3078,7 +3434,7 @@ function hubSummaryLines(plan) {
   const sz1 = fixed ? `${s.base_amount} USDT base amount (grows with the last closed total)${lock}` : `${s.alloc_pct}% of balance`;
   const sz2 = fixed ? `${c.base_amount} USDT base amount` : `${c.alloc_pct}%`;
   L.push(`Size${c.on ? ' WITH the trend' : ''}: ${sz1} at ${s.leverage}x`
-    + (c.on ? ` · AGAINST the trend (${(!c.by || c.by === 'EMA') ? 'chart close vs EMA ' + c.ema_length : 'decided by ' + (nm[c.by] || c.by)}): `
+    + (c.on ? ` · AGAINST the trend (${(!c.by || c.by === 'EMA') ? 'chart close vs EMA ' + c.ema_length : (c.by === 'bb' ? 'decided by the Bollinger half' : 'decided by ' + (nm[c.by] || c.by))}): `
       + (Number(fixed ? c.base_amount : c.alloc_pct) === 0 ? 'NO counter-trend entries (size 0)' : `${sz2} at ${c.leverage}x`) : ''));
   L.push(`Email alert on margin: ${s.margin_alert ? 'ON' : 'OFF'}`);
   const basis = s.stop_basis || HUB_STOP_BAL;
@@ -3086,7 +3442,7 @@ function hubSummaryLines(plan) {
   const slp = plan.sl || {};
   const atrTxt = (b, n) => b === HUB_BASIS_ATR ? `, ATR length ${n}` : '';
   const slGet = id => ({ sl_basis: slp.basis, sl_value: slp.value, sl_atr: slp.atr_length, sl_usd: slp.usd, sl_length: slp.length,
-                         sl_ma: slp.ma, sl_time_on: slp.time_on, sl_time_candles: slp.time_candles })[id];
+                         sl_ma: slp.ma, sl_struct_mode: slp.struct_mode, sl_struct_n: slp.struct_n, sl_time_on: slp.time_on, sl_time_candles: slp.time_candles })[id];
   L.push(slp.on ? `Stop Loss: ${slp.basis}` + (hubSlParts(slGet).length ? ' · ' + hubSlParts(slGet).join(' · ') : '') : 'Stop Loss: NOT SET (trades still open, you get an email: ' + HUB_SL_MISSING + ')');
   const be = plan.be || {};
   L.push(be.on ? 'Break-Even: Stop Loss to the entry price ' + [be.after_tp ? `after TP ${be.tp_n}` : null,
@@ -3097,7 +3453,8 @@ function hubSummaryLines(plan) {
     if (tr.type === HUB_TRAIL_STEP && tr.start === HUB_START_BEGIN) trTxt = `Trailing Stop: Step, begins when the price moves ${tr.begin_value}, stop goes to ${tr.lock_value}, then moves every ${tr.gap} (${tr.basis}${atrTxt(tr.basis, tr.atr_length)})`;
     else if (tr.type === HUB_TRAIL_STEP) trTxt = `Trailing Stop: Step, start ${tr.start === HUB_START_SL ? 'same as Stop Loss' : tr.start_value + ' ' + tr.basis}, gap ${tr.gap} ${tr.basis}${atrTxt(tr.basis, tr.atr_length)}`;
     else if (tr.type === HUB_TRAIL_MA) trTxt = `Trailing Stop: on ${tr.ma}`;
-    else if (tr.type === HUB_TRAIL_CANDLE) trTxt = `Trailing Stop: signal candle high / low +/- ${tr.value}% of ATR (ATR length ${tr.atr_length}), nearer at each candle close`;
+    else if (tr.type === HUB_TRAIL_SUP) trTxt = 'Trailing Stop: follows the Supertrend line, nearer at each candle close (uses the Supertrend numbers)';
+    else if (tr.type === HUB_TRAIL_CANDLE) trTxt = `Trailing Stop: signal candle high / low +/- ${tr.value}% of ATR (ATR length ${tr.atr_length}), nearer at each candle close` + (tr.candle_start === HUB_TCS_PROFIT ? `; it may take charge only after a candle closes ${tr.candle_profit}% of ATR beyond the entry` : '');
     else trTxt = `Trailing Stop: lowest low / highest high of the last ${tr.length} candles`;
   }
   L.push(trTxt);
@@ -3105,6 +3462,9 @@ function hubSummaryLines(plan) {
   L.push(tp.on ? `Take profit (${tp.basis}${atrTxt(tp.basis, tp.atr_length)}, from ${tp.from || HUB_TP_FROM_ENTRY}): ` + (tp.levels || []).map((l, i) => l.on ? `TP${i + 1} at ${l.value}% (closes ${l.pct}%)` : null).filter(Boolean).join(', ') : 'Take profit: OFF');
   const sh = plan.shadow || {};
   L.push(sh.on ? `Shadow mode: runs all the time; ${sh.trades} trade(s) off after a new tracker high (slippage ${sh.slippage_ticks} ticks, tracker start ${sh.tracker_start})` : 'Shadow mode: OFF');
+  const ew = plan.exit_when || {};
+  L.push(ew.on ? `Exit when: ${ew.signal} - ${ew.after}` : 'Exit when: OFF');
+  L.push(...hubSrSummary(plan));
   const cd = plan.cooldown || {};
   L.push(cd.on ? `Cooldown after a loss: ${cd.candles} candle close(s) with no new entry` + (cd.after_losses ? `, only after ${cd.after_losses} losses in a row` : ', after every loss') : 'Cooldown after a loss: OFF');
   const ll = plan.loss_limit || {};
@@ -3171,6 +3531,7 @@ function hubAccountChosen() {
   empty.style.display = 'none';
   box.style.display = 'block';
   if (!document.getElementById('hub-panes').children.length) { hubFreshUi(); hubBuildForm(); }
+  hubMenuLoad();
   document.getElementById('hub-pair-select').value = '';   // a new account: the pair is chosen again
   hubPopulatePairs();
   hubSetTimeframeOptions();
@@ -3203,7 +3564,31 @@ async function hubPairChosen(sym) {
 }
 
 // ---------------------------------------------------------------- Save and Execute
-function hubSave(mode) {
+// Is a trade open on the chosen pair right now? (the Save box "when does this apply" is shown only then)
+async function hubTradeOpen() {
+  try {
+    const st = await api((hubKey.platform === 'okx' ? '/api/okx' : '/api') + `/status/${hubKey.accId}/${hubKey.sym}`);
+    return !!st && st.status === 'IN_POSITION';
+  } catch (e) { return false; }     // not running / cannot be read: the old way (the new plan waits for the next trade)
+}
+function hubAmendChoice() {
+  const box = document.getElementById('hub-amend-box');
+  if (box.style.display === 'none') return null;
+  const w = document.querySelector('input[name="amend-when"]:checked');
+  const st = document.querySelector('input[name="amend-stops"]:checked');
+  if (!w) return undefined;                                  // not chosen yet
+  if (w.value === 'next') return { when: 'next' };
+  if (!st) return undefined;
+  return { when: 'now', stops: st.value };
+}
+function hubAmendUpdate() {
+  const w = document.querySelector('input[name="amend-when"]:checked');
+  document.getElementById('amend-stops').style.display = (w && w.value === 'now') ? '' : 'none';
+  document.getElementById('hub-review-apply').disabled = hubAmendChoice() === undefined;   // must choose on purpose
+}
+document.querySelectorAll('input[name="amend-when"], input[name="amend-stops"]').forEach(r => r.onchange = hubAmendUpdate);
+
+async function hubSave(mode) {
   const msg = document.getElementById('hub-msg');
   if (!hubKey) { msg.className = 'msg err'; msg.textContent = 'Choose the account and the pair first (Pair).'; return; }
   const plan = hubBuildPlan();
@@ -3222,14 +3607,32 @@ function hubSave(mode) {
   }
   hubReviewMode = mode;
   const exec = mode === 'execute';
+  const open = await hubTradeOpen();
+  document.getElementById('hub-amend-box').style.display = open ? '' : 'none';
+  document.querySelectorAll('input[name="amend-when"], input[name="amend-stops"]').forEach(r => { r.checked = false; });   // nothing pre-selected
+  hubAmendUpdate();
   document.getElementById('hub-review-title').textContent = exec ? 'Review before you start trading' : 'Review before saving';
   document.getElementById('hub-review-apply').textContent = exec ? 'Confirm, save and START trading' : 'Confirm and save';
   document.getElementById('hub-review-body').innerHTML =
     `<div class="sub">${hubKey.platform === 'okx' ? 'OKX' : 'Binance'} · ${hubEsc(hubKey.sym)} · timeframe <b>${hubEsc(tf)}</b></div>` +
     '<ul style="margin:8px 0 0 18px; line-height:1.7; font-size:13px;">' + hubSummaryLines(plan).map(x => `<li>${hubEsc(x)}</li>`).join('') + '</ul>' +
-    '<p class="sub" style="margin-top:12px;">If a trade is open, the new plan starts after it closes. A flip never uses it half way: it closes, goes flat, checks the rules, then follows them.'
+    '<p class="sub" style="margin-top:12px;">' + (open ? 'A trade is open: choose below when the changes apply.' : 'If a trade is open, the new plan starts after it closes.') + ' A flip never uses it half way: it closes, goes flat, checks the rules, then follows them.'
     + (exec ? ' Execute starts this pair now (real orders on a live account).' : '') + '</p>';
   document.getElementById('dlg-hub-review').showModal();
+}
+
+// What the server did to the open trade (the answer of "Apply to the open trade now / from the next trade")
+function hubAmendText(r) {
+  if (!r) return '';
+  if (r.status === 'next') return 'The open trade keeps its rules. The new plan starts from the next trade.';
+  if (r.status === 'no_open_trade') return 'No trade was open, so the plan simply applies.';
+  if (r.status === 'not_now') return 'The open trade was NOT changed: ' + (r.why || 'not possible right now') + '';
+  if (r.status === 'error') return 'The open trade was NOT changed (' + (r.why || 'error') + '). It keeps its rules. The new plan starts from the next trade.';
+  const L = ['Open trade changed:'].concat((r.applied || []).map(x => '• ' + x));
+  if (!(r.applied || []).length) L.push('• Nothing needed to change.');
+  (r.kept || []).forEach(x => L.push('• NOT changed: ' + x));
+  if (r.waits) L.push('Other changes (entry, flip, size, ...) start from the next trade.');
+  return L.join('\n');
 }
 
 async function hubApply() {
@@ -3244,10 +3647,15 @@ async function hubApply() {
   if (hubSavedPair && iso !== (hubSavedPair.isolated_margin === true)) pairUpdate.isolated_margin = iso;
   const exec = hubReviewMode === 'execute';
   const where = { ...hubKey };
+  const amend = hubAmendChoice();
+  if (amend === undefined) return;                           // the box is shown and no choice made: Confirm stays off
   let step = 'plan';
+  let amendText = '';
   try {
     // the plan is checked by the server FIRST (a refused plan must not leave a half-saved pair)
-    await api(base + '/plan', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan }) });
+    const put = await api(base + '/plan', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify(amend ? { plan, amend } : { plan }) });
+    amendText = hubAmendText(put && put.amend_result);
     step = 'pair';
     if (Object.keys(pairUpdate).length) {
       await api(base, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pairUpdate) });
@@ -3256,9 +3664,11 @@ async function hubApply() {
     if (exec) await api(base + '/start', { method: 'POST' });
     dlg.close();
     msg.className = 'msg ok';
-    msg.textContent = exec
+    msg.style.whiteSpace = 'pre-line';
+    msg.textContent = (exec
       ? 'Plan saved and the pair is started. If a trade is open the new plan starts after it closes.'
-      : 'Plan saved. It runs now if the pair is flat; if a trade is open it starts after the trade closes.';
+      : 'Plan saved. It runs now if the pair is flat; if a trade is open it starts after the trade closes.')
+      + (amendText ? '\n' + amendText : '');
   } catch (e) {
     dlg.close();
     msg.className = 'msg err';
@@ -3591,6 +4001,17 @@ const HUB_PRESETS = hubDeepFreeze([
       trail: { on: true, type: 'Signal candle high / low +/- ATR' },
       tp: { on: false },
     } },
+  { id: 'ma_over_under', name: 'MA 1 over MA 2',
+    about: 'Rule choices only. Every number is empty for you.',
+    lines: [
+      'ENTRY: MA Crossover only, condition "MA 1 above / below MA 2" (long when MA 1 is above MA 2, short when it is below).',
+      'MA 1 and MA 2: the average type (SMA, EMA, WMA, HMA or ALMA) and the length are yours to pick. The Hub also asks you to tick one condition on each. They only give the two lines.',
+      'Everything else is left as a new form starts (you decide): chart type, Hold rule, Entry size, Max Loss per Trade, Stop Loss, Break-Even, Trailing Stop, Take profit, Shadow mode, Cooldown, Loss limit, Indicator Combination.',
+      'Numbers: you key in all of them.',
+    ],
+    plan: {
+      ind: { mx: { entry: true, modes: ['MA 1 above / below MA 2'] } },
+    } },
 ]);
 // PRESETS-END
 
@@ -3748,7 +4169,8 @@ document.getElementById('hub-lossbox-open-btn').onclick = lossOpen;
 // ======================================================================
 const CH = { key: null, data: null, n: 120, off: 0, timer: null, drag: null, hover: null };
 const CH_COL = { up: '#35d68a', down: '#ff5c72', grid: '#263047', text: '#8a93a8', real: '#5b8def', shadow: '#f5a742',
-                 ml: '#ff5c72', sl: '#f5b942', ts: '#5b8def', tp: '#35d68a', cross: '#8a93a8' };
+                 ml: '#ff5c72', sl: '#f5b942', ts: '#5b8def', tp: '#35d68a', cross: '#8a93a8',
+                 srR: '#ff5c72', srS: '#35d68a', srL: '#b07cff' };
 const CH_RIGHT = 74, CH_BOTTOM = 22;
 
 function chartTime(ms) {
@@ -3821,6 +4243,39 @@ function chartDraw() {
     g.beginPath(); g.moveTo(Math.round(x) + 0.5, Y(c.h)); g.lineTo(Math.round(x) + 0.5, Y(c.l)); g.stroke();
     const top = Y(Math.max(c.o, c.c)), bot = Y(Math.min(c.o, c.c));
     g.fillRect(x - bw / 2, top, bw, Math.max(1, bot - top));
+  }
+  // SUPPORT / RESISTANCE (2026-11-05): the bot's own levels, one value per candle (a sloping line is a diagonal)
+  const sr = CH.data.sr;
+  if (sr && sr.on && sr.lines) {
+    g.save(); g.beginPath(); g.rect(0, 0, plotW, plotH); g.clip();
+    for (const [k, col, w, dash] of [['r2', CH_COL.srR, 1, [6, 4]], ['s2', CH_COL.srS, 1, [6, 4]], ['mid', CH_COL.text, 1, [2, 4]],
+                                     ['r1', CH_COL.srR, 2, []], ['s1', CH_COL.srS, 2, []], ['lock', CH_COL.srL, 2, [8, 3, 2, 3]]]) {
+      const arr = sr.lines[k];
+      if (!arr) continue;
+      g.strokeStyle = col; g.lineWidth = w; g.setLineDash(dash); g.beginPath();
+      let pen = false;
+      for (let i = v.from; i < v.to; i++) {
+        const val = arr[i];
+        if (val === null || val === undefined) { pen = false; continue; }
+        const x = X(i), y = Y(val);
+        if (!pen) { g.moveTo(x, y); pen = true; } else g.lineTo(x, y);
+      }
+      g.stroke();
+    }
+    g.setLineDash([]); g.lineWidth = 1;
+    // the entry signals: B = bounce, K = breakout, R = retest (above a long candle, below a short one)
+    g.font = 'bold 10px -apple-system, Segoe UI, Roboto, sans-serif'; g.textAlign = 'center';
+    for (const m of sr.markers || []) {
+      const i = chartIndexOf(m.t);
+      if (i < v.from || i >= v.to) continue;
+      const x = X(i), long = m.dir === 'LONG', y = long ? Y(cs[i].h) - 12 : Y(cs[i].l) + 12;
+      g.beginPath(); g.arc(x, y, 8, 0, Math.PI * 2); g.fillStyle = '#1b1530'; g.fill();
+      g.strokeStyle = CH_COL.srL; g.stroke();
+      g.fillStyle = long ? CH_COL.srS : CH_COL.srR;
+      g.fillText(m.origin === 'Breakout' ? 'K' : (m.origin || '?').charAt(0), x, y + 3.5);
+    }
+    g.textAlign = 'start'; g.font = '11px -apple-system, Segoe UI, Roboto, sans-serif';
+    g.restore();
   }
   // levels of the open real trade
   g.setLineDash([5, 4]);
@@ -3899,6 +4354,52 @@ function chartDraw() {
     tip.style.visibility = 'hidden';
   }
 }
+// ---- the Support / Resistance table under the chart (2026-11-05). The columns are ticked by the viewer; the choice is
+// only a convenience kept in this browser.
+const CH_SR_COLS = [['name', 'Name'], ['price', 'Price / zone'], ['dist', 'Distance from price'], ['how', 'How found'],
+                    ['formed', 'When formed'], ['status', 'Status'], ['used', 'Used by'], ['diag', 'Diagonal line']];
+function chartSrCols() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('chartSrCols') || 'null'); } catch (e) { saved = null; }
+  return Array.isArray(saved) ? saved : CH_SR_COLS.map(c => c[0]);
+}
+function chartSrCell(k, r) {
+  const fmtD = (d, pct) => `${d >= 0 ? '+' : '-'}${chartNum(Math.abs(d))} (${pct >= 0 ? '+' : '-'}${Math.abs(pct).toFixed(2)}%)`;
+  if (k === 'name') return hubEsc(r.name);
+  if (k === 'price') return r.zone_from !== r.zone_to ? `${chartNum(r.zone_from)} – ${chartNum(r.zone_to)}` : chartNum(r.price);
+  if (k === 'dist') return fmtD(r.distance, r.distance_pct);
+  if (k === 'how') return hubEsc(r.how || '');
+  if (k === 'formed') return r.formed_t ? chartTime(r.formed_t) : '—';
+  if (k === 'status') return hubEsc(r.status || '');
+  if (k === 'used') return hubEsc((r.used_by || []).join(', '));
+  if (k === 'diag') return r.diagonal ? `now ${chartNum(r.price)} · slope ${chartNum(r.slope)} per candle` : '—';
+  return '';
+}
+function chartSrTable(sr) {
+  const box = document.getElementById('chart-sr'), leg = document.getElementById('chart-sr-legend');
+  const on = !!(sr && sr.on);
+  box.style.display = on ? '' : 'none';
+  leg.style.display = on ? '' : 'none';
+  if (!on) return;
+  const cols = chartSrCols();
+  document.getElementById('chart-sr-cols').innerHTML = CH_SR_COLS.map(([k, l]) =>
+    `<label style="display:inline-flex;align-items:center;gap:4px;margin:0;"><input type="checkbox" data-srcol="${k}" ${cols.includes(k) ? 'checked' : ''}> ${hubEsc(l)}</label>`).join('');
+  document.querySelectorAll('#chart-sr-cols input').forEach(el => {
+    el.onchange = () => {
+      const now = [...document.querySelectorAll('#chart-sr-cols input')].filter(x => x.checked).map(x => x.dataset.srcol);
+      try { localStorage.setItem('chartSrCols', JSON.stringify(now)); } catch (e) { /* the choice is only a convenience */ }
+      chartSrTable(CH.data && CH.data.sr);
+    };
+  });
+  const note = document.getElementById('chart-sr-note'), tbl = document.getElementById('chart-sr-table');
+  if (sr.error) { tbl.innerHTML = ''; note.textContent = 'Support / Resistance could not be worked out: ' + sr.error; return; }
+  const shown = CH_SR_COLS.filter(c => cols.includes(c[0]));
+  const rows = sr.table || [];
+  tbl.innerHTML = '<thead><tr>' + shown.map(c => `<th>${hubEsc(c[1])}</th>`).join('') + '</tr></thead><tbody>'
+    + rows.map(r => '<tr>' + shown.map(c => `<td>${chartSrCell(c[0], r)}</td>`).join('') + '</tr>').join('') + '</tbody>';
+  note.textContent = rows.length ? 'Worked out on the closed candles, the same way the bot trades. The price is where the level is for the candle that is forming now.'
+    : 'No level found yet. The bot needs more candles, or other ways to find the range ticked.';
+}
 async function chartLoad() {
   if (!CH.key || document.hidden) return;
   const key = CH.key;
@@ -3911,6 +4412,7 @@ async function chartLoad() {
     st.textContent = `${sym} · ${d.timeframe} · ${platform === 'okx' ? 'OKX' : 'Binance'} · updated ${new Date().toLocaleTimeString()}`
       + (d.shadow_on ? '' : ' · Shadow mode is not picked for this pair');
     document.getElementById('chart-wrap').style.display = '';
+    chartSrTable(d.sr);
     chartDraw();
   } catch (e) {
     st.textContent = 'Could not load the chart: ' + errText(e);

@@ -244,7 +244,7 @@ class OKXBotManager:
                         try:
                             await self.start_shadow_only(acc.id, symbol)
                         except Exception as e:
-                            log.error(f"Could not run the shadow of {label}{acc.name}/{symbol} at startup: {e}")
+                            log.error(f"Could not run the shadow of {acc.name}/{symbol} at startup: {e}")
                     continue
                 key = _key(acc.id, symbol)
                 try:

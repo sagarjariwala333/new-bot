@@ -38,7 +38,7 @@ def new_book(start_equity: float) -> dict:
         "levels": {"ml": None, "sl": None, "ts": None}, "best": None, "step": None,
         "tps": [], "legs": [],
         "wait": {"pend_dir": 0, "pend_bars": 0, "pend_from_flip": False},
-        "reentry_block": 0, "first_done": False, "last_dir_e": 0,
+        "reentry_block": 0, "reentry_forced": False, "first_done": False, "last_dir_e": 0,
         "current": None, "trades": [], "curve": [], "last_candle": None,
     }
 
@@ -87,9 +87,10 @@ def _finish(book: dict, t_ms: int, max_trades: int = MAX_TRADES) -> dict:
     if len(book["trades"]) > max_trades:
         del book["trades"][: len(book["trades"]) - max_trades]
     book["reentry_block"] = book["pos"]
+    book["reentry_forced"] = False          # "Exit when" -> wait for a fresh signal sets it again after this
     book.update(pos=0, entry=None, signal_close=None, alloc=None, lev=None, entry_time=None, frac=0.0,
                 levels={"ml": None, "sl": None, "ts": None}, best=None, step=None, tps=[], legs=[], current=None,
-                bars=0, be=None)
+                bars=0, be=None, sr_origin=0)
     return rec
 
 
@@ -171,14 +172,42 @@ def on_candle(book: dict, snap, plan: dict, *, tick_size: float, last_total, bal
             rec = _close_all(book, snap.close, "FLIP", t_ms)
             closed.append(rec)
             events.append(f"paper {d} closed by flip @ {snap.close} result {rec['result_pct']:+.3f}%")
+        elif hub.exit_decision(d, snap, plan) == "EXIT":
+            # EXIT WHEN: the MA(s) curve against the trade at this candle close
+            closing_dir = book["pos"]
+            rec = _close_all(book, snap.close, "Exit when", t_ms)
+            closed.append(rec)
+            if hub.exit_after(plan) == hub.EXIT_FLIP:
+                flipped_to = -closing_dir
+                events.append(f"paper {d} closed by Exit when @ {snap.close} result {rec['result_pct']:+.3f}% "
+                              f"(then the other side)")
+            else:
+                closing_dir = 0
+                book["reentry_forced"] = True       # flat until a fresh entry signal, even if re-entry is allowed
+                rule_close = True
+                events.append(f"paper {d} closed by Exit when @ {snap.close} result {rec['result_pct']:+.3f}% "
+                              f"(flat until a fresh signal)")
+        elif hub.sr_exit_decision(d, snap, plan, int(book.get("sr_origin") or 0)) == "EXIT":
+            # SUPPORT / RESISTANCE exit: the candle close meets a ticked exit; flat until a fresh signal
+            rec = _close_all(book, snap.close, "Support / Resistance exit", t_ms)
+            closed.append(rec)
+            book["reentry_forced"] = True
+            rule_close = True
+            events.append(f"paper {d} closed by a Support / Resistance exit @ {snap.close} result "
+                          f"{rec['result_pct']:+.3f}% (flat until a fresh signal)")
         else:
             # Lowest low / highest high and Moving average trailing: a new level at the candle close
             tr = plan["trail"]
-            if tr["on"] and tr["type"] in (hub.TRAIL_LLHH, hub.TRAIL_MA, hub.TRAIL_CANDLE):
+            if tr["on"] and tr["type"] in (hub.TRAIL_LLHH, hub.TRAIL_MA, hub.TRAIL_CANDLE, hub.TRAIL_SUP):
                 if tr["type"] == hub.TRAIL_LLHH:
                     cand = snap.trail_low if d == "LONG" else snap.trail_high
+                elif tr["type"] == hub.TRAIL_SUP:
+                    cand = getattr(snap, "sup_line", float("nan"))
                 elif tr["type"] == hub.TRAIL_CANDLE:
                     cand = hub.candle_trail_level(d, snap.low, snap.high, book.get("tc_dist"))
+                    if (hub.candle_start_profit(plan) and book["levels"].get("ts") is None
+                            and not hub.candle_armed(d, snap.close, book.get("tc_arm"))):
+                        cand = None         # "Only once in profit": no candle has closed far enough yet
                 else:
                     cand = snap.ma1 if tr["ma"] == "MA 1" else snap.ma2
                 lv = book["levels"]
@@ -217,13 +246,14 @@ def on_candle(book: dict, snap, plan: dict, *, tick_size: float, last_total, bal
         last = book.get("last_dir_e") or 0
         first_ok = snap.dir_e != 0 and last != 0 and snap.dir_e != last
     block = closing_dir or book.get("reentry_block") or 0
-    if plan.get("allow_reentry"):
+    if plan.get("allow_reentry") and not book.get("reentry_forced"):
         block = 0
         book["reentry_block"] = 0
     reentry_ok = True
     if block:
         if flat and not closing_dir and snap.dir_e != block:
             book["reentry_block"] = 0
+            book["reentry_forced"] = False
         else:
             reentry_ok = snap.dir_e != block
     ws = hub.WaitState(**book["wait"])
@@ -261,6 +291,12 @@ def on_candle(book: dict, snap, plan: dict, *, tick_size: float, last_total, bal
             if plan["trail"]["on"] and plan["trail"]["type"] == hub.TRAIL_CANDLE and ts0 is None:
                 events.append(f"paper {direction}: the Trailing Stop (Signal candle +/- ATR) level could not be "
                               f"worked out (ATR not available yet)")
+            tc_arm = None
+            if ts0 is not None and hub.candle_start_profit(plan):
+                tc_arm = hub.candle_arm_price(direction, close, getattr(snap, "ts_atr", float("nan")), plan)
+                ts0 = None
+            if plan["trail"]["on"] and plan["trail"]["type"] == hub.TRAIL_SUP:
+                ts0 = hub.sup_trail_level(direction, getattr(snap, "sup_line", float("nan")), close)
             tps = []
             if plan["tp"]["on"]:
                 atr = snap.tp_atr
@@ -274,8 +310,11 @@ def on_candle(book: dict, snap, plan: dict, *, tick_size: float, last_total, bal
                         entry=float(close + slip if ready == 1 else close - slip),
                         alloc=float(alloc), lev=float(lev), entry_time=int(snap.open_time), frac=1.0,
                         levels={"ml": ml, "sl": sl, "ts": ts0}, best=float(close), step=step, tps=tps, legs=[],
-                        tc_dist=(float(tc_dist) if ts0 is not None else None),
+                        tc_dist=(float(tc_dist) if ((ts0 is not None or tc_arm is not None) and tc_dist is not None) else None),
+                        tc_arm=(float(tc_arm) if tc_arm is not None else None),
                         first_done=True, bars=0,
+                        sr_origin=(int(getattr(snap, "sr_origin", 0) or 0)
+                                   if getattr(snap, "sr_long" if ready == 1 else "sr_short", False) else 0),
                         be=hub.be_setup(direction, close, getattr(snap, "be_atr", float("nan")), plan))
             first_stop = hub.nearest_level(direction, book["levels"])[1]
             book["current"] = {"direction": direction, "entry_time": int(snap.open_time),

@@ -10,6 +10,7 @@ data/
 *.sqlite3
 *.csv
 *.log
+*.key
 
 # Python
 __pycache__/
@@ -34,6 +35,10 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+
+# Caches & Test outputs
+.ruff_cache/
+.pytest_cache/
 
 # Jupyter Notebook
 .ipynb_checkpoints

@@ -181,7 +181,7 @@ async def set_okx_pair_plan(account_id: str, symbol: str, body: PlanBody):
     from app.api import _refuse_if_frozen
     _refuse_if_frozen(acc.pairs[symbol], symbol, "editing the strategy plan")
     try:
-        return await hub_api.apply_plan(okx_store, okx_manager, account_id, symbol, body.plan, platform="okx")
+        return await hub_api.apply_plan(okx_store, okx_manager, account_id, symbol, body.plan, platform="okx", amend=getattr(body, "amend", None))
     except hub_api.PlanRefused as e:
         raise HTTPException(400, str(e))
 

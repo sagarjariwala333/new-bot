@@ -125,5 +125,19 @@ class TestOKXStartAllEnabledIsolation(unittest.IsolatedAsyncioTestCase):
         self.assertIn(_key(self.acc.id, "BBB-USDT-SWAP"), self.manager.startup_failures)
 
 
+    async def test_a_shadow_only_pair_that_fails_to_start_does_not_stop_the_others(self):
+        # audit 2026-11-06: same undefined-name bug as the Binance manager (label in the error line)
+        self.store.set_pair_enabled(self.acc.id, "AAA-USDT-SWAP", False)
+        self.store.get_account(self.acc.id).pairs["AAA-USDT-SWAP"].plan = {"shadow": {"on": True}}
+
+        async def failing_shadow(account_id, symbol):
+            raise RuntimeError("simulated shadow start failure")
+
+        self.manager.start_shadow_only = failing_shadow
+        await self.manager.start_all_enabled()          # must not raise
+        self.assertIn(_key(self.acc.id, "BBB-USDT-SWAP"), self.manager.instances)
+        self.assertIn(_key(self.acc.id, "CCC-USDT-SWAP"), self.manager.instances)
+
+
 if __name__ == "__main__":
     unittest.main()
