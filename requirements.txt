@@ -1,9 +1,12 @@
-fastapi==0.115.0
-starlette
-uvicorn[standard]==0.30.6
-aiohttp==3.10.5
-pandas>=2.2.2
-numpy>=1.26.4
+# v1.3-LIBS: ONLY the web / connection libraries are upgraded (security fixes). Strategy and app code are unchanged.
+# These are minimum versions, not exact pins, so pip picks a mutually compatible set. If it cannot, the install
+# fails loudly (nothing trades). After testnet passes, run `pip freeze` and keep the exact versions that worked.
+fastapi>=0.115.0
+starlette>=1.3.1
+uvicorn[standard]>=0.30.6
+aiohttp>=3.14.1
+pandas==2.2.2
+numpy==1.26.4
 python-dotenv==1.0.1
 cryptography==43.0.1
-pydantic==2.9.2
+pydantic>=2.9.2

@@ -13,8 +13,11 @@ the open real trade's Stop Loss, Trailing Stop, Max loss and take-profit levels 
 
 from __future__ import annotations
 
+import math
+
 from app import hub_state, ledger
 from app import shadow_book
+from app import strategy_hub as hub
 
 TF_MS = {
     "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000,
@@ -114,11 +117,77 @@ def _levels(hs) -> list[dict]:
     return out
 
 
+SR_USED_BY = {
+    "support": {"bounce_long": "Bounce long entry", "brk_short": "Breakout short entry",
+                "bx_break": "Exit for longs: range breaks", "bx_other": "Exit for shorts: other end of the range",
+                "stop_zone_on": "Stop for longs"},
+    "resistance": {"bounce_short": "Bounce short entry", "brk_long": "Breakout long entry",
+                   "bx_break": "Exit for shorts: range breaks", "bx_other": "Exit for longs: other end of the range",
+                   "stop_zone_on": "Stop for shorts"},
+}
+
+
+def sr_payload(frame, plan: dict, candle_times: list[int]) -> dict:
+    """What the Chart tab draws for Support / Resistance: one value per shown candle for each line (top, bottom,
+    2nd top / bottom, middle, locked level), the entry signals, and the table of the levels now. Read-only."""
+    sr = hub.sr_cfg(plan)
+    if not sr or frame is None:
+        return {"on": False}
+    times = frame["open_time"].astype("int64").tolist()
+    pos = {t: i for i, t in enumerate(times)}
+
+    def series(col):
+        vals = frame[col].tolist()
+        out = []
+        for t in candle_times:
+            i = pos.get(int(t))
+            v = vals[i] if i is not None else None
+            out.append(None if v is None or not math.isfinite(v) else float(v))
+        return out
+
+    lines = {k: series("sr_" + k) for k in ("s1", "r1", "s2", "r2", "mid", "lock")}
+    marks = []
+    t0 = candle_times[0] if candle_times else 0
+    for i in frame.index[(frame["sr_long"] | frame["sr_short"])]:
+        t = int(times[i])
+        if t < t0:
+            continue
+        marks.append({"t": t, "dir": "LONG" if bool(frame["sr_long"].iat[i]) else "SHORT",
+                      "origin": {1: "Bounce", 2: "Breakout", 3: "Retest"}.get(int(frame["sr_origin"].iat[i]), ""),
+                      "price": float(frame["close"].iat[i])})
+    rows = []
+    for r in frame.attrs.get("sr_levels", []):
+        row = dict(r)
+        f = row.pop("formed", None)
+        row["formed_t"] = int(times[f]) if f is not None and 0 <= f < len(times) else None
+        side = row["side"]
+        if row["src"] == "lock":
+            used = ["Retest long entry" if side == "support" else "Retest short entry"]
+            status = "Waiting for the retest" + (" - new entries wait" if row.get("blocking") else "")
+        else:
+            used = []
+            if row["nearest"]:
+                used = [txt for key, txt in SR_USED_BY[side].items() if sr.get(key)]
+            status = ("Nearest " if row["nearest"] else "Next ") + side
+            if not used:
+                used = ["Shown only"]
+        row["used_by"] = used
+        row["status"] = status
+        rows.append(row)
+    return {"on": True, "lines": lines, "markers": marks, "table": rows,
+            "entry_ticked": hub.sr_entry_ticked(sr)}
+
+
 async def chart_data(platform: str, account_id: str, symbol: str, limit: int = 300) -> dict:
     limit = max(10, min(int(limit or 300), MAX_CANDLES))
     pc, client, owns = _pair_and_client(platform, account_id, symbol)
+    plan_for_sr = getattr(pc, "plan", None) or {}
+    sr_on = bool((plan_for_sr.get("sr") or {}).get("on"))
+    raw_sr = None
     try:
         raw = await client.get_klines(symbol, pc.timeframe, limit=limit)
+        if sr_on:         # the same history the bot uses, so the lines are the ones it trades
+            raw_sr = await client.get_klines(symbol, pc.timeframe, limit=hub.HUB_HISTORY_CANDLES + 1)
     finally:
         if owns:
             try:
@@ -137,9 +206,22 @@ async def chart_data(platform: str, account_id: str, symbol: str, limit: int = 3
     hs = hub_state.load(platform, account_id, symbol)
     book = hs.shadow_book
     plan = getattr(pc, "plan", None) or {}
+    sr_out = {"on": False}
+    if sr_on:
+        try:
+            import pandas as pd
+            df = pd.DataFrame(raw_sr, columns=["open_time", "open", "high", "low", "close", "volume", "close_time",
+                                               "qav", "trades", "tbbav", "tbqav", "ignore"])
+            for col in ["open", "high", "low", "close", "volume"]:
+                df[col] = df[col].astype(float)
+            df["open_time"] = df["open_time"].astype("int64")
+            frame = hub.compute_hub(df.iloc[:-1].reset_index(drop=True), plan_for_sr)   # closed candles only
+            sr_out = sr_payload(frame, hub.complete_plan(plan_for_sr), [c["t"] for c in candles])
+        except Exception as e:           # a half-saved plan must not break the chart
+            sr_out = {"on": True, "error": str(e)}
     return {
         "platform": platform, "symbol": symbol, "timeframe": pc.timeframe, "candle_ms": tf_ms,
-        "candles": candles,
+        "candles": candles, "sr": sr_out,
         "real_markers": _real_markers(account_id, symbol, t_from),
         "shadow_markers": _shadow_markers(book, t_from),
         "levels": _levels(hs),

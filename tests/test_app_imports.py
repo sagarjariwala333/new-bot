@@ -169,5 +169,39 @@ class TestAppModulesImportCleanly(unittest.TestCase):
         self.assertTrue(all(found.values()), f"missing routes: {[k for k, v in found.items() if not v]}")
 
 
+class TestForgotPasswordSendsTheEmail(unittest.TestCase):
+    """audit 2026-11-06: the email text used AuthStore, which api/__init__.py never imported, so a right username with
+    SMTP set up raised NameError (server error, no email, and it showed which usernames exist)."""
+
+    def _run(self, username):
+        import asyncio
+        from app.auth import auth_store
+        from app.email_notifier import email_notifier
+        sent = []
+
+        async def fake_send(subject, body, *a, **k):
+            sent.append((subject, body))
+
+        auth_store._last_reset_request_at = 0.0
+        with mock.patch.object(email_notifier, "send", fake_send), \
+                mock.patch.object(type(email_notifier), "configured", new=True, create=True):
+            res = asyncio.run(app.api.forgot_password(app.api.ForgotPasswordRequest(username=username)))
+        return res, sent
+
+    def test_right_username_gets_the_email_with_the_minutes(self):
+        from app.auth import auth_store
+        res, sent = self._run(auth_store._record.username)
+        self.assertTrue(res["ok"])
+        self.assertEqual(len(sent), 1)
+        self.assertIn("expires in 30 minutes", sent[0][1])
+
+    def test_wrong_username_gets_the_same_reply_and_no_email(self):
+        from app.auth import auth_store
+        good, _ = self._run(auth_store._record.username)
+        res, sent = self._run("no-such-user")
+        self.assertEqual(res, good)
+        self.assertEqual(sent, [])
+
+
 if __name__ == "__main__":
     unittest.main()

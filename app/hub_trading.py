@@ -154,7 +154,8 @@ class HubMixin:
         on the same side while that entry signal is still on. The block ends once the entry signal has ended
         (gone off or turned to the other side); then a new signal on that side may enter again. The other side
         is never blocked. A flip with "Reverse" opens the opposite side, so it is not affected."""
-        if plan.get("allow_reentry"):
+        forced = bool(getattr(self.hub, "reentry_forced", False))    # "Exit when": wait for a fresh signal
+        if plan.get("allow_reentry") and not forced:
             if self.hub.reentry_block:
                 self.hub.reentry_block = 0
                 hub_state.save(self.hub)
@@ -166,6 +167,7 @@ class HubMixin:
             self._log(f"Mid-trend re-entry block on {'LONG' if block == 1 else 'SHORT'} ended "
                       f"(the entry signal is now {('LONG' if snap.dir_e == 1 else 'SHORT') if snap.dir_e else 'off'}).")
             self.hub.reentry_block = 0
+            self.hub.reentry_forced = False
             hub_state.save(self.hub)
             return True
         return snap.dir_e != block
@@ -290,6 +292,29 @@ class HubMixin:
                           f"check the rules, then {'open the opposite' if reverse else 'stay flat (close only)'}.")
             else:
                 self.state.last_decision = f"IN {direction} - no flip signal"
+            # EXIT WHEN (optional): the MA(s) curve against the trade at this candle close. A flip that fires on the
+            # same candle is done first (it already closes the trade).
+            if decision != "FLIP" and hub.exit_decision(direction, snap, plan) == "EXIT":
+                if hub.exit_after(plan) == hub.EXIT_FLIP:
+                    flipped_to = -1 if direction == "LONG" else 1
+                    self.state.last_decision = f"EXIT WHEN {direction} - closing now, then the other side"
+                    self._log(f"Exit when: the MA(s) curve against the {direction} on the candle close - CLOSE, then "
+                              f"FLAT, then check the rules, then open the opposite.")
+                else:
+                    self.state.last_decision = f"EXIT WHEN {direction} - closing now, then flat until a fresh signal"
+                    self._log(f"Exit when: the MA(s) curve against the {direction} on the candle close - CLOSE and stay "
+                              f"flat until a fresh entry signal.")
+                    await self._close_position(reason="exit_when")
+                    return
+            # SUPPORT / RESISTANCE exits (optional): the close of this candle meets a ticked exit. Always "close and wait
+            # for a fresh signal". A flip or Exit when that fires on the same candle is done first.
+            if decision != "FLIP" and flipped_to == 0 and hub.sr_exit_decision(
+                    direction, snap, plan, int(getattr(self.hub, "sr_origin", 0) or 0)) == "EXIT":
+                self.state.last_decision = f"SR EXIT {direction} - closing now, then flat until a fresh signal"
+                self._log(f"Support / Resistance exit: the candle close meets a ticked exit - CLOSE the {direction} and "
+                          f"stay flat until a fresh entry signal.")
+                await self._close_position(reason="sr_exit")
+                return
         elif in_position:
             return   # a position is open but the bot is not in the normal IN_POSITION state (closing / unprotected)
 
@@ -572,6 +597,7 @@ class HubMixin:
             if size_kind != "single":
                 by = (self._plan["sizing"].get("counter") or {}).get("by", hub.CT_EMA)
                 why = (f"chart close {snap.c_close} vs sizing EMA {snap.size_ema:.2f}" if by == hub.CT_EMA
+                       else "decided by the Bollinger half (the middle line)" if by == "bb"
                        else f"decided by {hub.BLOCK_TITLES.get(by, by)}")
                 self._log(f"Entry size: {size_kind.upper()} trade ({why}) -> {alloc}% at {lev:g}x.")
             raw_qty = strat.position_qty(available_balance, alloc, lev, snap.close)
@@ -740,6 +766,9 @@ class HubMixin:
         self._topup_alerted = False
         self._persist_trade_state()
         self.hub.ladder = ladder
+        # Support / Resistance: how this trade was entered, so "Support / Resistance trades only" exits know the rule
+        sr_side = bool(getattr(snap, "sr_long" if direction == "LONG" else "sr_short", False))
+        self.hub.sr_origin = int(getattr(snap, "sr_origin", 0) or 0) if sr_side else 0
         hub_state.save(self.hub)
 
         if requested_stop is None:
@@ -958,11 +987,11 @@ class HubMixin:
         await self._hub_manage_tp()
 
     # ------------------------------------------------------------------ TAKE PROFIT (one level at a time, remembered)
-    async def _hub_manage_tp(self) -> None:
+    async def _hub_manage_tp(self, _from_amend: bool = False) -> None:
         """Every tick while in a position: record what filled, and only when the placed level is DONE place
         the next one (TP1, then TP2, then TP3). The memory is saved to disk after every change."""
         tp = self.hub.tp
-        if not tp or self.state.status != "IN_POSITION":
+        if not tp or self.state.status != "IN_POSITION" or (getattr(self, "_hub_amending", False) and not _from_amend):
             return
         await self._hub_sync_tp_fills()
         levels = tp["levels"]
@@ -1209,7 +1238,7 @@ class HubMixin:
     # if the live price goes THROUGH one of them while the trade is still open, the bot closes at market.
     def _hub_any_stop(self) -> bool:
         p = self._plan
-        return bool(p["sizing"]["stop_on"] or p["sl"]["on"] or p["trail"]["on"])
+        return bool(p["sizing"]["stop_on"] or p["sl"]["on"] or p["trail"]["on"] or hub.sr_stop_on(p))
 
     def _hub_new_ladder(self, direction: str, entry_price: float, qty: float, leverage, available_balance: float,
                         snap) -> dict:
@@ -1225,7 +1254,15 @@ class HubMixin:
             self._log("Break-Even After ATR: the ATR is not available yet - only After TP (if ticked) can move it.")
         # Trailing Stop "Signal candle high / low +/- ATR" (2026-10-28): the first level is set at the entry from the
         # signal candle; the distance (ATR of the signal candle) is kept for the whole trade.
-        ts, tc_dist = None, None
+        ts, tc_dist, tc_arm = None, None, None
+        if p["trail"]["on"] and p["trail"]["type"] == hub.TRAIL_SUP:
+            # Trailing Stop "Supertrend line": the line of the signal candle, if it is on the protective side
+            ts = hub.sup_trail_level(direction, getattr(snap, "sup_line", float("nan")), entry_price)
+            if ts is None:
+                self._log("Trailing Stop (Supertrend line): the line is on the wrong side of the entry price (or not "
+                          "worked out yet) - it takes charge at a later candle close.")
+            else:
+                self._log(f"Trailing Stop (Supertrend line): first level {ts:.8g}.")
         if p["trail"]["on"] and p["trail"]["type"] == hub.TRAIL_CANDLE:
             tc_dist = hub.candle_trail_distance(p, entry_price, getattr(snap, "ts_atr", float("nan")))
             ts = hub.candle_trail_level(direction, snap.low, snap.high, tc_dist)
@@ -1233,6 +1270,16 @@ class HubMixin:
                 tc_dist = None
                 self._log("Trailing Stop (Signal candle +/- ATR) is ON but its level cannot be worked out (ATR not "
                           "available yet) - no trailing for this trade.")
+            elif hub.candle_start_profit(p):
+                # "Only once in profit": no level at the entry; it may take charge after a candle closes far enough
+                tc_arm = hub.candle_arm_price(direction, entry_price, getattr(snap, "ts_atr", float("nan")), p)
+                ts = None
+                if tc_arm is None:
+                    self._log("Trailing Stop (Signal candle +/- ATR, only once in profit): the profit distance cannot "
+                              "be worked out (ATR not available yet) - no trailing for this trade.")
+                else:
+                    self._log(f"Trailing Stop (Signal candle +/- ATR) waits: it may take charge after a candle closes "
+                              f"at {tc_arm:.8g} or better.")
             else:
                 self._log(f"Trailing Stop (Signal candle +/- ATR): first level {ts:.8g} "
                           f"(signal candle {'low' if direction == 'LONG' else 'high'} "
@@ -1241,6 +1288,8 @@ class HubMixin:
                "best": float(entry_price), "step": step, "ex": None, "be": be}
         if tc_dist is not None:
             lad["tc_dist"] = float(tc_dist)
+        if tc_arm is not None:
+            lad["tc_arm"] = float(tc_arm)
         return lad
 
     def _hub_ladder_ensure(self) -> dict | None:
@@ -1322,6 +1371,8 @@ class HubMixin:
         Returns True if it closed (or started closing) the trade."""
         if not self._is_hub() or self.state.status != "IN_POSITION" or not self.state.direction:
             return False
+        if getattr(self, "_hub_amending", False):
+            return False          # the owner's change of the open trade is being applied (a second or two)
         lad = self._hub_ladder_ensure()
         if lad is None:
             return False
@@ -1533,6 +1584,293 @@ class HubMixin:
         hub_state.save(self.hub)
         self._persist_trade_state()
 
+    # ------------------------------------------------------------------ CHANGE AN OPEN TRADE (owner 2026-11-05)
+    async def _hub_entry_snapshot(self, plan: dict):
+        """The snapshot of the SIGNAL candle of the open trade, worked out with PLAN (so a changed ATR length is
+        used). Pure read: unlike _hub_fetch it changes nothing on the bot. None when the candle cannot be found."""
+        t0 = self.state.entry_candle_time
+        if t0 is None:
+            return None
+        raw = await self.client.get_klines(self.symbol, self.pc.timeframe, limit=hub.HUB_HISTORY_CANDLES + 1)
+        df = pd.DataFrame(raw, columns=[
+            "open_time", "open", "high", "low", "close", "volume", "close_time",
+            "qav", "trades", "tbbav", "tbqav", "ignore",
+        ])
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = df[col].astype(float)
+        df["open_time"] = df["open_time"].astype("int64")
+        closed = df.iloc[:-1].reset_index(drop=True)
+        if len(closed) < HUB_MIN_BARS:
+            return None
+        frame = hub.compute_hub(closed, plan)
+        idx = frame.index[frame["open_time"] == int(t0)]
+        if not len(idx):
+            return None
+        return hub.hub_snapshot_at(frame, int(idx[0]))
+
+    async def hub_amend_open_trade(self, new_plan: dict, stops: str) -> dict:
+        """See _hub_amend_open_trade_inner. While it runs, the bot's own take-profit placing and memory-level watch
+        wait (a second or two), so they never work on half-changed levels."""
+        if getattr(self, "_hub_amending", False):
+            raise RuntimeError("A change of the open trade is already being applied.")
+        self._hub_amending = True
+        try:
+            return await self._hub_amend_open_trade_inner(new_plan, stops)
+        finally:
+            self._hub_amending = False
+
+    async def _hub_amend_open_trade_inner(self, new_plan: dict, stops: str) -> dict:
+        """Apply the allowed settings of NEW_PLAN (hub.AMEND_PATHS) to the trade that is open now.
+        stops: "tighter" = a stop level changes only if the new one protects MORE (a stop is never removed or moved
+        away); "looser" = the new levels are used as they are, also when they protect less. The new levels are
+        worked out as if the new setting had been on at the entry (signal candle, entry price, entry amount).
+        Everything else in NEW_PLAN waits for the next trade. Returns {"applied": [...], "kept": [...], "waits": bool}.
+        Raises RuntimeError when there is no open trade."""
+        if stops not in (hub.AMEND_TIGHTER, hub.AMEND_LOOSER):
+            raise ValueError("stops must be 'tighter' or 'looser'")
+        if (not self._is_hub() or self.state.status != "IN_POSITION" or not self.state.direction
+                or not self.state.entry_price):
+            raise RuntimeError("There is no open trade to change.")
+        res = {"applied": [], "kept": [], "waits": False}
+        applied, kept = res["applied"], res["kept"]
+        diff = hub.amend_diff(self._plan, new_plan)
+        res["waits"] = bool(diff["waits"])
+        groups = diff["now"]
+        if not groups:
+            return res
+        merged = hub.amend_merge(self._plan, new_plan)
+        lad = self._hub_ladder_ensure()
+        if lad is None:
+            raise RuntimeError("There is no open trade to change.")
+        d, entry = lad["direction"], float(lad["entry"])
+        qty = float(self.state.bot_qty or self.state.qty or 0)
+        nan = float("nan")
+        looser = stops == hub.AMEND_LOOSER
+
+        snap = None
+        if any(g in groups for g in ("Trailing Stop", "Stop Loss", "Break-Even", "Take profit")):
+            try:
+                snap = await self._hub_entry_snapshot(merged)
+            except Exception as e:
+                self._log(f"Change open trade: the signal candle could not be read ({e}).")
+            if snap is None:
+                self._log("Change open trade: the signal candle is not available - settings that need it (ATR, "
+                          "candle high / low) cannot be worked out and stay as they are.")
+
+        def val(name):
+            return getattr(snap, name, nan) if snap is not None else nan
+
+        def adopt(key: str, label: str, new_lvl, wanted: bool) -> None:
+            old_lvl = lad.get(key)
+            if not wanted:
+                if old_lvl is None:
+                    return
+                if looser:
+                    lad[key] = None
+                    applied.append(f"{label}: turned off - its level {old_lvl:.8g} is removed.")
+                else:
+                    kept.append(f"{label}: turned off in the new rules, but the open trade keeps its level "
+                                f"{old_lvl:.8g} (\"Only tighter\" never takes a stop away).")
+                return
+            if new_lvl is None or not math.isfinite(new_lvl):
+                kept.append(f"{label}: the new level cannot be worked out now - the open trade keeps "
+                            f"{('%.8g' % old_lvl) if old_lvl is not None else 'none'}.")
+                return
+            new_lvl = float(new_lvl)
+            if old_lvl is not None and abs(new_lvl - old_lvl) <= 1e-12 * max(1.0, abs(new_lvl)):
+                return
+            if old_lvl is None or looser or hub.is_tighter(d, new_lvl, old_lvl):
+                lad[key] = new_lvl
+                applied.append(f"{label}: now {new_lvl:.8g}" + (f" (was {old_lvl:.8g})." if old_lvl is not None else "."))
+            else:
+                kept.append(f"{label}: the new level {new_lvl:.8g} protects less than the current {old_lvl:.8g} - "
+                            f"kept the current one (choose \"Allow looser too\" to use the new one).")
+
+        # --- Max Loss per Trade
+        if "Max Loss per Trade" in groups:
+            ml_new = None
+            if merged["sizing"]["stop_on"]:
+                try:
+                    bal = self.state.equity_at_entry
+                    if not bal:
+                        bal = await self.client.get_available_balance()
+                        self._log(f"Change open trade: no saved balance-at-entry - Max Loss worked out from the "
+                                  f"CURRENT available balance ({bal:.2f}).")
+                    lev = self.state.leverage or merged["sizing"]["leverage"]
+                    margin = qty * entry / float(lev or 1)
+                    loss = hub.max_loss_usd(merged, float(bal), margin)
+                    cand = hub.stop_price_from_usd(d, entry, qty, loss)
+                    ml_new = cand if cand > 0 else None
+                except Exception as e:
+                    self._log(f"Change open trade: Max Loss could not be worked out ({e}).")
+            adopt("ml", "Max Loss per Trade", ml_new, bool(merged["sizing"]["stop_on"]))
+
+        # --- Stop Loss
+        if "Stop Loss" in groups:
+            adopt("sl", "Stop Loss", hub.sl_level(d, entry, val("sl_atr"), merged, snap=snap, qty=qty),
+                  bool(merged["sl"]["on"]))
+
+        # --- Trailing Stop
+        if "Trailing Stop" in groups:
+            tr = merged["trail"]
+            if not tr["on"]:
+                adopt("ts", "Trailing Stop", None, False)
+                if looser:
+                    lad["step"] = None
+                    lad.pop("tc_dist", None)
+            else:
+                ttype = tr["type"]
+                new_step = hub.step_setup(d, entry, val("ts_atr"), merged, lad.get("sl"))
+                if ttype == hub.TRAIL_STEP and new_step is None:
+                    pass                      # cannot be worked out now: the step the trade has stays
+                else:
+                    lad["step"] = new_step
+                tc_dist = hub.candle_trail_distance(merged, entry, val("ts_atr"))
+                if tc_dist is not None:
+                    lad["tc_dist"] = float(tc_dist)
+                elif ttype != hub.TRAIL_CANDLE:
+                    lad.pop("tc_dist", None)
+                arm = hub.candle_arm_price(d, entry, val("ts_atr"), merged)
+                profit_wait = hub.candle_start_profit(merged)
+                if arm is not None:
+                    lad["tc_arm"] = float(arm)
+                else:
+                    lad.pop("tc_arm", None)
+                ts_init = None
+                if ttype == hub.TRAIL_CANDLE and tc_dist is not None and snap is not None:
+                    ts_init = hub.candle_trail_level(d, snap.low, snap.high, tc_dist)
+                elif ttype == hub.TRAIL_SUP and snap is not None:
+                    ts_init = hub.sup_trail_level(d, val("sup_line"), entry)
+                elif ttype == hub.TRAIL_STEP and lad["step"]:
+                    st = lad["step"]
+                    ts_init = hub.step_level(d, entry, st["start"], st["gap"], lad.get("best", entry),
+                                             st.get("begin"), st.get("first"))
+                if profit_wait and arm is None:
+                    kept.append("Trailing Stop (only once in profit): the profit distance cannot be worked out now - "
+                                "the current level stays.")
+                elif profit_wait:
+                    if looser and lad.get("ts") is not None:
+                        lad["ts"] = None
+                    applied.append(f"Trailing Stop: it may take charge once a candle closes at {arm:.8g} or better.")
+                elif ttype in (hub.TRAIL_LLHH, hub.TRAIL_MA):
+                    # its first level comes at the next candle close
+                    if looser and lad.get("ts") is not None:
+                        lad["ts"] = None
+                        applied.append(f"Trailing Stop: the old level is removed - the new {ttype} trailing takes "
+                                       f"charge at the next candle close.")
+                    else:
+                        applied.append(f"Trailing Stop: the new {ttype} rule starts at the next candle close.")
+                elif ts_init is None:
+                    kept.append("Trailing Stop: its first level cannot be worked out now - the new rule starts at the "
+                                "next candle close; the current level stays until then.")
+                    if ttype == hub.TRAIL_STEP and new_step is None:
+                        kept.append("Trailing Stop (Step): its start or gap cannot be worked out - the Step the trade "
+                                    "has stays.")
+                else:
+                    adopt("ts", "Trailing Stop", ts_init, True)
+
+        # --- Break-Even
+        if "Break-Even" in groups:
+            old_be = lad.get("be")
+            if not merged["be"]["on"]:
+                if looser:
+                    lad["be"] = None
+                    applied.append("Break-Even: turned off.")
+                elif old_be is not None:
+                    kept.append("Break-Even: turned off in the new rules, but the open trade keeps it.")
+            else:
+                be_new = hub.be_setup(d, entry, val("be_atr"), merged)
+                if be_new is None:
+                    kept.append("Break-Even: cannot be worked out now - kept as it was.")
+                else:
+                    be_new["done"] = bool(old_be and old_be.get("done"))
+                    lad["be"] = be_new
+                    applied.append("Break-Even: updated" + (" (it had already moved the stop)." if be_new["done"] else "."))
+
+        # --- Take profit
+        if "Take profit" in groups:
+            await self._hub_amend_tp(merged, d, entry, qty, snap, res)
+
+        # --- Exit when / Hold rule: read at every candle close from the rules of the open trade
+        if "Exit when" in groups:
+            applied.append("Exit when: updated - it is read at the next candle close.")
+        if "Hold rule ADX level" in groups:
+            applied.append("Hold rule ADX level: updated - it is read at the next candle close.")
+
+        if self.state.status != "IN_POSITION" or self.hub.ladder is not lad:
+            raise RuntimeError("The trade closed (or changed) while the change was being worked out - nothing was "
+                               "changed on it. The new rules start from the next trade.")
+        self._plan = merged
+        self.state.stop_target = lad.get("ml") if lad.get("ml") is not None else self.state.stop_target
+        hub_state.save(self.hub)
+        self._persist_trade_state()
+        self._log("Change open trade (" + ("allow looser" if looser else "only tighter") + "): "
+                  + (" ".join(applied) if applied else "nothing changed.")
+                  + ((" Kept: " + " ".join(kept)) if kept else "") + " " + self._hub_ladder_text())
+        try:
+            await self._hub_sync_exchange_stop(None)
+        except Exception as e:
+            self._log(f"Change open trade: the stop on the exchange could not be updated now ({e}) - it is "
+                      f"tried again at the next check.")
+            kept.append("The stop on the exchange is updated at the next check.")
+        return res
+
+    async def _hub_amend_tp(self, merged: dict, d: str, entry: float, qty: float, snap, res: dict) -> None:
+        """Take profit of the open trade: the levels already FILLED stay; a level that is resting on the exchange is
+        cancelled and the new levels (pending) are placed one at a time as always. Nothing is cancelled unless the
+        new levels can be worked out first."""
+        applied, kept = res["applied"], res["kept"]
+        new_tp = merged["tp"]
+        if not new_tp["on"] and not (self.hub.tp or {}).get("levels"):
+            return                                # was off, stays off: nothing to change
+        try:
+            await self._hub_sync_tp_fills()
+        except Exception as e:
+            kept.append(f"Take profit: could not check the fills ({e}) - kept as it was.")
+            return
+        mem = self.hub.tp
+        old_levels = (mem or {}).get("levels") or []
+        filled = {l["index"] for l in old_levels if l.get("state") == "filled"}
+        new_levels = []
+        if new_tp["on"]:
+            atr = getattr(snap, "tp_atr", float("nan")) if snap is not None else float("nan")
+            if new_tp.get("basis", hub.BASIS_ATR) == hub.BASIS_ATR and (not math.isfinite(atr) or atr <= 0):
+                kept.append("Take profit: the ATR of the signal candle is not available - kept as it was.")
+                return
+            close = getattr(snap, "close", entry) if snap is not None else entry
+            base = hub.tp_base_price(merged, entry, close)
+            for lv in hub.tp_prices(d, base, atr, merged):
+                if lv["index"] in filled:
+                    continue
+                new_levels.append({"index": lv["index"], "on": bool(lv["on"]), "price": float(lv["price"]),
+                                   "pct": float(lv["pct"]), "state": "pending" if lv["on"] else "off",
+                                   "order_id": None, "qty": None, "recorded_qty": 0.0, "attempts": 0})
+        # cancel the level that rests on the exchange
+        for l in old_levels:
+            if l.get("state") == "placed" and l.get("order_id"):
+                try:
+                    await self.client.cancel_regular_order(self.symbol, l["order_id"])
+                except Exception as e:
+                    await self._hub_sync_tp_fills()       # maybe it filled in the meantime
+                    if l.get("state") == "placed":
+                        kept.append(f"Take profit: TP{l['index']} could not be cancelled ({e}) - Take profit kept as "
+                                    f"it was.")
+                        return
+        keep_filled = [l for l in old_levels if l.get("state") == "filled"]
+        if mem is None:
+            mem = {"direction": d, "entry_price": float(entry), "qty0": float(qty), "levels": []}
+        mem["levels"] = sorted(keep_filled + new_levels, key=lambda x: x["index"])
+        self.hub.tp = mem if (new_levels or keep_filled) else None
+        hub_state.save(self.hub)
+        if new_tp["on"]:
+            applied.append("Take profit: updated - " + (", ".join(
+                f"TP{l['index']} {l['price']:.6g} ({l['pct']:g}%)" for l in new_levels if l["on"]) or "no new level")
+                + (f"; TP{'/TP'.join(str(i) for i in sorted(filled))} already filled stay." if filled else "."))
+            await self._hub_manage_tp(_from_amend=True)
+        else:
+            applied.append("Take profit: turned off - the waiting levels are cancelled"
+                           + (" (filled ones stay)." if filled else "."))
+
     async def _hub_trail(self, snap) -> bool:
         """Candle close: the Lowest low / highest high and the Moving average Trailing Stop get their new level here
         (the Step type moves live in _hub_ladder_check). The level takes charge only when it is tighter than the
@@ -1546,12 +1884,17 @@ class HubMixin:
         d = lad["direction"]
         t = plan["trail"]["type"]
         mark = None
-        if t in (hub.TRAIL_LLHH, hub.TRAIL_MA, hub.TRAIL_CANDLE):
+        if t in (hub.TRAIL_LLHH, hub.TRAIL_MA, hub.TRAIL_CANDLE, hub.TRAIL_SUP):
             if t == hub.TRAIL_LLHH:
                 cand = snap.trail_low if d == "LONG" else snap.trail_high
+            elif t == hub.TRAIL_SUP:
+                cand = getattr(snap, "sup_line", float("nan"))      # the Supertrend line of the candle that just closed
             elif t == hub.TRAIL_CANDLE:
                 # the candle that just closed, with the distance fixed at the signal candle
                 cand = hub.candle_trail_level(d, snap.low, snap.high, lad.get("tc_dist"))
+                if (hub.candle_start_profit(plan) and lad.get("ts") is None
+                        and not hub.candle_armed(d, snap.close, lad.get("tc_arm"))):
+                    cand = None             # "Only once in profit": no candle has closed far enough yet
             else:
                 cand = snap.ma1 if plan["trail"]["ma"] == "MA 1" else snap.ma2
             if cand is not None and math.isfinite(cand):
@@ -1572,7 +1915,8 @@ class HubMixin:
                         self._log(f"Trailing level {cand} is already crossed by the price (mark {mark}) - closing now.")
                         await self._close_position(reason="trailing_stop")
                         return True
-                    # Moving average on the wrong side of the price: it does not take over (the stop in charge stays).
+                    # Moving average / Supertrend line on the wrong side of the price: it does not take over (the stop in
+                    # charge stays).
         return await self._hub_ladder_check(mark)
 
     async def _hub_cancel_stop_child(self) -> None:

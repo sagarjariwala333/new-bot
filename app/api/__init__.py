@@ -13,7 +13,7 @@ from app.api.schemas import (
     AccountCreate, AccountUpdate, PairCreate, PairUpdate,
     LoginRequest, ChangePasswordRequest, ForgotPasswordRequest, ResetPasswordRequest,
     WalkForwardRequest, MonteCarloRequest, PlanBody, LibrarySave, LossLimitsSave,
-    DefaultSettingsSave, AlertEmailSave, LiveTradingSwitch,
+    DefaultSettingsSave, AlertEmailSave, LiveTradingSwitch, MenuLayoutBody,
 )
 from app import default_settings as ds
 from app.store import store, PairConfig
@@ -31,6 +31,7 @@ from app.instance import _params_from_pair
 from app import hub_api
 from app import chart_api
 from app import strategy_library
+from app import hub_menu_layout
 from app import loss_limits
 from app import global_control
 
@@ -107,7 +108,7 @@ async def forgot_password(body: ForgotPasswordRequest):
         "Trade-Bot - Password Reset",
         f"A password reset was requested for your Trade-Bot dashboard.\n\n"
         f"Reset code: {token}\n\n"
-        f"This code expires in {AuthStore.RESET_TOKEN_TTL_SECONDS // 60} minutes and can "
+        f"This code expires in {auth_store.RESET_TOKEN_TTL_SECONDS // 60} minutes and can "
         f"only be used once.\n\n"
         f"If you didn't request this, ignore this email - your password has not been changed.",
     )
@@ -408,7 +409,7 @@ async def set_pair_plan(account_id: str, symbol: str, body: PlanBody):
         raise HTTPException(404, "pair not found")
     _refuse_if_frozen(acc.pairs[symbol], symbol, "editing the strategy plan")
     try:
-        return await hub_api.apply_plan(store, manager, account_id, symbol, body.plan)
+        return await hub_api.apply_plan(store, manager, account_id, symbol, body.plan, amend=getattr(body, "amend", None))
     except hub_api.PlanRefused as e:
         raise HTTPException(400, str(e))
 
@@ -424,6 +425,20 @@ async def remove_pair_plan(account_id: str, symbol: str):
         return await hub_api.remove_plan(store, manager, account_id, symbol, "binance")
     except hub_api.PlanRefused as e:
         raise HTTPException(409, str(e))
+
+
+# ---------------------------------------------------------------- Strategy Hub menu look (2026-11-05)
+@router.get("/hub-menu", dependencies=[auth_dep])
+def get_hub_menu():
+    return hub_menu_layout.load()
+
+
+@router.put("/hub-menu", dependencies=mutating_deps)
+def put_hub_menu(body: MenuLayoutBody):
+    try:
+        return hub_menu_layout.save(body.model_dump())
+    except hub_menu_layout.MenuLayoutError as e:
+        raise HTTPException(400, str(e))
 
 
 # ---------------------------------------------------------------- strategy library (2026-10-24)

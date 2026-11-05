@@ -1,6 +1,6 @@
 //@version=6
 // =====================================================================================================================
-// STRATEGY HUB - BLANK  (same 14 tabs as the Hub, 1-14)
+// STRATEGY HUB - BLANK  (same 15 tabs as the Hub, 1-15)
 // Every tick box starts OFF. Pine cannot leave a number box empty, so each number starts at its lowest allowed value
 // (0 or 1). Fill in what you use. The owner defaults are kept: Hold rule ON with ADX 25, Candles Wait 0, Fresh
 // Reversal on First Trade ON, No Mid-Trend Re-entry ON, the 3 flip Yes / No boxes Yes.
@@ -27,7 +27,7 @@ renkoLen  = input.int(1, "Renko brick = ATR length", minval = 1, group = G2)
 // 3. INDICATORS   (ENTRY / FLIP / CTREND ticks + each indicator's numbers and condition ticks)
 // ---------------------------------------------------------------------------------------------------------------------
 G3  = "3. Indicators"
-BLK = ["None", "Candle colour", "MA 1", "MA 2", "MA Crossover", "ADX / DI", "Choppiness (CI)", "RSI", "MACD", "Volume", "ATR", "Structure break"]
+BLK = ["None", "Candle colour", "MA 1", "MA 2", "MA Crossover", "ADX / DI", "Choppiness (CI)", "RSI", "MACD", "Volume", "ATR", "Structure break", "Bollinger Bands", "Supertrend", "EMA Band", "Parabolic SAR"]
 mainEntry = input.string("None", "Main for ENTRY", options = BLK, group = G3)
 mainFlip  = input.string("None", "Main for FLIP (only when Flip: Same as entry = No)", options = BLK, group = G3)
 
@@ -36,6 +36,7 @@ cdE  = input.bool(false, "ENTRY", inline = "cd", group = G3a)
 cdF  = input.bool(false, "FLIP", inline = "cd", group = G3a)
 cdC  = input.bool(false, "CTREND", inline = "cd", group = G3a)
 cdStrong = input.bool(false, "Strong candle only", group = G3a)
+cdPrev = input.bool(false, "Previous candle was the opposite colour", group = G3a)
 
 G3b = "3. Indicators - MA 1"
 m1E  = input.bool(false, "ENTRY", inline = "m1", group = G3b)
@@ -141,6 +142,41 @@ stF  = input.bool(false, "FLIP", inline = "st", group = G3k)
 stC  = input.bool(false, "CTREND", inline = "st", group = G3k)
 stLen = input.int(1, "Look-back candles", minval = 1, group = G3k)
 
+G3l = "3. Indicators - Bollinger Bands"
+bbE  = input.bool(false, "ENTRY", inline = "bb", group = G3l)
+bbF  = input.bool(false, "FLIP", inline = "bb", group = G3l)
+bbC  = input.bool(false, "CTREND (Bollinger half)", inline = "bb", group = G3l)
+bbLen  = input.int(2, "Length (middle line = simple average of the chart close)", minval = 2, group = G3l)
+bbMult = input.float(0.0001, "Multiplier (x standard deviation)", minval = 0.0001, group = G3l)
+bbN    = input.int(0, "N candles (touch within the last N candles; 0 = the signal candle only)", minval = 0, group = G3l)
+
+G3m = "3. Indicators - Supertrend"
+suE  = input.bool(false, "ENTRY", inline = "su", group = G3m)
+suF  = input.bool(false, "FLIP", inline = "su", group = G3m)
+suTrendOn = input.bool(false, "Trend direction", group = G3m)
+suFlipOn  = input.bool(false, "Fresh flip within N candles", group = G3m)
+suAtrLen  = input.int(1, "ATR length", minval = 1, group = G3m)
+suFactor  = input.float(0.0001, "Factor", minval = 0.0001, group = G3m)
+suN       = input.int(0, "N candles (for the fresh flip)", minval = 0, group = G3m)
+
+G3n = "3. Indicators - EMA Band"
+ebE  = input.bool(false, "ENTRY", inline = "eb", group = G3n)
+ebF  = input.bool(false, "FLIP", inline = "eb", group = G3n)
+ebC  = input.bool(false, "CTREND", inline = "eb", group = G3n)
+ebLen = input.int(1, "EMA length (all three lines: high = top, close = middle, low = bottom)", minval = 1, group = G3n)
+ebN   = input.int(1, "N candles (the close was on the other side of the line within the last N candles; 1 = the candle before)", minval = 1, group = G3n)
+ebLL  = input.bool(false, "Long: close crosses above the bottom line (EMA of low)", group = G3n)
+ebLH  = input.bool(false, "Long: close crosses above the top line (EMA of high)", group = G3n)
+ebSH  = input.bool(false, "Short: close crosses below the top line (EMA of high)", group = G3n)
+ebSL  = input.bool(false, "Short: close crosses below the bottom line (EMA of low)", group = G3n)
+
+G3o = "3. Indicators - Parabolic SAR"
+saE  = input.bool(false, "ENTRY", inline = "sa", group = G3o)
+saF  = input.bool(false, "FLIP", inline = "sa", group = G3o)
+saC  = input.bool(false, "CTREND", inline = "sa", group = G3o)
+saStep = input.float(0.0001, "Step (start and increase)", minval = 0.0001, group = G3o)
+saMax  = input.float(0.0001, "Maximum (same as or larger than the step)", minval = 0.0001, group = G3o)
+
 // ---------------------------------------------------------------------------------------------------------------------
 // 4. INDICATOR COMBINATION
 // ---------------------------------------------------------------------------------------------------------------------
@@ -209,6 +245,8 @@ slVal   = input.float(0.0001, "Value (%)  (% of ATR: 100 = 1 ATR / % of price: 3
 slAtrLen = input.int(1, "ATR length", minval = 1, group = G10)
 slUsd   = input.float(0.01, "Loss (USDT)", minval = 0.01, group = G10)
 slLen   = input.int(1, "N candles (Structure / Chandelier)", minval = 1, group = G10)
+slStruct = input.string("Lowest low / highest high of N candles", "Structure found by", options = ["Lowest low / highest high of N candles", "Real swing point (N candles each side)"], group = G10)
+slPivN  = input.int(1, "Swing point: candles on each side (N) (Structure, real swing point)", minval = 1, group = G10)
 slMa    = input.string("MA 1", "Which MA", options = ["MA 1", "MA 2"], group = G10)
 tsOn    = input.bool(false, "Time stop", group = G10)
 tsN     = input.int(1, "Time stop: N candles", minval = 1, group = G10)
@@ -229,7 +267,7 @@ beAtrLen = input.int(1, "ATR length", minval = 1, group = G11)
 // ---------------------------------------------------------------------------------------------------------------------
 G12 = "12. Trailing Stop"
 trOn    = input.bool(false, "Use Trailing Stop", group = G12)
-trType  = input.string("Step", "Type", options = ["Step", "Lowest low / highest high", "Moving average", "Signal candle high / low +/- ATR"], group = G12)
+trType  = input.string("Step", "Type", options = ["Step", "Lowest low / highest high", "Moving average", "Signal candle high / low +/- ATR", "Supertrend line"], group = G12)
 trBasis = input.string("% of ATR", "Measured on (Step)", options = ["% of ATR", "% of price movement"], group = G12)
 trStart = input.string("Same as Stop Loss", "Start (Step)", options = ["Same as Stop Loss", "Own value", "Begins at a price move"], group = G12)
 trStartVal = input.float(0.0001, "Start value (%)", minval = 0.0001, group = G12)
@@ -240,6 +278,8 @@ trAtrLen = input.int(1, "ATR length", minval = 1, group = G12)
 trLen   = input.int(1, "Look-back candles (Lowest low / highest high)", minval = 1, group = G12)
 trMa    = input.string("MA 1", "Which MA (Moving average)", options = ["MA 1", "MA 2"], group = G12)
 trCVal  = input.float(100.0, "Distance (% of ATR) (Signal candle high / low +/- ATR; 100 = 1 ATR)", minval = 0.0001, group = G12)
+trCStart = input.string("Tighter than the Stop Loss", "Signal candle type: may take charge", options = ["Tighter than the Stop Loss", "Only once in profit"], group = G12)
+trCProfit = input.float(100.0, "Only once in profit: a candle must close this far beyond the entry (% of the signal candle ATR; 100 = 1 ATR)", minval = 0.0001, group = G12)
 
 // ---------------------------------------------------------------------------------------------------------------------
 // 13. TAKE PROFIT   (TP2 after TP1, TP3 after TP2)
@@ -265,6 +305,15 @@ G14 = "14. Shadow mode"
 shOn     = input.bool(false, "Use shadow mode", group = G14)
 shTrades = input.int(1, "Number of trades off", minval = 1, group = G14)
 PAPER = 0.000001      // a paper trade is the same trade at this share of the size (P&L about 0)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 15. EXIT WHEN   (optional; closes the open trade at a candle close when the moving average(s) curve against it:
+//     long = the value after the candle close is LOWER than the one before, short = HIGHER. Uses the MA 1 / MA 2 numbers.)
+// ---------------------------------------------------------------------------------------------------------------------
+G15 = "15. Exit when"
+exOn     = input.bool(false, "Use Exit when", group = G15)
+exSignal = input.string("Both MA 1 and MA 2 curve against the trade", "Signal", options = ["Both MA 1 and MA 2 curve against the trade", "MA 2 only (the slower one) curves against the trade"], group = G15)
+exAfter  = input.string("Close and wait for a fresh signal", "After the close", options = ["Close and wait for a fresh signal", "Close and flip to the other side"], group = G15)
 
 // =====================================================================================================================
 // HELPERS
@@ -332,8 +381,8 @@ cL = chartType == "Heikin Ashi" ? haL : chartType == "Renko" ? math.min(rO, rC) 
 // 3. INDICATORS -> each one says LONG / SHORT
 // =====================================================================================================================
 // Candle colour
-cdL = cC > cO and (not cdStrong or cL >= cO)
-cdS = cC < cO and (not cdStrong or cH <= cO)
+cdL = cC > cO and (not cdStrong or cL >= cO) and (not cdPrev or cC[1] < cO[1])
+cdS = cC < cO and (not cdStrong or cH <= cO) and (not cdPrev or cC[1] > cO[1])
 
 // MA 1 / MA 2 (every ticked condition must agree; none ticked = no signal)
 ma1 = maOf(m1Type, cC, m1Len, m1Off, m1Sig)
@@ -361,6 +410,11 @@ mxXD = within(ta.crossunder(ma1, ma2), mxN)
 mxAny = mxAbove or mxCross
 mxL = mxAny and (not mxAbove or ma1 > ma2) and (not mxCross or mxXU)
 mxS = mxAny and (not mxAbove or ma1 < ma2) and (not mxCross or mxXD)
+
+// Exit when: the MA value after the candle close is against the trade (long: lower than the one before, short: higher)
+exMa2Only = exSignal == "MA 2 only (the slower one) curves against the trade"
+exLong  = exOn and (exMa2Only ? ma2 < ma2[1] : (ma1 < ma1[1] and ma2 < ma2[1]))
+exShort = exOn and (exMa2Only ? ma2 > ma2[1] : (ma1 > ma1[1] and ma2 > ma2[1]))
 
 // ADX / DI (normal candles)
 [diP, diM, adx] = ta.dmi(adDiLen, adSmooth)
@@ -436,6 +490,119 @@ stLL = ta.lowest(cL, stLen)[1]
 stL = cC > stHH
 stS = cC < stLL
 
+// Bollinger Bands (chart candles): the low touches the bottom limit = LONG, the high touches the top limit = SHORT
+bbBasis = ta.sma(cC, bbLen)
+bbDev   = bbMult * ta.stdev(cC, bbLen)
+bbUpper = bbBasis + bbDev
+bbLower = bbBasis - bbDev
+bbL = within(cL <= bbLower, bbN)
+bbS = within(cH >= bbUpper, bbN)
+
+// Supertrend (chart candles, hl2, the hub's own ATR). Pine direction: 1 = down trend, -1 = up trend.
+suAtrV = ta.rma(cTr, suAtrLen)
+suSrc  = (cH + cL) / 2.0
+suUb0  = suSrc + suFactor * suAtrV
+suLb0  = suSrc - suFactor * suAtrV
+var float suLb = na
+var float suUb = na
+var float suLine = na
+float suPlb = nz(suLb[1])
+float suPub = nz(suUb[1])
+suLb := (suLb0 > suPlb or cC[1] < suPlb) ? suLb0 : suPlb
+suUb := (suUb0 < suPub or cC[1] > suPub) ? suUb0 : suPub
+int suD = 1
+if na(suAtrV[1])
+    suD := 1
+else if suLine[1] == suPub
+    suD := cC > suUb ? -1 : 1
+else
+    suD := cC < suLb ? 1 : -1
+suLine := suD == -1 ? suLb : suUb
+suValid = not na(suAtrV)
+suUp    = suD == -1 and suValid
+suDown  = suD == 1 and suValid
+suLineV = suValid ? suLine : na
+suFlipU = within(suUp and suDown[1], suN)
+suFlipD = within(suDown and suUp[1], suN)
+suAny = suTrendOn or suFlipOn
+suL = suAny and (not suTrendOn or suUp) and (not suFlipOn or suFlipU)
+suS = suAny and (not suTrendOn or suDown) and (not suFlipOn or suFlipD)
+
+// EMA Band (chart candles): 3 EMAs of the same length on the high (top), close (middle, not used by any rule), low (bottom)
+ebTop = ta.ema(cH, ebLen)
+ebMid = ta.ema(cC, ebLen)
+ebBot = ta.ema(cL, ebLen)
+ebBack = math.max(ebN - 1, 0)
+// within() holds ta.barssince, so it is worked out on EVERY candle on its own line (v6 skips the right side of an "and" when the left side is false)
+ebWasBelowBot = within(nz((cC < ebBot)[1], false), ebBack)
+ebWasBelowTop = within(nz((cC < ebTop)[1], false), ebBack)
+ebWasAboveTop = within(nz((cC > ebTop)[1], false), ebBack)
+ebWasAboveBot = within(nz((cC > ebBot)[1], false), ebBack)
+ebUpBot = cC > ebBot and ebWasBelowBot
+ebUpTop = cC > ebTop and ebWasBelowTop
+ebDnTop = cC < ebTop and ebWasAboveTop
+ebDnBot = cC < ebBot and ebWasAboveBot
+ebL = (ebLL and ebUpBot) or (ebLH and ebUpTop)
+ebS = (ebSH and ebDnTop) or (ebSL and ebDnBot)
+
+// Parabolic SAR on the chart candles (the same steps as Pine's ta.sar): dots below the close = LONG, above = SHORT
+saCalc(float st, float inc, float mx, float h, float l, float c) =>
+    var float result = na
+    var float maxMin = na
+    var float acc = na
+    var bool isBelow = false
+    bool first = false
+    float r = na
+    if bar_index == 1
+        if c > c[1]
+            isBelow := true
+            maxMin := h
+            result := l[1]
+        else
+            isBelow := false
+            maxMin := l
+            result := h[1]
+        first := true
+        acc := st
+    if bar_index >= 1
+        result := result + acc * (maxMin - result)
+        if isBelow
+            if result > l
+                first := true
+                isBelow := false
+                result := math.max(h, maxMin)
+                maxMin := l
+                acc := st
+        else
+            if result < h
+                first := true
+                isBelow := true
+                result := math.min(l, maxMin)
+                maxMin := h
+                acc := st
+        if not first
+            if isBelow
+                if h > maxMin
+                    maxMin := h
+                    acc := math.min(acc + inc, mx)
+            else
+                if l < maxMin
+                    maxMin := l
+                    acc := math.min(acc + inc, mx)
+        if isBelow
+            result := math.min(result, l[1])
+            if bar_index > 1
+                result := math.min(result, l[2])
+        else
+            result := math.max(result, h[1])
+            if bar_index > 1
+                result := math.max(result, h[2])
+        r := result
+    r
+saV = saCalc(saStep, saStep, saMax, cH, cL, cC)
+saL = cC > saV
+saS = cC < saV
+
 blockL(string b) =>
     switch b
         "Candle colour" => cdL
@@ -449,6 +616,10 @@ blockL(string b) =>
         "Volume" => voL
         "ATR" => atL
         "Structure break" => stL
+        "Bollinger Bands" => bbL
+        "Supertrend" => suL
+        "EMA Band" => ebL
+        "Parabolic SAR" => saL
         => true
 blockS(string b) =>
     switch b
@@ -463,20 +634,24 @@ blockS(string b) =>
         "Volume" => voS
         "ATR" => atS
         "Structure break" => stS
+        "Bollinger Bands" => bbS
+        "Supertrend" => suS
+        "EMA Band" => ebS
+        "Parabolic SAR" => saS
         => true
 
 // =====================================================================================================================
 // 4. INDICATOR COMBINATION -> ENTRY signal (dirE) and FLIP signal (dirF): +1 long, -1 short, 0 nothing
 // =====================================================================================================================
-cnt(bool t1, bool t2, bool t3, bool t4, bool t5, bool t6, bool t7, bool t8, bool t9, bool t10, bool t11) =>
-    (t1 ? 1 : 0) + (t2 ? 1 : 0) + (t3 ? 1 : 0) + (t4 ? 1 : 0) + (t5 ? 1 : 0) + (t6 ? 1 : 0) + (t7 ? 1 : 0) + (t8 ? 1 : 0) + (t9 ? 1 : 0) + (t10 ? 1 : 0) + (t11 ? 1 : 0)
+cnt(bool t1, bool t2, bool t3, bool t4, bool t5, bool t6, bool t7, bool t8, bool t9, bool t10, bool t11, bool t12, bool t13, bool t14, bool t15) =>
+    (t1 ? 1 : 0) + (t2 ? 1 : 0) + (t3 ? 1 : 0) + (t4 ? 1 : 0) + (t5 ? 1 : 0) + (t6 ? 1 : 0) + (t7 ? 1 : 0) + (t8 ? 1 : 0) + (t9 ? 1 : 0) + (t10 ? 1 : 0) + (t11 ? 1 : 0) + (t12 ? 1 : 0) + (t13 ? 1 : 0) + (t14 ? 1 : 0) + (t15 ? 1 : 0)
 
-nE  = cnt(cdE, m1E, m2E, mxE, adE, ciE, rsE, mcE, voE, atE, stE)
-nEL = cnt(cdE and cdL, m1E and m1L, m2E and m2L, mxE and mxL, adE and adL, ciE and ciL, rsE and rsL, mcE and mcL, voE and voL, atE and atL, stE and stL)
-nES = cnt(cdE and cdS, m1E and m1S, m2E and m2S, mxE and mxS, adE and adS, ciE and ciS, rsE and rsS, mcE and mcS, voE and voS, atE and atS, stE and stS)
-nF  = cnt(cdF, m1F, m2F, mxF, adF, ciF, rsF, mcF, voF, atF, stF)
-nFL = cnt(cdF and cdL, m1F and m1L, m2F and m2L, mxF and mxL, adF and adL, ciF and ciL, rsF and rsL, mcF and mcL, voF and voL, atF and atL, stF and stL)
-nFS = cnt(cdF and cdS, m1F and m1S, m2F and m2S, mxF and mxS, adF and adS, ciF and ciS, rsF and rsS, mcF and mcS, voF and voS, atF and atS, stF and stS)
+nE  = cnt(cdE, m1E, m2E, mxE, adE, ciE, rsE, mcE, voE, atE, stE, bbE, suE, ebE, saE)
+nEL = cnt(cdE and cdL, m1E and m1L, m2E and m2L, mxE and mxL, adE and adL, ciE and ciL, rsE and rsL, mcE and mcL, voE and voL, atE and atL, stE and stL, bbE and bbL, suE and suL, ebE and ebL, saE and saL)
+nES = cnt(cdE and cdS, m1E and m1S, m2E and m2S, mxE and mxS, adE and adS, ciE and ciS, rsE and rsS, mcE and mcS, voE and voS, atE and atS, stE and stS, bbE and bbS, suE and suS, ebE and ebS, saE and saS)
+nF  = cnt(cdF, m1F, m2F, mxF, adF, ciF, rsF, mcF, voF, atF, stF, bbF, suF, ebF, saF)
+nFL = cnt(cdF and cdL, m1F and m1L, m2F and m2L, mxF and mxL, adF and adL, ciF and ciL, rsF and rsL, mcF and mcL, voF and voL, atF and atL, stF and stL, bbF and bbL, suF and suL, ebF and ebL, saF and saL)
+nFS = cnt(cdF and cdS, m1F and m1S, m2F and m2S, mxF and mxS, adF and adS, ciF and ciS, rsF and rsS, mcF and mcS, voF and voS, atF and atS, stF and stS, bbF and bbS, suF and suS, ebF and ebS, saF and saS)
 
 combine(string mode, int n, int nl, int ns, int need) =>
     bool lg = false
@@ -498,9 +673,10 @@ dirFown = fL and not fS ? 1 : fS and not fL ? -1 : 0
 dirF = flipSameEntry ? dirE : dirFown
 
 // CTREND: the ticked indicator decides with / against the trend
-ctBlock = cdC ? "Candle colour" : m1C ? "MA 1" : m2C ? "MA 2" : mxC ? "MA Crossover" : adC ? "ADX / DI" : rsC ? "RSI" : mcC ? "MACD" : stC ? "Structure break" : "None"
-ctLong  = ctBlock != "None" and blockL(ctBlock)
-ctShort = ctBlock != "None" and blockS(ctBlock)
+ctBlock = cdC ? "Candle colour" : m1C ? "MA 1" : m2C ? "MA 2" : mxC ? "MA Crossover" : adC ? "ADX / DI" : rsC ? "RSI" : mcC ? "MACD" : stC ? "Structure break" : bbC ? "Bollinger Bands" : ebC ? "EMA Band" : saC ? "Parabolic SAR" : "None"
+// Bollinger half: LONG is with the trend in the LOWER half of the band, SHORT in the UPPER half (the middle line = against)
+ctLong  = ctBlock == "Bollinger Bands" ? cC < bbBasis : (ctBlock != "None" and blockL(ctBlock))
+ctShort = ctBlock == "Bollinger Bands" ? cC > bbBasis : (ctBlock != "None" and blockS(ctBlock))
 
 // =====================================================================================================================
 // ATRs of the NORMAL candles (read at the entry candle, fixed for the trade)
@@ -512,6 +688,28 @@ trAtr = ta.rma(nTr, trAtrLen)
 tpAtr = ta.rma(nTr, tpAtrLen)
 slLow  = ta.lowest(low, slLen)
 slHigh = ta.highest(high, slLen)
+// Stop Loss Structure found by a real swing point: the latest swing low below the close / swing high above it that is
+// already confirmed (a swing is known N candles after it formed)
+var array<float> pvLo = array.new_float()
+var array<float> pvHi = array.new_float()
+pivL = ta.pivotlow(low, slPivN, slPivN)
+pivH = ta.pivothigh(high, slPivN, slPivN)
+if not na(pivL)
+    array.push(pvLo, pivL)
+if not na(pivH)
+    array.push(pvHi, pivH)
+float slPivLow = na
+float slPivHigh = na
+if array.size(pvLo) > 0
+    for k = array.size(pvLo) - 1 to math.max(array.size(pvLo) - 500, 0)
+        if array.get(pvLo, k) < close
+            slPivLow := array.get(pvLo, k)
+            break
+if array.size(pvHi) > 0
+    for k = array.size(pvHi) - 1 to math.max(array.size(pvHi) - 500, 0)
+        if array.get(pvHi, k) > close
+            slPivHigh := array.get(pvHi, k)
+            break
 trLow  = ta.lowest(low, trLen)
 trHigh = ta.highest(high, trLen)
 
@@ -529,6 +727,7 @@ var float lvML = na
 var float lvSL = na
 var float lvTS = na
 var float tcDist = na        // Signal candle +/- ATR trailing: the distance (ATR of the signal candle), fixed for the trade
+var float tcArm = na         // Signal candle trail "Only once in profit": a candle must close at or beyond this price
 var float stStart = na
 var float stGap = na
 var float stBegin = na
@@ -546,6 +745,8 @@ var float lastTotal = na
 var float peak = strategy.initial_capital
 var int   offLeft = 0
 var int   reBlock = 0
+var bool  reForced = false    // the last close was Exit when -> wait for a fresh signal: the block holds even if mid-trend re-entry is allowed
+var bool  exWait = false      // Exit when closed the trade on the last candle (wait for a fresh signal)
 var bool  firstDone = false
 var int   lastDirE = 0
 var bool  oSet = false        // a flip opened the new side before the old trade was counted: keep the old one's
@@ -572,6 +773,8 @@ if tDir != 0 and curDir != tDir
     else
         offLeft := math.max(offLeft - 1, 0)
     reBlock := tDir
+    reForced := exWait
+    exWait := false
     tDir := 0
 if tDir == 0 and curDir != 0
     tDir := curDir
@@ -612,6 +815,17 @@ if tDir != 0 and curDir == tDir and bar_index > tBar
         flippedTo := dirF
         closingDir := tDir
     else
+        // 15. Exit when: the MA(s) curve against the trade at this candle close (a flip on the same candle goes first)
+        if exOn and (tDir == 1 ? exLong : exShort)
+            if exAfter == "Close and flip to the other side"
+                flippedTo := -tDir
+                closingDir := tDir
+            else
+                strategy.close_all(comment = "Exit when")
+                closingDir := tDir
+                ruleClose := true
+                exWait := true
+    if not doFlip and closingDir == 0
         // 12. Trailing Stop
         if trOn and trType == "Step" and not na(stGap)
             move = tDir == 1 ? best - tEntry : tEntry - best
@@ -627,7 +841,10 @@ if tDir != 0 and curDir == tDir and bar_index > tBar
             if tighter(tDir, lvl, lvTS)
                 lvTS := lvl
         if trOn and trType != "Step"
-            cand = trType == "Lowest low / highest high" ? (tDir == 1 ? trLow : trHigh) : trType == "Signal candle high / low +/- ATR" ? (na(tcDist) ? na : (tDir == 1 ? low - tcDist : high + tcDist)) : (trMa == "MA 1" ? ma1 : ma2)
+            cand = trType == "Lowest low / highest high" ? (tDir == 1 ? trLow : trHigh) : trType == "Signal candle high / low +/- ATR" ? (na(tcDist) ? na : (tDir == 1 ? low - tcDist : high + tcDist)) : trType == "Supertrend line" ? suLineV : (trMa == "MA 1" ? ma1 : ma2)
+            if trType == "Signal candle high / low +/- ATR" and trCStart == "Only once in profit" and na(lvTS)
+                armed = not na(tcArm) and (tDir == 1 ? close >= tcArm : close <= tcArm)
+                cand := armed ? cand : na
             inCharge = tighter(tDir, lvTS, lvSL) ? lvTS : lvSL
             inCharge := tighter(tDir, inCharge, lvML) ? inCharge : lvML
             if not na(cand) and tighter(tDir, cand, lvTS) and tighter(tDir, cand, inCharge)
@@ -652,13 +869,14 @@ if tDir != 0 and curDir == tDir and bar_index > tBar
 flatNow = tDir == 0 or flippedTo != 0 or closingDir != 0
 firstOk = not freshFirst or firstDone or (dirE != 0 and lastDirE != 0 and dirE != lastDirE)
 int blk = closingDir != 0 ? closingDir : reBlock
-if not noMidTrend
+if not noMidTrend and not reForced
     blk := 0
     reBlock := 0
 bool reOk = true
 if blk != 0
     if flatNow and closingDir == 0 and dirE != blk
         reBlock := 0
+        reForced := false
     else
         reOk := dirE != blk
 int ready = 0
@@ -719,7 +937,7 @@ if ready != 0 and flatNow
             else if slBasis == "Fixed $ amount"
                 sl := d == 1 ? close - slUsd / qty : close + slUsd / qty
             else if slBasis == "Structure (swing low / high)"
-                sl := d == 1 ? slLow : slHigh
+                sl := slStruct == "Real swing point (N candles each side)" ? (d == 1 ? slPivLow : slPivHigh) : (d == 1 ? slLow : slHigh)
             else if slBasis == "Chandelier"
                 dd = dist("% of ATR", slVal, close, slAtr)
                 sl := na(dd) ? na : (d == 1 ? slHigh - dd : slLow + dd)
@@ -788,11 +1006,20 @@ if ready != 0 and flatNow
         lvSL := sl
         lvTS := na
         tcDist := na
+        tcArm := na
         if trOn and trType == "Signal candle high / low +/- ATR"
             tcd = dist("% of ATR", trCVal, close, trAtr)
             if not na(tcd) and tcd > 0
                 tcDist := tcd
-                lvTS := d == 1 ? low - tcd : high + tcd
+                if trCStart == "Only once in profit"
+                    // no level at the entry: it may take charge after a candle closes far enough in profit
+                    tca = dist("% of ATR", trCProfit, close, trAtr)
+                    tcArm := na(tca) or tca <= 0 ? na : (d == 1 ? close + tca : close - tca)
+                else
+                    lvTS := d == 1 ? low - tcd : high + tcd
+        if trOn and trType == "Supertrend line"
+            if not na(suLineV) and (d == 1 ? suLineV < close : suLineV > close)
+                lvTS := suLineV
         best := close
         tp1Done := false
         tp2Done := false

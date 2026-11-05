@@ -36,6 +36,7 @@ from dataclasses import dataclass, asdict
 import numpy as np
 import pandas as pd
 
+from app import sr_engine as _sr
 from app import strategy as _strat
 from app.strategy import (  # noqa: F401  (shared, Pine-exact helpers)
     pine_sma, pine_ema, pine_wma, pine_hma, pine_rma, pine_dmi, _shift, _to_np,
@@ -104,7 +105,22 @@ TRAIL_MA = "Moving average"
 # minus the distance, short: high plus it); the distance is the ATR of the signal candle, fixed for the trade. At every
 # candle close it is worked out again from the candle that just closed and only ever moves nearer (into profit).
 TRAIL_CANDLE = "Signal candle high / low +/- ATR"
-TRAIL_TYPES = (TRAIL_STEP, TRAIL_LLHH, TRAIL_MA, TRAIL_CANDLE)
+# 5th type (owner 2026-11-04): the stop follows the Supertrend line. At every candle close it is set at the line of the
+# candle that just closed, and it only ever tightens (like the Moving average type, a line on the wrong side of the
+# price does not take charge).
+TRAIL_SUP = "Supertrend line"
+TRAIL_TYPES = (TRAIL_STEP, TRAIL_LLHH, TRAIL_MA, TRAIL_CANDLE, TRAIL_SUP)
+# Owner 2026-11-05 ("Both"): when the "Signal candle high / low +/- ATR" trail may take charge. A plan without the key =
+# "Tighter than the Stop Loss" (how it always worked). "Only once in profit" = only after a candle CLOSES at least
+# candle_profit (% of the signal candle ATR) beyond the entry price; from then on it only tightens.
+TCS_TIGHTER = "Tighter than the Stop Loss"
+TCS_PROFIT = "Only once in profit"
+TCS_CHOICES = (TCS_TIGHTER, TCS_PROFIT)
+# Owner 2026-11-05 ("Both"): how the Stop Loss "Structure" level is found. A plan without the key = the lowest low /
+# highest high of the last N candles (how it always worked).
+SLS_EXTREME = "Lowest low / highest high of N candles"
+SLS_SWING = "Real swing point (N candles each side)"
+SLS_CHOICES = (SLS_EXTREME, SLS_SWING)
 START_SL = "Same as Stop Loss"
 START_OWN = "Own value"
 START_BEGIN = "Begins at a price move"   # 2026-10-24: Begins when the price moves / Stop goes to / Then moves every
@@ -114,7 +130,7 @@ TRAIL_MAS = ("MA 1", "MA 2")
 # How many CLOSED candles the live bot loads for the hub (indicators are fully warmed up).
 HUB_HISTORY_CANDLES = 1000
 
-BLOCKS = ("candle", "ma1", "ma2", "mx", "adx", "ci", "rsi", "macd", "vol", "atr", "st")
+BLOCKS = ("candle", "ma1", "ma2", "mx", "adx", "ci", "rsi", "macd", "vol", "atr", "st", "bb", "sup", "eb", "sar", "sr")
 
 BLOCK_TITLES = {
     "candle": "Candle colour",
@@ -128,6 +144,11 @@ BLOCK_TITLES = {
     "vol": "Volume",
     "atr": "ATR",
     "st": "Structure break",
+    "bb": "Bollinger Bands",       # 2026-11-04
+    "sup": "Supertrend",           # 2026-11-04
+    "sr": "Support / Resistance",  # 2026-11-05 (its settings are in plan["sr"])
+    "eb": "EMA Band",              # 2026-11-05
+    "sar": "Parabolic SAR",        # 2026-11-05
 }
 
 # --------------------------------------------------------------------------
@@ -150,14 +171,31 @@ MACD_MODES = (MACD_HIST, MACD_ZERO)
 # MA Crossover, RSI and MACD take one or more conditions (plan key "modes", a list); ALL ticked must agree.
 MODE_CHOICES = {"ma1": None, "ma2": None, "mx": None, "rsi": RSI_MODES, "macd": MACD_MODES}   # MA ones set below
 # COUNTER TREND decided by (owner 2026-10-25): the EMA length box (as before) or any indicator that gives a side.
+# BOLLINGER (owner 2026-11-04): long when the chart candle's LOW touches the bottom limit (short: the HIGH touches the top
+# limit) on the signal candle or within the last N candles. The middle line is a simple moving average of the chart close.
+# As the counter-trend decider ("Bollinger half") a LONG is with the trend in the lower half of the band and against it in
+# the upper half, a SHORT the other way round; the middle line itself counts as against (the smaller size).
+# SUPERTREND (owner 2026-11-04): ATR length and factor; Trend direction = long while the line is below the price;
+# Fresh flip = the trend turned that way on the signal candle or within the last N candles.
+SUP_TREND = "Trend direction"
+SUP_FLIP = "Fresh flip within N candles"
+SUP_MODES = (SUP_TREND, SUP_FLIP)
+# EXIT WHEN (owner 2026-11-04, optional function, OFF by default): closes the open trade at a candle close when the moving
+# average(s) curve against it (long: the value after the candle close is LOWER than the one before, short: HIGHER).
+EXIT_BOTH = "Both MA 1 and MA 2 curve against the trade"
+EXIT_MA2 = "MA 2 only (the slower one) curves against the trade"
+EXIT_SIGNALS = (EXIT_BOTH, EXIT_MA2)
+EXIT_WAIT = "Close and wait for a fresh signal"
+EXIT_FLIP = "Close and flip to the other side"
+EXIT_AFTERS = (EXIT_WAIT, EXIT_FLIP)
 CT_EMA = "EMA"
-CT_BLOCKS = ("ma1", "ma2", "mx", "adx", "rsi", "macd", "candle", "st")
+CT_BLOCKS = ("ma1", "ma2", "mx", "adx", "rsi", "macd", "candle", "st", "bb", "eb", "sar")
 CT_SOURCES = (CT_EMA,) + CT_BLOCKS
 
 _MA = {"type": ("s", MA_TYPES), "length": ("i", 1), "modes": ("m", MA_MODES), "n": ("i", 0),
        "alma_offset": ("f", None), "alma_sigma": ("f", 0.0001)}
 SCHEMA: dict[str, dict] = {
-    "candle": {"strong": ("b", None)},
+    "candle": {"strong": ("b", None), "prev_opposite": ("b", None)},
     "ma1": dict(_MA),
     "ma2": dict(_MA),
     "mx": {"modes": ("m", MX_MODES), "n": ("i", 0)},
@@ -172,16 +210,64 @@ SCHEMA: dict[str, dict] = {
     "vol": {"length": ("i", 1), "mult": ("f", 0.1), "exclude_current": ("b", None)},
     "atr": {"length": ("i", 1), "avg_length": ("i", 1), "mult": ("f", 0.1), "rising": ("b", None)},
     "st": {"length": ("i", 1)},
+    "bb": {"length": ("i", 2), "mult": ("f", 0.0001), "n": ("i", 0)},
+    "sup": {"modes": ("m", SUP_MODES), "atr_length": ("i", 1), "factor": ("f", 0.0001), "n": ("i", 0)},
+    # EMA BAND (owner 2026-11-05): 3 EMAs of the same length on the chart HIGH (top), CLOSE (middle, drawn only) and LOW
+    # (bottom). Four ticks pick the crossings that count: LONG when the close crosses ABOVE the bottom and / or the top
+    # line, SHORT when it crosses BELOW the top and / or the bottom line (any ticked one is enough). A crossing counts
+    # when the close is on the new side and was on the other side of THAT line within the last N candles (N = 1: the candle before).
+    "eb": {"length": ("i", 1), "n": ("i", 1), "long_low": ("b", None), "long_high": ("b", None),
+           "short_high": ("b", None), "short_low": ("b", None)},
+    # PARABOLIC SAR (owner 2026-11-05): step (start and increase) and maximum; LONG while the dots are below the close,
+    # SHORT while they are above it.
+    "sar": {"step": ("f", 0.0001), "limit": ("f", 0.0001)},
+    "sr": {},     # no numbers here: the Support / Resistance settings live in plan["sr"] (see SR_FIELDS)
 }
 
 
 # Option ticks added 2026-10-25: an older plan does not have them, they are then OFF (as before).
-OPTIONAL_KEYS = {("candle", "strong"), ("adx", "rising"), ("atr", "rising"), ("vol", "exclude_current")}
+OPTIONAL_KEYS = {("candle", "strong"), ("candle", "prev_opposite"), ("adx", "rising"), ("atr", "rising"),
+                 ("vol", "exclude_current"), ("eb", "long_low"), ("eb", "long_high"), ("eb", "short_high"),
+                 ("eb", "short_low")}
 SL_MISSING_MSG = "No SL was set for this trade. Set it manually."          # owner 2026-10-26: the trade still opens
 SL_NOT_WORKED_MSG = "SL could not be worked out for this trade. Set it manually."
 
 
 MODE_CHOICES.update(ma1=MA_MODES, ma2=MA_MODES, mx=MX_MODES)
+
+
+# SUPPORT / RESISTANCE (owner 2026-11-05). plan["sr"] is optional: a plan without it = OFF. Every choice is a tick or a
+# number he keys in; nothing is pre-selected. The engine is app/sr_engine.py.
+SR_TICKS = ("find_hhll", "find_swing", "diagonal", "zone_on", "stop_zone_on", "bounce_long", "bounce_short",
+            "bounce_edges", "bx_other", "bx_mid", "bx_break", "brk_long", "brk_short", "brk_close_on", "brk_vol_on",
+            "brk_exit_inside", "retest_long", "retest_short", "wait_fail", "wait_newrange", "wait_runaway",
+            "wait_none", "alone", "exit_sr_only", "exit_all")
+# inert values for numbers that are not used (they never change a result)
+SR_NUMBERS = {"hhll_n": 20, "swing_n": 5, "count": 1, "diag_points": 2, "zone_atr_pct": 25.0, "stop_zone_atr_pct": 25.0,
+              "atr_length": 14, "bounce_edge_pct": 25.0, "brk_close_atr_pct": 10.0, "brk_vol_mult": 1.0,
+              "brk_vol_len": 20, "wait_runaway_atr_pct": 100.0}
+
+
+def sr_cfg(plan: dict) -> dict | None:
+    """The completed Support / Resistance settings, or None when it is OFF."""
+    sr = (plan or {}).get("sr")
+    if not isinstance(sr, dict) or not sr.get("on"):
+        return None
+    return sr
+
+
+def sr_exit_ticked(sr: dict | None) -> bool:
+    return bool(sr) and any(sr.get(k) for k in ("bx_other", "bx_mid", "bx_break", "brk_exit_inside"))
+
+
+def sr_entry_ticked(sr: dict | None) -> bool:
+    return bool(sr) and any(sr.get(k) for k in ("bounce_long", "bounce_short", "brk_long", "brk_short",
+                                                "retest_long", "retest_short"))
+
+
+def sr_stop_on(plan: dict) -> bool:
+    sr = sr_cfg(plan)
+    return bool(sr and sr.get("stop_zone_on"))
 
 
 class PlanError(ValueError):
@@ -232,6 +318,10 @@ def upgrade_plan(plan: dict) -> dict:
     if not isinstance(p.get("flip_rules"), dict):
         p["flip_rules"] = {"same_entry": False, "same_hold": True, "same_wait": True}   # an older plan
     ind = p.get("ind")
+    if isinstance(ind, dict):
+        for nb in ("bb", "sup", "eb", "sar", "sr"):    # 2026-11-04/05: Bollinger, Supertrend, Support / Resistance; a plan saved before has them OFF
+            if nb not in ind:
+                ind[nb] = {"entry": False, "flip": False}
     if isinstance(ind, dict):     # 2026-10-25: RSI / MACD got a Condition; an older plan keeps what it did
         if isinstance(ind.get("rsi"), dict):
             ind["rsi"].setdefault("mode", RSI_LEVEL)
@@ -244,6 +334,8 @@ def upgrade_plan(plan: dict) -> dict:
                 if "modes" not in blk and blk.get("mode") is not None:
                     blk["modes"] = [blk["mode"]]
                 blk.pop("mode", None)
+    if p.get("sr") is None:
+        p["sr"] = {"on": False}       # Support / Resistance (2026-11-05): plans saved before it have it off
     sz = p.get("sizing")
     if isinstance(sz, dict) and isinstance(sz.get("counter"), dict):
         sz["counter"].setdefault("by", CT_EMA)      # an older plan: the EMA length decides (as before)
@@ -290,6 +382,14 @@ def flip_wait(plan: dict) -> int:
     return int(fr.get("wait") or 0)
 
 
+def exit_cfg(plan: dict) -> dict | None:
+    """The Exit when function of the plan, or None when it is off / not in the plan (an older plan)."""
+    ew = (plan or {}).get("exit_when")
+    if isinstance(ew, dict) and ew.get("on") is True:
+        return ew
+    return None
+
+
 def _needed_blocks(plan: dict) -> set:
     """Blocks whose settings must be filled in: any block ticked for ENTRY or FLIP, the two MAs when
     'MA Crossover' is ticked, ADX when the hold rule is on (it uses the ADX settings), and the MA a
@@ -312,7 +412,81 @@ def _needed_blocks(plan: dict) -> set:
     tr = plan.get("trail") or {}
     if tr.get("on") and tr.get("type") == TRAIL_MA:
         need.add("ma1" if tr.get("ma") == "MA 1" else "ma2" if tr.get("ma") == "MA 2" else "ma1")
+    if tr.get("on") and tr.get("type") == TRAIL_SUP:
+        need.add("sup")                            # the Supertrend line the Trailing Stop follows
+    ew = exit_cfg(plan)
+    if ew:
+        need.add("ma2")                            # Exit when reads the MA numbers
+        if ew.get("signal") != EXIT_MA2:
+            need.add("ma1")
     return need
+
+
+def _validate_sr(plan: dict, ind: dict) -> None:
+    sr = plan.get("sr")
+    if not isinstance(sr, dict):
+        raise PlanError("Support / Resistance: wrong format")
+    _check(_need(sr, "on", "Support / Resistance"), "b", None, "Support / Resistance switch")
+    used_in_combine = ind["sr"]["entry"] or ind["sr"]["flip"]
+    if not sr["on"]:
+        if used_in_combine:
+            raise PlanError("Support / Resistance is ticked in the indicator list but the Support / Resistance "
+                            "function is switched off. Switch it on or untick it.")
+        return
+    t = "Support / Resistance"
+    for k in SR_TICKS:
+        if sr.get(k) is not None:
+            _check(sr[k], "b", None, f"{t}: {k}")
+
+    def on(k):
+        return bool(sr.get(k))
+
+    if not (on("find_hhll") or on("find_swing") or on("diagonal")):
+        raise PlanError(f"{t}: tick at least one way to find the range (highest high / lowest low, swing points, "
+                        "or a diagonal line)")
+    if on("find_hhll"):
+        _check(_need(sr, "hhll_n", t), "i", 2, f"{t}: highest high / lowest low of the last N candles (N)")
+    if on("find_swing") or on("diagonal"):
+        _check(_need(sr, "swing_n", t), "i", 1, f"{t}: swing point candles on each side (N)")
+    _check(_need(sr, "count", t), "i", 1, f"{t}: how many nearest tops / bottoms")
+    if on("diagonal"):
+        _check(_need(sr, "diag_points", t), "i", 2, f"{t}: diagonal line points (2 or 3)")
+        if sr["diag_points"] > 3:
+            raise PlanError(f"{t}: the diagonal line goes through 2 or 3 swing points")
+    if on("zone_on"):
+        _check(_need(sr, "zone_atr_pct", t), "f", 0.0, f"{t}: zone width (% of ATR)")
+    if on("stop_zone_on"):
+        _check(_need(sr, "stop_zone_atr_pct", t), "f", 0.0, f"{t}: stop outside the zone (% of ATR)")
+    if on("bounce_edges"):
+        _check(_need(sr, "bounce_edge_pct", t), "f", 0.0001, f"{t}: edge width (% of the range)")
+        if sr["bounce_edge_pct"] > 50:
+            raise PlanError(f"{t}: edge width: must be 50 or less (% of the range, measured from each end)")
+        if not (on("bounce_long") or on("bounce_short")):
+            raise PlanError(f"{t}: 'Edges only' belongs to the bounce entries - tick Long and / or Short bounce, or untick it")
+    if on("brk_close_on"):
+        _check(_need(sr, "brk_close_atr_pct", t), "f", 0.0, f"{t}: close beyond the level by (% of ATR)")
+    if on("brk_vol_on"):
+        _check(_need(sr, "brk_vol_mult", t), "f", 0.1, f"{t}: volume above the average by (times)")
+        _check(_need(sr, "brk_vol_len", t), "i", 1, f"{t}: volume average length (candles)")
+    if on("wait_runaway"):
+        _check(_need(sr, "wait_runaway_atr_pct", t), "f", 0.0001, f"{t}: price runs away (% of ATR)")
+    needs_atr = on("zone_on") or on("stop_zone_on") or on("brk_close_on") or on("wait_runaway")
+    if needs_atr:
+        _check(_need(sr, "atr_length", t), "i", 1, f"{t}: ATR length")
+    entry_ticked = sr_entry_ticked(sr)
+    used_for_entry = used_in_combine or on("alone")
+    if used_for_entry and not entry_ticked:
+        raise PlanError(f"{t} is used for entries but no entry is ticked. Tick Bounce, Breakout and / or Retest "
+                        "(Long / Short), or stop using it for entries.")
+    if on("alone") and not entry_ticked:
+        raise PlanError(f"{t}: stand-alone entries need an entry ticked")
+    if entry_ticked and not any(on(k) for k in ("wait_fail", "wait_newrange", "wait_runaway", "wait_none")) and (
+            on("retest_long") or on("retest_short") or (
+            (on("bounce_long") or on("bounce_short")) and (on("brk_long") or on("brk_short")))):
+        raise PlanError(f"{t}: tick what ends the wait for the retest (the level fails, a new range forms, price "
+                        "runs away, or nothing ends it)")
+    if sr_exit_ticked(sr) and not (on("exit_sr_only") or on("exit_all")):
+        raise PlanError(f"{t}: tick where the exits apply (Support / Resistance trades only, and / or every trade)")
 
 
 def validate_plan(plan: dict) -> dict:
@@ -392,6 +566,7 @@ def validate_plan(plan: dict) -> dict:
         _check(_need(hold, "adx_level", "hold rule"), "f", 0.0, "hold rule ADX level")
 
     needed = _needed_blocks(plan)
+    own_flip = not fr["same_entry"]
     for b in BLOCKS:
         if b not in needed:
             continue
@@ -405,6 +580,16 @@ def validate_plan(plan: dict) -> dict:
             if key == "n" and b in ("ma1", "ma2", "mx") and not any(
                     "crossed" in str(m) or m == MA_PULLBACK for m in modes):
                 continue
+            # Bollinger / Supertrend: the conditions (and N) matter only when the block gives a signal (ticked for
+            # ENTRY / FLIP, or the Bollinger half for the counter trend needs no N); the Supertrend line of the
+            # Trailing Stop needs only its ATR length and factor.
+            gives_signal = ind[b]["entry"] or (own_flip and ind[b]["flip"])
+            if b == "bb" and key == "n" and not gives_signal:
+                continue
+            if b == "sup" and key == "modes" and not gives_signal:
+                continue
+            if b == "sup" and key == "n" and not (gives_signal and SUP_FLIP in modes):
+                continue
             # the RSI average's ALMA numbers only matter when that average is an ALMA
             if b == "rsi" and key in ("ma_alma_offset", "ma_alma_sigma") and blk.get("ma_type") != "ALMA":
                 continue
@@ -415,6 +600,10 @@ def validate_plan(plan: dict) -> dict:
             if b == "rsi" and key != "modes" and not any(key in RSI_KEYS.get(m, ()) for m in modes):
                 continue
             _check(_need(blk, key, title), kind, arg, f"{title} / {key}")
+    if "eb" in needed and not any(ind["eb"].get(k) for k in ("long_low", "long_high", "short_high", "short_low")):
+        raise PlanError("EMA Band: tick at least one line crossing (long: bottom / top line, short: top / bottom line)")
+    if "sar" in needed and ind["sar"]["limit"] < ind["sar"]["step"]:
+        raise PlanError("Parabolic SAR: the maximum must be the same as or larger than the step")
     if "macd" in needed and ind["macd"]["slow"] <= ind["macd"]["fast"]:
         raise PlanError("MACD: slow must be larger than fast")
     if "rsi" in needed and RSI_OBOS in ind["rsi"]["modes"]:
@@ -532,7 +721,11 @@ def validate_plan(plan: dict) -> dict:
             _check(_need(sl, "atr_length", "stop loss"), "i", 1, "stop loss ATR length")
         if b == SL_USD:
             _check(_need(sl, "usd", "stop loss"), "f", 0.01, "stop loss (USDT)")
-        if b in (SL_STRUCT, SL_CHAND):
+        if sl.get("struct_mode") is not None:
+            _check(sl["struct_mode"], "s", SLS_CHOICES, "stop loss: how the Structure level is found")
+        if b == SL_STRUCT and sl.get("struct_mode") == SLS_SWING:
+            _check(_need(sl, "struct_n", "stop loss"), "i", 1, "stop loss: swing point candles on each side (N)")
+        elif b in (SL_STRUCT, SL_CHAND):
             _check(_need(sl, "length", "stop loss"), "i", 1, "stop loss: N candles")
         if b == SL_MA:
             _check(_need(sl, "ma", "stop loss"), "s", TRAIL_MAS, "stop loss: which MA")
@@ -570,6 +763,13 @@ def validate_plan(plan: dict) -> dict:
         elif tr["type"] == TRAIL_CANDLE:
             _check(_need(tr, "value", "trailing stop"), "f", 0.0001, "trailing stop: distance (% of ATR)")
             _check(_need(tr, "atr_length", "trailing stop"), "i", 1, "trailing stop ATR length")
+            if tr.get("candle_start") is not None:
+                _check(tr["candle_start"], "s", TCS_CHOICES, "trailing stop: when it may take charge")
+                if tr["candle_start"] == TCS_PROFIT:
+                    _check(_need(tr, "candle_profit", "trailing stop"), "f", 0.0001,
+                           "trailing stop: in profit by (% of ATR)")
+        elif tr["type"] == TRAIL_SUP:
+            pass          # follows the Supertrend line: its ATR length and factor are the Supertrend numbers (Indicators)
         else:
             _check(_need(tr, "basis", "trailing stop"), "s", BASES, "trailing stop: measured on")
             _check(_need(tr, "start", "trailing stop"), "s", TRAIL_STARTS, "trailing stop start")
@@ -589,6 +789,16 @@ def validate_plan(plan: dict) -> dict:
             _check(_need(tr, "gap", "trailing stop"), "f", 0.0001, "trailing stop gap / then moves every (%)")
             if tr["basis"] == BASIS_ATR:
                 _check(_need(tr, "atr_length", "trailing stop"), "i", 1, "trailing stop ATR length")
+
+    # EXIT WHEN (optional, 2026-11-04): close the trade when the MA(s) curve against it. A plan without the key = OFF.
+    ew = plan.get("exit_when")
+    if ew is not None:
+        if not isinstance(ew, dict):
+            raise PlanError("Exit when: wrong format")
+        _check(_need(ew, "on", "exit when"), "b", None, "Exit when switch")
+        if ew["on"]:
+            _check(_need(ew, "signal", "exit when"), "s", EXIT_SIGNALS, "Exit when: signal")
+            _check(_need(ew, "after", "exit when"), "s", EXIT_AFTERS, "Exit when: after the close")
 
     # COOLDOWN AFTER A LOSS (optional, 2026-11-01): after a losing trade the pair waits N candles before it enters again.
     # "Losses in a row" is optional (left out = after every loss). A plan without the key means the cooldown is off.
@@ -621,8 +831,12 @@ def validate_plan(plan: dict) -> dict:
                     if ll[k + "_pct"] > 100:
                         raise PlanError(f"Loss limit: {t} % of the balance: must be 100 or less")
 
+    # SUPPORT / RESISTANCE (optional, 2026-11-05)
+    _validate_sr(plan, ind)
+
     # A plan that can never open a trade is refused (a hub with nothing ticked does nothing).
-    if not any(ind[b]["entry"] for b in BLOCKS):
+    sr_alone = bool(plan["sr"].get("on") and plan["sr"].get("alone"))      # Support / Resistance as its own strategy
+    if not any(ind[b]["entry"] for b in BLOCKS) and not sr_alone:
         raise PlanError("no indicator is ticked for ENTRY - the plan could never open a trade")
     return original
 
@@ -635,6 +849,8 @@ _INERT_BLOCK = {
     "max": 55.0, "fast": 12, "slow": 26, "signal": 9, "rising": False, "mult": 1.0,
     "avg_length": 20, "strong": False, "exclude_current": False, "oversold": 30.0, "overbought": 70.0, "pivot": 5, "lookback": 60,
     "ma_type": "SMA", "ma_length": 14, "ma_alma_offset": 0.85, "ma_alma_sigma": 6.0,
+    "prev_opposite": False, "atr_length": 10, "factor": 3.0,
+    "long_low": False, "long_high": False, "short_high": False, "short_low": False, "step": 0.02, "limit": 0.2,
 }
 
 
@@ -675,6 +891,14 @@ def complete_plan(plan: dict) -> dict:
     ct.setdefault("alloc_pct", out["sizing"]["alloc_pct"])
     ct.setdefault("base_amount", out["sizing"]["base_amount"])
     ct.setdefault("leverage", out["sizing"]["leverage"])
+    sr = out["sr"]
+    for k in SR_TICKS:
+        sr.setdefault(k, False)
+    for k, v_ in SR_NUMBERS.items():
+        sr.setdefault(k, v_)
+    out.setdefault("exit_when", {"on": False})
+    out["exit_when"].setdefault("signal", EXIT_BOTH)         # inert while Exit when is off
+    out["exit_when"].setdefault("after", EXIT_WAIT)
     out.setdefault("shadow", {"on": False})
     out["shadow"].setdefault("trades", 3)
     out["shadow"].setdefault("slippage_ticks", 0)
@@ -693,6 +917,7 @@ def complete_plan(plan: dict) -> dict:
     sl.setdefault("atr_length", 14)
     sl.setdefault("usd", 1.0)            # inert unless the basis is Fixed $ amount
     sl.setdefault("length", 10)          # inert unless Structure / Chandelier
+    sl.setdefault("struct_n", 5)         # inert unless Structure is found by "Real swing point"
     sl.setdefault("ma", "MA 1")          # inert unless Moving average
     sl.setdefault("time_on", False)
     sl.setdefault("time_candles", 1)
@@ -711,6 +936,7 @@ def complete_plan(plan: dict) -> dict:
     tr.setdefault("start_value", 100.0)
     tr.setdefault("begin_value", 100.0)      # inert unless the start is "Begins at a price move"
     tr.setdefault("lock_value", 0.0)
+    tr.setdefault("candle_profit", 100.0)   # inert unless the Signal candle trail starts "Only once in profit"
     tr.setdefault("gap", 50.0)
     tr.setdefault("atr_length", 14)
     return out
@@ -719,14 +945,16 @@ def complete_plan(plan: dict) -> dict:
 def plan_summary(plan: dict) -> str:
     """One-line description for logs / the dashboard."""
     ind = plan["ind"]
-    e = [BLOCK_TITLES[b] for b in BLOCKS if ind[b]["entry"]]
-    f = [BLOCK_TITLES[b] for b in BLOCKS if ind[b]["flip"]]
+    e = [BLOCK_TITLES[b] for b in BLOCKS if (ind.get(b) or {}).get("entry")]
+    f = [BLOCK_TITLES[b] for b in BLOCKS if (ind.get(b) or {}).get("flip")]
     ce = f"At least {plan['entry_min']:g}" if plan['combine_entry'] == COMBINE_ATLEAST else plan['combine_entry']
     cf = f"At least {plan['flip_min']:g}" if plan['combine_flip'] == COMBINE_ATLEAST else plan['combine_flip']
     me = f" | ENTRY main: {BLOCK_TITLES[plan['main_entry']]}" if plan.get("main_entry") in BLOCK_TITLES else ""
     mf = f" | FLIP main: {BLOCK_TITLES[plan['main_flip']]}" if plan.get("main_flip") in BLOCK_TITLES else ""
+    sr = plan.get("sr") or {}
+    srs = (" | Support / Resistance: " + ("its own strategy" if sr.get("alone") else "on")) if sr.get("on") else ""
     return (f"{plan['chart_type']} | ENTRY({ce}): {', '.join(e) or 'none'} | "
-            f"FLIP({cf}): {', '.join(f) or 'none'} | wait {plan['entry_wait']}{me}{mf}")
+            f"FLIP({cf}): {', '.join(f) or 'none'} | wait {plan['entry_wait']}{me}{mf}{srs}")
 
 
 # ==========================================================================
@@ -990,6 +1218,103 @@ def rsi_divergence(low, high, rsi, k: int, lookback: int):
     return bull, bear
 
 
+def pine_stdev(src, length: int) -> np.ndarray:
+    """ta.stdev: the POPULATION standard deviation (divide by N) of the last `length` values; na until a full window."""
+    s_ = _to_np(src)
+    return pd.Series(s_).rolling(int(length)).std(ddof=0).to_numpy(dtype=float)
+
+
+def pine_sar(h, l, c, start: float, inc: float, maximum: float) -> np.ndarray:
+    """Parabolic SAR, the way Pine's ta.sar works (first value on the second candle; NaN before). The dots are below the
+    price while the trend is up (SAR < close) and above it while it is down."""
+    n = len(c)
+    out = np.full(n, np.nan)
+    if n < 2:
+        return out
+    result = maxmin = acc = float("nan")
+    below = False
+    for i in range(1, n):
+        first = False
+        if i == 1:
+            if c[1] > c[0]:
+                below, maxmin, result = True, h[1], l[0]
+            else:
+                below, maxmin, result = False, l[1], h[0]
+            first, acc = True, start
+        result = result + acc * (maxmin - result)
+        if below:
+            if result > l[i]:
+                first, below = True, False
+                result = max(h[i], maxmin)
+                maxmin, acc = l[i], start
+        else:
+            if result < h[i]:
+                first, below = True, True
+                result = min(l[i], maxmin)
+                maxmin, acc = h[i], start
+        if not first:
+            if below:
+                if h[i] > maxmin:
+                    maxmin, acc = h[i], min(acc + inc, maximum)
+            else:
+                if l[i] < maxmin:
+                    maxmin, acc = l[i], min(acc + inc, maximum)
+        if below:
+            result = min(result, l[i - 1])
+            if i > 1:
+                result = min(result, l[i - 2])
+        else:
+            result = max(result, h[i - 1])
+            if i > 1:
+                result = max(result, h[i - 2])
+        out[i] = result
+    return out
+
+
+def pine_supertrend(h, l, c, atr_length: int, factor: float):
+    """Supertrend, the way Pine's ta.supertrend works (hl2 source), but on the CHART candles and with the hub's own ATR
+    (manual true range, na on the first bar, RMA). Returns (line, up, valid): the Supertrend line, True where the trend
+    is UP (line below the price) and where the ATR is known. Bars before the ATR is known have line = NaN."""
+    h, l, c = _to_np(h), _to_np(l), _to_np(c)
+    n = len(c)
+    atr = pine_rma(_true_range_na(h, l, c), int(atr_length))
+    src = (h + l) / 2.0
+    ub0 = src + float(factor) * atr
+    lb0 = src - float(factor) * atr
+    fub = np.full(n, np.nan)
+    flb = np.full(n, np.nan)
+    line = np.full(n, np.nan)
+    dirn = np.ones(n, dtype=int)          # Pine: 1 = down trend, -1 = up trend
+    for i in range(n):
+        plb = 0.0 if (i == 0 or np.isnan(flb[i - 1])) else flb[i - 1]       # nz(lowerBand[1])
+        pub = 0.0 if (i == 0 or np.isnan(fub[i - 1])) else fub[i - 1]
+        pc = c[i - 1] if i > 0 else np.nan
+        lbi, ubi = lb0[i], ub0[i]
+        flb[i] = lbi if (lbi > plb or pc < plb) else plb      # a NaN compares false, like Pine's na
+        fub[i] = ubi if (ubi < pub or pc > pub) else pub
+        if i == 0 or np.isnan(atr[i - 1]):
+            d = 1
+        else:
+            prev_line = line[i - 1]
+            if prev_line == pub:
+                d = -1 if c[i] > fub[i] else 1
+            else:
+                d = 1 if c[i] < flb[i] else -1
+        dirn[i] = d
+        line[i] = flb[i] if d == -1 else fub[i]
+    valid = ~np.isnan(atr)
+    line = np.where(valid, line, np.nan)
+    return line, (dirn == -1) & valid, valid
+
+
+def _shift_bool(a: np.ndarray) -> np.ndarray:
+    """The value one candle earlier; False on the first candle."""
+    out = np.zeros(len(a), dtype=bool)
+    if len(a) > 1:
+        out[1:] = a[:-1]
+    return out
+
+
 def _within(cond: np.ndarray, n: int) -> np.ndarray:
     """nz(ta.barssince(cond), 9999) <= n"""
     out = np.zeros(len(cond), dtype=bool)
@@ -1057,6 +1382,11 @@ def compute_hub(df: pd.DataFrame, plan: dict) -> pd.DataFrame:
             tol = 1e-9 * np.maximum(np.abs(cO), 1.0)
             longs["candle"] = longs["candle"] & (cL >= cO - tol)
             shorts["candle"] = shorts["candle"] & (cH <= cO + tol)
+        if ind["candle"].get("prev_opposite"):
+            # the candle before the signal candle was the OPPOSITE colour (long: it was a down candle, short: an up one)
+            pO, pC = _shift(cO), _shift(cC)
+            longs["candle"] = longs["candle"] & (pC < pO)
+            shorts["candle"] = shorts["candle"] & (pC > pO)
 
     for name in ("ma1", "ma2"):
         p = ind[name]
@@ -1168,6 +1498,83 @@ def compute_hub(df: pd.DataFrame, plan: dict) -> pd.DataFrame:
     with np.errstate(invalid="ignore"):
         longs["st"], shorts["st"] = cC > hh, cC < ll
 
+    p = ind["bb"]
+    bb_basis = pine_sma(cC, p["length"])
+    bb_dev = float(p["mult"]) * pine_stdev(cC, p["length"])
+    bb_upper, bb_lower = bb_basis + bb_dev, bb_basis - bb_dev
+    out["bb_basis"], out["bb_upper"], out["bb_lower"] = bb_basis, bb_upper, bb_lower
+    with np.errstate(invalid="ignore"):
+        longs["bb"] = _within(cL <= bb_lower, int(p["n"]))       # the low touched the bottom limit
+        shorts["bb"] = _within(cH >= bb_upper, int(p["n"]))      # the high touched the top limit
+
+    p = ind["eb"]
+    eb_len = int(p["length"])
+    eb_top, eb_mid, eb_bot = pine_ema(cH, eb_len), pine_ema(cC, eb_len), pine_ema(cL, eb_len)
+    out["eb_top"], out["eb_mid"], out["eb_bot"] = eb_top, eb_mid, eb_bot
+    eb_back = max(int(p["n"]) - 1, 0)           # N candles ending with the candle BEFORE the signal candle
+
+    def _eb_up(line):         # the close is above the line and was below it within the last N candles
+        with np.errstate(invalid="ignore"):
+            was = _within(np.r_[False, (cC < line)[:-1]], eb_back)
+            return (cC > line) & was
+
+    def _eb_down(line):       # the close is below the line and was above it within the last N candles
+        with np.errstate(invalid="ignore"):
+            was = _within(np.r_[False, (cC > line)[:-1]], eb_back)
+            return (cC < line) & was
+    lg_eb, sh_eb = np.zeros(n, dtype=bool), np.zeros(n, dtype=bool)
+    if p.get("long_low"):
+        lg_eb = lg_eb | _eb_up(eb_bot)
+    if p.get("long_high"):
+        lg_eb = lg_eb | _eb_up(eb_top)
+    if p.get("short_high"):
+        sh_eb = sh_eb | _eb_down(eb_top)
+    if p.get("short_low"):
+        sh_eb = sh_eb | _eb_down(eb_bot)
+    longs["eb"], shorts["eb"] = lg_eb, sh_eb
+
+    p = ind["sar"]
+    sar_v = pine_sar(cH, cL, cC, float(p["step"]), float(p["step"]), float(p["limit"]))
+    out["sar_dots"] = sar_v
+    with np.errstate(invalid="ignore"):
+        longs["sar"], shorts["sar"] = cC > sar_v, cC < sar_v
+
+    p = ind["sup"]
+    sup_line, sup_up, sup_valid = pine_supertrend(cH, cL, cC, p["atr_length"], p["factor"])
+    out["sup_line"] = sup_line
+    out["sup_up"] = sup_up
+    sup_down = sup_valid & ~sup_up
+    prev_up, prev_down = _shift_bool(sup_up), _shift_bool(sup_down)
+    lg, sh = np.ones(n, dtype=bool), np.ones(n, dtype=bool)
+    for m in p["modes"]:                       # every ticked condition must agree
+        if m == SUP_FLIP:
+            a = _within(sup_up & prev_down, int(p["n"]))
+            b_ = _within(sup_down & prev_up, int(p["n"]))
+        else:
+            a, b_ = sup_up, sup_down
+        lg, sh = lg & a, sh & b_
+    longs["sup"], shorts["sup"] = lg, sh
+
+    # SUPPORT / RESISTANCE (2026-11-05): worked out on the NORMAL candles (see app/sr_engine.py). Off = all False.
+    srp = sr_cfg(plan)
+    if srp:
+        sr_atr = pine_rma(_true_range_na(h, l, c), int(srp["atr_length"]))
+        R = _sr.compute(_to_np(out["open"]), h, l, c, vol, sr_atr, srp)
+    else:
+        R = None
+    zb, zf = np.zeros(n, dtype=bool), np.full(n, np.nan)
+    longs["sr"], shorts["sr"] = (R["long"], R["short"]) if R else (zb, zb.copy())
+    out["sr_origin"] = R["origin"].astype(int) if R else np.zeros(n, dtype=int)
+    out["sr_stop_long"], out["sr_stop_short"] = (R["stop_long"], R["stop_short"]) if R else (zf, zf.copy())
+    out["sr_xb_long"], out["sr_xb_short"] = (R["exit_bl"], R["exit_bs"]) if R else (zb.copy(), zb.copy())
+    out["sr_xk_long"], out["sr_xk_short"] = (R["exit_kl"], R["exit_ks"]) if R else (zb.copy(), zb.copy())
+    for key in ("s1", "s2", "r1", "r2", "mid", "lock"):
+        out["sr_" + key] = R[key] if R else zf.copy()
+    out["sr_lock_dir"] = R["lock_dir"].astype(int) if R else np.zeros(n, dtype=int)
+    out["sr_break_up"], out["sr_break_dn"] = (R["break_up"], R["break_dn"]) if R else (zb.copy(), zb.copy())
+    out["sr_conflict"] = R["conflict"] if R else zb.copy()
+    out.attrs["sr_levels"] = R["levels_now"] if R else []
+
     for b in BLOCKS:
         out[f"{b}_long"] = longs[b]
         out[f"{b}_short"] = shorts[b]
@@ -1197,6 +1604,11 @@ def compute_hub(df: pd.DataFrame, plan: dict) -> pd.DataFrame:
         return lg, sh, d
 
     out["entry_long"], out["entry_short"], out["dir_e"] = combine("entry", plan["combine_entry"])
+    if srp and srp.get("alone"):
+        # Support / Resistance as its own strategy: its entries are added to the combined entry signal
+        el, es = out["entry_long"].values | longs["sr"], out["entry_short"].values | shorts["sr"]
+        out["entry_long"], out["entry_short"] = el, es
+        out["dir_e"] = np.where(el & ~es, 1, np.where(es & ~el, -1, 0))
     if flip_same_entry(plan):     # Flip: Same as entry = Yes -> the flip uses the ENTRY signal itself
         out["flip_long"], out["flip_short"], out["dir_f"] = out["entry_long"], out["entry_short"], out["dir_e"]
     else:
@@ -1205,10 +1617,25 @@ def compute_hub(df: pd.DataFrame, plan: dict) -> pd.DataFrame:
     # base signals for the first-reversal rule = the entry signal itself
     out["size_ema"] = pine_ema(cC, plan["sizing"]["counter"]["ema_length"])   # chart close, for trend / counter sizing
     by = plan["sizing"]["counter"].get("by", CT_EMA)
-    if by in CT_BLOCKS:     # counter trend decided by an indicator: the side it says on this candle
+    if by == "bb":          # Bollinger half: LONG with the trend in the lower half of the band, SHORT in the upper half
+        with np.errstate(invalid="ignore"):
+            out["ct_long"], out["ct_short"] = cC < bb_basis, cC > bb_basis
+    elif by in CT_BLOCKS:   # counter trend decided by an indicator: the side it says on this candle
         out["ct_long"], out["ct_short"] = longs[by], shorts[by]
     else:
         out["ct_long"], out["ct_short"] = np.zeros(n, dtype=bool), np.zeros(n, dtype=bool)
+    # EXIT WHEN: the MA value after the candle close is against the trade (long: lower than the one before, short: higher)
+    ew = exit_cfg(plan)
+    ex_long, ex_short = np.zeros(n, dtype=bool), np.zeros(n, dtype=bool)
+    if ew:
+        with np.errstate(invalid="ignore"):
+            m1, m2 = out["ma1"].values, out["ma2"].values
+            f1, r1, f2, r2 = m1 < _shift(m1), m1 > _shift(m1), m2 < _shift(m2), m2 > _shift(m2)
+        if ew.get("signal") == EXIT_MA2:
+            ex_long, ex_short = f2, r2
+        else:
+            ex_long, ex_short = f1 & f2, r1 & r2
+    out["exit_long"], out["exit_short"] = ex_long, ex_short
     tp = plan["tp"]
     tr_n = _true_range_na(h, l, c)
     out["tp_atr"] = pine_rma(tr_n, tp["atr_length"])
@@ -1222,6 +1649,8 @@ def compute_hub(df: pd.DataFrame, plan: dict) -> pd.DataFrame:
     sll = int(plan["sl"].get("length") or 10)          # Stop Loss Structure / Chandelier: last N NORMAL candles
     out["sl_low"] = rolling_lowest(l, sll)
     out["sl_high"] = rolling_highest(h, sll)
+    if sl_swing(plan):
+        out["sl_piv_low"], out["sl_piv_high"] = _sl_pivots(h, l, c, int(plan["sl"]["struct_n"]))
     return out
 
 
@@ -1250,8 +1679,22 @@ class HubSnapshot:
     be_atr: float = float("nan")     # Break-Even After ATR: the ATR at the entry candle
     sl_low: float = float("nan")     # Stop Loss Structure / Chandelier: lowest low / highest high of its N candles
     sl_high: float = float("nan")
+    sl_piv_low: float = float("nan")     # Stop Loss Structure "Real swing point": latest confirmed swing low below the close
+    sl_piv_high: float = float("nan")    # ... latest confirmed swing high above the close
     ct_long: bool = False        # counter trend decided by an indicator: it says LONG / SHORT on this candle
     ct_short: bool = False
+    sup_line: float = float("nan")   # Trailing Stop "Supertrend line": the line of this candle
+    exit_long: bool = False      # Exit when: the MA(s) curve against a LONG / a SHORT on this candle close
+    exit_short: bool = False
+    sr_origin: int = 0           # Support / Resistance: 0 none, 1 bounce, 2 breakout, 3 retest (the entry signal of this candle)
+    sr_stop_long: float = float("nan")    # the stop outside the zone for a LONG / SHORT entered on this candle
+    sr_stop_short: float = float("nan")
+    sr_xb_long: bool = False     # SR exit (bounce ticks) against a LONG / a SHORT on this candle close
+    sr_xb_short: bool = False
+    sr_xk_long: bool = False     # SR exit (breakout ticks: the close is back inside the range)
+    sr_xk_short: bool = False
+    sr_long: bool = False
+    sr_short: bool = False
 
     def to_display_dict(self) -> dict:
         def side(d):
@@ -1281,8 +1724,22 @@ def hub_snapshot_at(frame: pd.DataFrame, i: int) -> HubSnapshot:
         be_atr=_f(r["be_atr"]) if "be_atr" in r.index else float("nan"),
         sl_low=_f(r["sl_low"]) if "sl_low" in r.index else float("nan"),
         sl_high=_f(r["sl_high"]) if "sl_high" in r.index else float("nan"),
+        sl_piv_low=_f(r["sl_piv_low"]) if "sl_piv_low" in r.index else float("nan"),
+        sl_piv_high=_f(r["sl_piv_high"]) if "sl_piv_high" in r.index else float("nan"),
         ct_long=bool(r["ct_long"]) if "ct_long" in r.index else False,
         ct_short=bool(r["ct_short"]) if "ct_short" in r.index else False,
+        sup_line=_f(r["sup_line"]) if "sup_line" in r.index else float("nan"),
+        exit_long=bool(r["exit_long"]) if "exit_long" in r.index else False,
+        exit_short=bool(r["exit_short"]) if "exit_short" in r.index else False,
+        sr_origin=int(r["sr_origin"]) if "sr_origin" in r.index else 0,
+        sr_stop_long=_f(r["sr_stop_long"]) if "sr_stop_long" in r.index else float("nan"),
+        sr_stop_short=_f(r["sr_stop_short"]) if "sr_stop_short" in r.index else float("nan"),
+        sr_xb_long=bool(r["sr_xb_long"]) if "sr_xb_long" in r.index else False,
+        sr_xb_short=bool(r["sr_xb_short"]) if "sr_xb_short" in r.index else False,
+        sr_xk_long=bool(r["sr_xk_long"]) if "sr_xk_long" in r.index else False,
+        sr_xk_short=bool(r["sr_xk_short"]) if "sr_xk_short" in r.index else False,
+        sr_long=bool(r["sr_long"]) if "sr_long" in r.index else False,
+        sr_short=bool(r["sr_short"]) if "sr_short" in r.index else False,
     )
 
 
@@ -1306,6 +1763,48 @@ def flip_decision(direction: str, snap: HubSnapshot, entry_price: float, plan: d
         if profit > 0 and snap.adx < h["adx_level"]:
             return "HOLD"
     return "FLIP"
+
+
+def exit_decision(direction: str, snap: HubSnapshot, plan: dict) -> str:
+    """In a position: "EXIT" when Exit when is ON and its signal is against the open trade on this candle close, else
+    "STAY". (Whether it then waits or flips is exit_after.)"""
+    if not exit_cfg(plan):
+        return "STAY"
+    hit = bool(getattr(snap, "exit_long", False)) if direction == "LONG" else bool(getattr(snap, "exit_short", False))
+    return "EXIT" if hit else "STAY"
+
+
+def sr_exit_decision(direction: str, snap: HubSnapshot, plan: dict, origin: int) -> str:
+    """Support / Resistance exits, judged at a candle close: "EXIT" or "STAY". Which exits count depends on where
+    they apply: "every trade" = any ticked exit closes any trade; "SR trades only" = a trade that a bounce entered
+    uses the bounce exits, one that a breakout or a retest entered uses the breakout exit (the close back inside)."""
+    sr = sr_cfg(plan)
+    if not sr_exit_ticked(sr):
+        return "STAY"
+    long_ = direction == "LONG"
+    xb = bool(getattr(snap, "sr_xb_long" if long_ else "sr_xb_short", False))
+    xk = bool(getattr(snap, "sr_xk_long" if long_ else "sr_xk_short", False))
+    if sr.get("exit_all"):
+        hit = xb or xk
+    elif sr.get("exit_sr_only"):
+        hit = xb if origin == _sr.ORIGIN_BOUNCE else xk if origin in (_sr.ORIGIN_BREAKOUT, _sr.ORIGIN_RETEST) else False
+    else:
+        hit = False
+    return "EXIT" if hit else "STAY"
+
+
+def exit_after(plan: dict) -> str:
+    ew = exit_cfg(plan)
+    return ew.get("after", EXIT_WAIT) if ew else EXIT_WAIT
+
+
+def sup_trail_level(direction: str, line, price) -> float | None:
+    """Trailing Stop "Supertrend line": the line, if it is on the protective side of the price (long: below it, short:
+    above it). A line on the wrong side (the Supertrend points the other way) gives nothing."""
+    if line is None or price is None or not math.isfinite(line) or not math.isfinite(price):
+        return None
+    ok = line < price if direction == "LONG" else line > price
+    return float(line) if ok else None
 
 
 def entry_size(direction: str, snap: HubSnapshot, plan: dict) -> tuple[float, float, str]:
@@ -1510,9 +2009,30 @@ def level_from_entry(direction: str, entry_price: float, dist: float) -> float:
 def sl_level(direction: str, entry_price: float, atr, plan: dict, snap=None, qty=None) -> float | None:
     """The Stop Loss price of a new trade, worked out once at entry. None = it cannot be worked out (ATR not ready,
     no candles / qty for that method, or the result is on the wrong side of the entry price)."""
+    srs = _sr_stop_level(direction, entry_price, plan, snap)
     sl = plan.get("sl") or {}
     if not sl.get("on"):
+        return srs
+    plain = _plain_sl_level(direction, entry_price, atr, plan, snap, qty)
+    if plain is None or srs is None:
+        return plain if srs is None else srs
+    return srs if is_tighter(direction, srs, plain) else plain      # both are active: the one the price meets first
+
+
+def _sr_stop_level(direction: str, entry_price: float, plan: dict, snap) -> float | None:
+    """The Support / Resistance stop (outside the zone) of a trade entered on the Support / Resistance candle."""
+    if snap is None or not sr_stop_on(plan) or not getattr(snap, "sr_origin", 0):
         return None
+    lvl = getattr(snap, "sr_stop_long" if direction == "LONG" else "sr_stop_short", None)
+    if lvl is None or not math.isfinite(lvl) or lvl <= 0:
+        return None
+    if (direction == "LONG" and lvl >= entry_price) or (direction == "SHORT" and lvl <= entry_price):
+        return None
+    return float(lvl)
+
+
+def _plain_sl_level(direction: str, entry_price: float, atr, plan: dict, snap=None, qty=None) -> float | None:
+    sl = plan.get("sl") or {}
     b = sl.get("basis")
     lvl = None
     if b in (BASIS_ATR, BASIS_PRICE):
@@ -1525,7 +2045,10 @@ def sl_level(direction: str, entry_price: float, atr, plan: dict, snap=None, qty
         except (TypeError, ValueError):
             lvl = None
     elif b == SL_STRUCT and snap is not None:
-        lvl = getattr(snap, "sl_low" if direction == "LONG" else "sl_high", None)
+        if sl.get("struct_mode") == SLS_SWING:
+            lvl = getattr(snap, "sl_piv_low" if direction == "LONG" else "sl_piv_high", None)
+        else:
+            lvl = getattr(snap, "sl_low" if direction == "LONG" else "sl_high", None)
     elif b == SL_CHAND and snap is not None:
         d = distance(BASIS_ATR, sl.get("value"), entry_price, atr)
         ext = getattr(snap, "sl_high" if direction == "LONG" else "sl_low", None)
@@ -1635,6 +2158,62 @@ def candle_trail_distance(plan: dict, entry_price: float, atr) -> float | None:
     return distance(BASIS_ATR, tr.get("value"), entry_price, atr)
 
 
+def candle_start_profit(plan: dict) -> bool:
+    """The Signal candle trail waits until the trade is in profit by candle_profit (% of the signal candle ATR)."""
+    tr = plan.get("trail") or {}
+    return bool(tr.get("on") and tr.get("type") == TRAIL_CANDLE and tr.get("candle_start") == TCS_PROFIT)
+
+
+def candle_arm_price(direction: str, entry_price: float, atr, plan: dict) -> float | None:
+    """The price a candle must CLOSE at (or beyond) before the trail may take charge: entry +/- candle_profit % of
+    the signal candle ATR. None when it is not used or cannot be worked out (ATR not ready)."""
+    if not candle_start_profit(plan):
+        return None
+    d = distance(BASIS_ATR, (plan.get("trail") or {}).get("candle_profit"), entry_price, atr)
+    if d is None or not math.isfinite(d) or d <= 0:
+        return None
+    return float(entry_price + d if direction == "LONG" else entry_price - d)
+
+
+def candle_armed(direction: str, close, arm_price) -> bool:
+    """A candle closed at or beyond the arming price (long: at or above, short: at or below)."""
+    if arm_price is None or close is None or not math.isfinite(close):
+        return False
+    return close >= arm_price if direction == "LONG" else close <= arm_price
+
+
+def sl_swing(plan: dict) -> bool:
+    """Stop Loss Structure found by a real swing point (N candles each side)."""
+    sl = plan.get("sl") or {}
+    return bool(sl.get("on") and sl.get("basis") == SL_STRUCT and sl.get("struct_mode") == SLS_SWING)
+
+
+def _sl_pivots(h, l, c, n_side: int):
+    """Per candle: the latest swing low (below this close) and swing high (above this close) that was already
+    CONFIRMED on this candle (a swing is known n_side candles after it formed, so nothing looks ahead)."""
+    n = len(c)
+    lo_out = np.full(n, np.nan)
+    hi_out = np.full(n, np.nan)
+    hi, lo = _sr.swing_points(np.asarray(h, dtype=float), np.asarray(l, dtype=float), n_side)
+    kh = kl = 0
+    for i in range(n):
+        while kh < len(hi) and hi[kh][0] + n_side <= i:
+            kh += 1
+        while kl < len(lo) and lo[kl][0] + n_side <= i:
+            kl += 1
+        if not math.isfinite(c[i]):
+            continue
+        for j in range(kl - 1, max(kl - 501, -1), -1):
+            if lo[j][1] < c[i]:
+                lo_out[i] = lo[j][1]
+                break
+        for j in range(kh - 1, max(kh - 501, -1), -1):
+            if hi[j][1] > c[i]:
+                hi_out[i] = hi[j][1]
+                break
+    return lo_out, hi_out
+
+
 def candle_trail_level(direction: str, low, high, dist) -> float | None:
     """Long: the candle low minus the distance. Short: the candle high plus the distance."""
     if dist is None or not math.isfinite(dist) or dist <= 0:
@@ -1725,3 +2304,66 @@ def wait_step(ws: WaitState, *, flipped_to: int, reverse: bool, flat: bool, dir_
         ws.pend_dir = 0
         return d
     return 0
+
+
+# ==========================================================================
+# CHANGE AN OPEN TRADE (owner 2026-11-05)
+# ==========================================================================
+# The settings that may be changed while a trade is open (they are about HOW the open trade is protected / closed).
+# Everything else (entry signals + indicators, flip rules, Indicator Combination, entry size, leverage, chart type,
+# timeframe, ...) is part of how the trade was OPENED: it waits for the next trade.
+AMEND_PATHS = (
+    ("trail",), ("sl",), ("be",), ("tp",), ("exit_when",), ("hold", "adx_level"),
+    ("sizing", "stop_on"), ("sizing", "stop_basis"), ("sizing", "stop_pct"), ("sizing", "stop_usd"),
+)
+AMEND_GROUPS = (       # (group name shown to the owner, the paths in it)
+    ("Trailing Stop", (("trail",),)),
+    ("Stop Loss", (("sl",),)),
+    ("Break-Even", (("be",),)),
+    ("Take profit", (("tp",),)),
+    ("Exit when", (("exit_when",),)),
+    ("Hold rule ADX level", (("hold", "adx_level"),)),
+    ("Max Loss per Trade", (("sizing", "stop_on"), ("sizing", "stop_basis"),
+                            ("sizing", "stop_pct"), ("sizing", "stop_usd"))),
+)
+AMEND_NOW, AMEND_NEXT = "now", "next"
+AMEND_TIGHTER, AMEND_LOOSER = "tighter", "looser"
+
+
+def _amend_get(plan: dict, path: tuple):
+    cur = plan
+    for k in path:
+        if not isinstance(cur, dict) or k not in cur:
+            return None
+        cur = cur[k]
+    return cur
+
+
+def amend_diff(old: dict, new: dict) -> dict:
+    """What differs between the plan the open trade runs on (old) and the newly saved plan (new), both complete.
+    {"now": [group names that changed and may be applied to the open trade],
+     "waits": True if something else (not allowed on an open trade) also changed, so it waits for the next trade}.
+    The strategy name is a label only."""
+    old_c, new_c = complete_plan(old), complete_plan(new)
+    now = [name for name, paths in AMEND_GROUPS
+           if any(_amend_get(old_c, p) != _amend_get(new_c, p) for p in paths)]
+    merged = amend_merge(old_c, new_c)
+    a = {k: v for k, v in merged.items() if k != "name"}
+    b = {k: v for k, v in new_c.items() if k != "name"}
+    return {"now": now, "waits": a != b}
+
+
+def amend_merge(old: dict, new: dict) -> dict:
+    """The plan the open trade runs on after the change: a copy of OLD with only the allowed settings taken from NEW."""
+    import copy as _copy
+    out = _copy.deepcopy(complete_plan(old))
+    new_c = complete_plan(new)
+    for path in AMEND_PATHS:
+        val = _amend_get(new_c, path)
+        if val is None and path[-1] not in ("stop_on",):
+            continue
+        cur = out
+        for k in path[:-1]:
+            cur = cur[k]
+        cur[path[-1]] = _copy.deepcopy(val)
+    return out

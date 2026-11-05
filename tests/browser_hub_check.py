@@ -146,7 +146,7 @@ def main():
         choose_account_and_pair()
         check("menu + settings show after choosing the account", page.is_visible("#hub-form") and page.is_visible("#hub-menu"))
         names = page.eval_on_selector_all(".hubx-iname", "els=>els.map(e=>e.firstChild.textContent)")   # name only (the "i" icon is a child span)
-        check("menu has the 16 functions in order (one tab per function)", names == ["Pair", "Chart type", "Indicators", "Indicator Combination", "On a flip signal", "Hold rule", "Entry wait", "Entry size", "Max Loss per Trade", "Stop Loss", "Break-Even", "Trailing Stop", "Take profit", "Shadow mode", "Cooldown after a loss", "Loss limit"], str(names))
+        check("menu has the 18 functions in order (one tab per function)", names == ["Pair", "Chart type", "Indicators", "Indicator Combination", "On a flip signal", "Hold rule", "Entry wait", "Entry size", "Max Loss per Trade", "Stop Loss", "Break-Even", "Trailing Stop", "Take profit", "Shadow mode", "Cooldown after a loss", "Loss limit", "Exit when", "Support / Resistance"], str(names))
         check("each menu row has its description", all(len(d) > 20 for d in page.eval_on_selector_all(".hubx-idesc", "els=>els.map(e=>e.innerText)")))
         check("pick step: menu title and summary page", "click to pick" in page.inner_text("#hub-menu-title") and page.is_visible("#hub-pick-pane") and not page.is_visible("#hub-fill-pane"))
         check("8 needed functions (Stop Loss is a must, 2026-10-26) + Hold rule (default on, 2026-10-25) are picked", page.inner_text("#hub-progress").startswith("9 picked"))
@@ -204,7 +204,7 @@ def main():
         for i in (1, 2, 3): page.uncheck(f"#hub_tp{i}_on")
         # ---- Indicators
         openfn("ind")
-        check("indicator list has all 11 with ENTRY and FLIP ticks", page.locator("#hubpane_ind .hubx-trow").count() == 12)
+        check("indicator list has all 16 with ENTRY and FLIP ticks", page.locator("#hubpane_ind .hubx-trow").count() == 17)
         check("indicator is named MA Crossover (old name gone)", "MA Crossover" in page.inner_text("#hubpane_ind .hubx-table") and "MA 1 vs MA 2" not in page.inner_text("#hubpane_ind"))
         check("no numbers shown for unticked indicators", not page.is_visible("#hubcard_rsi") and not page.is_visible("#hubcard_ma1"))
         page.select_option("#hub_chart_type", "Candles") if False else None

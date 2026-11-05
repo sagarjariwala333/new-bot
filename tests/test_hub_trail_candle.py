@@ -68,7 +68,7 @@ class TestRule(unittest.TestCase):
 class TestValidation(unittest.TestCase):
     def test_ok_and_listed_as_a_type(self):
         self.assertIn(H.TRAIL_CANDLE, H.TRAIL_TYPES)
-        self.assertEqual(len(H.TRAIL_TYPES), 4)
+        self.assertEqual(len(H.TRAIL_TYPES), 5)
         H.validate_plan(plan())
         H.complete_plan(plan())
 

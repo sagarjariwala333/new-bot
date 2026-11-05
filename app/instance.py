@@ -2344,6 +2344,7 @@ class BotInstance(HubMixin):
 
     def _reset_position_state(self):
         closed_direction = self.state.direction
+        closed_reason = self.state.closing_reason
         self.state.status = "IDLE"
         self.state.direction = None
         self.state.entry_price = None
@@ -2373,8 +2374,11 @@ class BotInstance(HubMixin):
             # The stop ladder belongs to the trade that just closed. "Allow Mid-Trend Re-entry" OFF: this side is
             # blocked until its entry signal has ended (see HubMixin._hub_reentry_ok).
             self.hub.ladder = None
+            self.hub.sr_origin = 0
             if closed_direction in ("LONG", "SHORT"):
                 self.hub.reentry_block = 1 if closed_direction == "LONG" else -1
+                # "Exit when" -> Close and wait for a fresh signal: the block holds even if mid-trend re-entry is allowed
+                self.hub.reentry_forced = closed_reason in ("exit_when", "sr_exit")
             hub_state.save(self.hub)
         # Must never linger past its own trade's lifetime - see
         # position_state.py's own docstring on why a stale file here would
