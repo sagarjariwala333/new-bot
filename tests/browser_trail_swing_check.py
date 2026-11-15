@@ -94,6 +94,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self): self._go("DELETE")
 
 
+
+def apply_review(page):
+    """Confirm needs a Start-as choice when that box is shown (2026-11-09): pick Follow, then confirm."""
+    page.wait_for_timeout(150)
+    if page.is_visible("#hub-startas-box") and not page.is_checked("#startas-follow") and not page.is_checked("#startas-new"):
+        page.click("#startas-follow"); page.wait_for_timeout(120)
+    page.click("#hub-review-apply")
+
+
 def main():
     from playwright.sync_api import sync_playwright
     server = HTTPServer(("127.0.0.1", 0), Handler)
@@ -115,7 +124,7 @@ def main():
     def save():
         dismiss(); page.click("#hub-save-btn"); wait(300)
         if page.is_visible("#dlg-hub-review"):
-            page.click("#hub-review-apply"); wait(800)
+            apply_review(page); wait(800)
     with sync_playwright() as p:
         b = p.chromium.launch(); page = b.new_page(viewport={"width": 1500, "height": 900})
         errors = []; page.on("pageerror", lambda e: errors.append(str(e)))
@@ -139,7 +148,7 @@ def main():
         page.click("#hub-save-btn"); wait(300)
         rv = page.inner_text("#hub-review-body") if page.is_visible("#dlg-hub-review") else ""
         check("review line shows the in-profit rule", "only after a candle closes 75% of ATR beyond the entry" in rv, rv[:900])
-        if page.is_visible("#dlg-hub-review"): page.click("#hub-review-apply"); wait(800)
+        if page.is_visible("#dlg-hub-review"): apply_review(page); wait(800)
         tr = plan_of("AAAUSDT").get("trail") or {}
         check("saved: only once in profit and 75", (tr.get("candle_start"), tr.get("candle_profit")) == ("Only once in profit", 75), str(tr))
         page.click('.hubx-item[data-fn="sl"]'); wait(100); page.click('.hubx-item[data-fn="trail"]'); wait(150)
@@ -169,7 +178,7 @@ def main():
             page.click("#hub-remind-ok"); wait(100); page.click("#hub-save-btn"); wait(400)
         rv = page.inner_text("#hub-review-body") if page.is_visible("#dlg-hub-review") else ""
         check("review line shows the real swing point", "Real swing point, 3 candles on each side" in rv, rv[:900] + "|" + page.inner_text("#hub-msg")[:200])
-        if page.is_visible("#dlg-hub-review"): page.click("#hub-review-apply"); wait(800)
+        if page.is_visible("#dlg-hub-review"): apply_review(page); wait(800)
         sl = plan_of("AAAUSDT").get("sl") or {}
         check("saved: real swing point and 3", (sl.get("struct_mode"), sl.get("struct_n")) == ("Real swing point (N candles each side)", 3), str(sl))
         page.select_option("#hub_sl_basis", "Chandelier"); wait(150); dismiss()

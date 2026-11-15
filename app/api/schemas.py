@@ -116,6 +116,8 @@ class PlanBody(BaseModel):
     plan: dict
     # "Change an open trade" choice: {"when": "now" | "next", "stops": "tighter" | "looser"} (checked in hub_api)
     amend: dict | None = None
+    # "Start this plan as": {"mode": "follow"} or {"mode": "new", "first_flip"/"size"/"loss_streak"/"reentry": bool} (checked in hub_api)
+    start_as: dict | None = None
 
 
 class MenuLayoutBody(BaseModel):

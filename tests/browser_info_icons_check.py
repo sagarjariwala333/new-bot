@@ -149,9 +149,9 @@ def main():
         missing = [k for k in keys if k not in page.evaluate("Object.keys(HELP)")]
         check("every i points to a real text", keys and not missing, str(missing))
         check("no 'No help text' warning in the console", not warns, str(warns[:3]))
-        check("18 function titles + 18 menu rows each have an i",
-              page.evaluate("document.querySelectorAll('.hubx-title .info-i').length") == 18
-              and page.evaluate("document.querySelectorAll('.hubx-iname .info-i').length") == 18)
+        check("19 function titles + 19 menu rows each have an i",
+              page.evaluate("document.querySelectorAll('.hubx-title .info-i').length") == 19
+              and page.evaluate("document.querySelectorAll('.hubx-iname .info-i').length") == 19)
         check("indicator table: 16 indicator rows + 3 column heads (ENTRY, FLIP, CTREND) have an i",
               page.evaluate("document.querySelectorAll('.hubx-trow:not(.hubx-thead) .info-i').length") == 16
               and page.evaluate("document.querySelectorAll('.hubx-thead .info-i').length") == 3)

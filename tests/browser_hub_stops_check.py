@@ -115,6 +115,15 @@ def pick(page, fid, value):
     page.wait_for_timeout(120)
 
 
+
+def apply_review(page):
+    """Confirm needs a Start-as choice when that box is shown (2026-11-09): pick Follow, then confirm."""
+    page.wait_for_timeout(150)
+    if page.is_visible("#hub-startas-box") and not page.is_checked("#startas-follow") and not page.is_checked("#startas-new"):
+        page.click("#startas-follow"); page.wait_for_timeout(120)
+    page.click("#hub-review-apply")
+
+
 def main():
     from playwright.sync_api import sync_playwright
     server = HTTPServer(("127.0.0.1", 0), Handler)
@@ -207,7 +216,7 @@ def main():
         rv = page.inner_text("#hub-review-body") if page.is_visible("#dlg-hub-review") else page.inner_text("#hub-msg")
         check("review lists Stop Loss, Trailing Stop, take profit and re-entry", "Stop Loss: % of price movement · Value: 3 % · Time stop: OFF" in rv and "Trailing Stop: Step, start same as Stop Loss, gap 0.5 % of price movement" in rv
               and "TP1 at 3% (closes 80%)" in rv and "No Mid-Trend Re-entry: ON" in rv and "Max Loss per Trade (last line of defense)" in rv, rv[:900])
-        page.click("#hub-review-apply"); page.wait_for_timeout(800)
+        apply_review(page); page.wait_for_timeout(800)
         pl = store.get_account(acc.id).pairs["TESTUSDT"].plan or {}
         check("Stop Loss saved", pl.get("sl") == {"on": True, "basis": "% of price movement", "value": 3, "time_on": False}, str(pl.get("sl")))
         check("Step Trailing Stop saved", pl.get("trail") == {"on": True, "type": "Step", "basis": "% of price movement", "start": "Same as Stop Loss", "gap": 0.5}, str(pl.get("trail")))
@@ -233,7 +242,7 @@ def main():
             openfn(fn)
         page.click("#hub-save-btn"); page.wait_for_timeout(300)
         if page.is_visible("#dlg-hub-review"):
-            page.click("#hub-review-apply"); page.wait_for_timeout(800)
+            apply_review(page); page.wait_for_timeout(800)
         pl = store.get_account(acc.id).pairs["TESTUSDT"].plan or {}
         check("Hold rule saved ON with its level", pl.get("hold") == {"on": True, "adx_level": 25}, str(pl.get("hold")) + " " + page.inner_text("#hub-msg")[:200])
         # ---- phone

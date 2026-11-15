@@ -18,7 +18,7 @@ rounding, and the handful of endpoints the bot needs:
     full explanation and the official docs this was verified against.
   - position risk (open position + mark price)
 
-Every account (up to 12) gets its own client instance with its own
+Every account (up to 7) gets its own client instance with its own
 api_key/api_secret, so accounts are fully isolated from one another.
 """
 
@@ -38,6 +38,7 @@ from urllib.parse import urlencode
 import aiohttp
 
 from app.exchange_adapter import BaseExchangeAdapter, ExchangeAPIError
+from app import api_guard
 
 MAINNET_BASE = "https://fapi.binance.com"
 TESTNET_BASE = "https://testnet.binancefuture.com"
@@ -280,11 +281,36 @@ class BinanceFuturesClient(BaseExchangeAdapter):
         if signed:
             params = self._sign(params)
         url = f"{self.base_url}{path}"
+        # API-ban protection (2026-11-11): one shared budget for every account/pair on this IP.
+        guard = api_guard.get_guard("binance")
+        urgent = api_guard.binance_urgent(method, path)
+        weight = api_guard.binance_weight(method, path, params)
+        if urgent:
+            await guard.acquire(weight, urgent=True)
+            return await self._send_guarded(session, guard, method, url, params)
+        async with guard.normal_slot():
+            await guard.acquire(weight, urgent=False)
+            return await self._send_guarded(session, guard, method, url, params)
+
+    async def _send_guarded(self, session, guard, method: str, url: str, params: dict) -> Any:
         async with session.request(method, url, params=params) as resp:
             self._capture_order_count_headers(resp.headers)
+            try:
+                guard.note_reported(resp.headers.get("X-MBX-USED-WEIGHT-1M"))
+            except Exception:
+                pass
             data = await resp.json(content_type=None)
+            if resp.status in (418, 429):
+                default = api_guard.DEFAULT_418_PAUSE if resp.status == 418 else api_guard.DEFAULT_429_PAUSE
+                secs = api_guard.retry_after_seconds(resp.headers, default)
+                if resp.status == 418 and resp.headers.get("Retry-After") is None:
+                    secs = max(secs, api_guard.ban_seconds_from_message(data))
+                guard.trigger_pause(secs, resp.status, f"({url.rsplit('/', 1)[-1]})")
+            elif resp.status >= 400 and isinstance(data, dict) and data.get("code") in RATE_LIMIT_CODES:
+                guard.trigger_pause(api_guard.DEFAULT_429_PAUSE, resp.status, f"(code {data.get('code')})")
             if resp.status >= 400:
                 raise BinanceAPIError(resp.status, data)
+            guard.note_success()
             return data
 
     def _capture_order_count_headers(self, headers) -> None:
@@ -411,9 +437,10 @@ class BinanceFuturesClient(BaseExchangeAdapter):
                     await asyncio.sleep(0.5)
                     continue
                 if e.code in RATE_LIMIT_CODES or e.status in (418, 429):
-                    backoff = delay * (2 ** attempt)
-                    log.warning("Rate-limited on %s (code=%s) - backing off %.1fs.", path, e.code, backoff)
-                    await asyncio.sleep(backoff)
+                    # The shared guard already paused every pair for the time the exchange asked
+                    # (Retry-After); the next attempt simply waits inside acquire().
+                    log.warning("Rate-limited on %s (code=%s) - all pairs paused by the API guard.", path, e.code)
+                    await asyncio.sleep(0.5)
                     continue
                 log.warning("%s failed (attempt %d/%d, code=%s): %s", path, attempt, retries, e.code, e)
                 await asyncio.sleep(delay)
@@ -736,7 +763,7 @@ class BinanceFuturesClient(BaseExchangeAdapter):
                 params={
                     "algoType": "CONDITIONAL", "symbol": symbol, "side": side,
                     "type": "STOP", "triggerPrice": trigger_price, "price": limit_price,
-                    "quantity": quantity, "timeInForce": "GTC", "reduceOnly": "true",
+                    "quantity": self._plain_number(quantity), "timeInForce": "GTC", "reduceOnly": "true",
                     "workingType": "MARK_PRICE", "priceProtect": "false", "clientAlgoId": client_algo_id,
                 },
             )
@@ -1000,7 +1027,7 @@ class BinanceFuturesClient(BaseExchangeAdapter):
         try:
             return await self._request(
                 "POST", "/fapi/v1/order", signed=True,
-                params={"symbol": symbol, "side": side, "type": "MARKET", "quantity": quantity,
+                params={"symbol": symbol, "side": side, "type": "MARKET", "quantity": self._plain_number(quantity),
                         "newClientOrderId": client_order_id},
             )
         except (aiohttp.ClientError, asyncio.TimeoutError) as ambiguous_exc:
@@ -1029,7 +1056,7 @@ class BinanceFuturesClient(BaseExchangeAdapter):
                 "POST", "/fapi/v1/order", signed=True,
                 params={
                     "symbol": symbol, "side": side, "type": "MARKET",
-                    "quantity": quantity, "reduceOnly": "true",
+                    "quantity": self._plain_number(quantity), "reduceOnly": "true",
                     "newClientOrderId": client_order_id,
                 },
             )
@@ -1079,9 +1106,14 @@ class BinanceFuturesClient(BaseExchangeAdapter):
 
     @staticmethod
     def _plain_number(x: float) -> str:
-        """A number as plain decimal text (never 1e-05 style), for order parameters."""
+        """A number as plain decimal text (never 1e-05 style), for order parameters. A whole number has NO decimals
+        ("33", not "33.0"): Binance answers -1111 "Precision is over the maximum defined for this asset" to "33.0"
+        for a coin whose quantity step is 1 (AVAXUSDT, 2026-11-09)."""
         from decimal import Decimal
-        return format(Decimal(str(x)), "f")
+        d = Decimal(str(x))
+        if d == d.to_integral_value():
+            return format(d.quantize(Decimal(1)), "f")
+        return format(d.normalize(), "f")
 
     async def limit_reduce_order(self, symbol: str, side: str, quantity: float, price: float) -> dict:
         """Resting reduce-only LIMIT (GTC) - the Strategy Hub's take-profit levels. side = the side that
@@ -1141,7 +1173,8 @@ class BinanceFuturesClient(BaseExchangeAdapter):
         if errors:
             raise BinanceAPIError(0, {"msg": "; ".join(errors)})
 
-    async def get_user_trades(self, symbol: str, order_id: int | None = None, limit: int = 50) -> list[dict]:
+    async def get_user_trades(self, symbol: str, order_id: int | None = None, limit: int = 50,
+                              start_ms: int | None = None) -> list[dict]:
         """Real fill records for this symbol, including the ACTUAL commission
         Binance charged - used to compute net (not estimated) PnL for the
         ledger. Never used to simulate or predict a fee; if this call fails,
@@ -1152,7 +1185,11 @@ class BinanceFuturesClient(BaseExchangeAdapter):
         `orderId` filter), never an algoId - they're different ID spaces. For
         a fill that came from a triggered SL/TP, resolve the algo order via
         get_algo_order() first and use its `actualOrderId`."""
+        # Without startTime Binance answers with the OLDEST trades of the last 7 days (not the newest), so a
+        # query without an order id must always carry a start time (2026-11-09 fix: a wrong exit price came from this).
         params = {"symbol": symbol, "limit": limit}
         if order_id is not None:
             params["orderId"] = order_id
+        if start_ms is not None:
+            params["startTime"] = int(start_ms)
         return await self._request("GET", "/fapi/v1/userTrades", signed=True, params=params)

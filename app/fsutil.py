@@ -51,6 +51,9 @@ def atomic_write(path: Path, content: str, secret: bool = True):
         os.replace(tmp_path, path)
         if secret:
             harden_permissions(path)
+    except Exception as e:
+        _alert_save_failed(path, e)
+        raise
     finally:
         # If the replace already happened, tmp_path no longer exists and this
         # is a harmless no-op; if something raised before the replace, this
@@ -60,3 +63,24 @@ def atomic_write(path: Path, content: str, secret: bool = True):
                 tmp_path.unlink()
         except OSError:
             pass
+
+
+_save_alerted: dict = {}
+SAVE_ALERT_GAP = 900.0      # at most one alert per file every 15 minutes
+
+
+def _alert_save_failed(path: Path, err: Exception) -> None:
+    """A state file could not be saved (disk full / read-only / volume gone): tell the owner (2026-11-11).
+    Never raises - the caller still gets the original error."""
+    try:
+        import time
+        now = time.monotonic()
+        key = str(path)
+        if now - _save_alerted.get(key, -1e9) < SAVE_ALERT_GAP:
+            return
+        _save_alerted[key] = now
+        from app import api_guard
+        api_guard.send_alert(f"A bot file could not be saved: {path.name} ({type(err).__name__}: {err}). "
+                             f"Check the disk / volume. Trading memory may not survive a restart.", "File not saved")
+    except Exception:
+        pass

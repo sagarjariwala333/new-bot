@@ -136,6 +136,15 @@ SR_IDS = ["sr_hhll", "sr_hhll_n", "sr_swing", "sr_swing_n", "sr_diag", "sr_diag_
 SR_TICKS = [i for i in SR_IDS if not any(i.endswith(x) for x in ("_n", "_points", "_count", "_pct", "_mult", "_len", "_length"))]
 
 
+
+def apply_review(page):
+    """Confirm needs a Start-as choice when that box is shown (2026-11-09): pick Follow, then confirm."""
+    page.wait_for_timeout(150)
+    if page.is_visible("#hub-startas-box") and not page.is_checked("#startas-follow") and not page.is_checked("#startas-new"):
+        page.click("#startas-follow"); page.wait_for_timeout(120)
+    page.click("#hub-review-apply")
+
+
 def main():
     from playwright.sync_api import sync_playwright
     server = HTTPServer(("127.0.0.1", 0), Handler)
@@ -154,7 +163,7 @@ def main():
     def save():
         dismiss(); page.click("#hub-save-btn"); wait(300)
         if page.is_visible("#dlg-hub-review"):
-            page.click("#hub-review-apply"); wait(800)
+            apply_review(page); wait(800)
     def fn(i): page.click(f'.hubx-item[data-fn="{i}"]'); wait(150)
     def open_pair(sym, first=False):
         page.click("#maintab-hub"); wait(300)
@@ -226,7 +235,7 @@ def main():
         page.uncheck("#hub_sr_hhll"); page.uncheck("#hub_sr_swing"); page.uncheck("#hub_sr_diag"); wait(100)
         dismiss(); page.click("#hub-save-btn"); wait(500)
         if page.is_visible("#dlg-hub-review"):
-            page.click("#hub-review-apply"); wait(800)
+            apply_review(page); wait(800)
         msg = page.inner_text("#hub-msg")
         check("nothing to find the range with: the bot's reason is shown", "find the range" in msg, msg[:300])
         page.check("#hub_sr_hhll"); page.check("#hub_sr_swing"); page.check("#hub_sr_diag"); wait(100)

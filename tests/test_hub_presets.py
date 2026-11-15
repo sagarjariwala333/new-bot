@@ -71,7 +71,7 @@ class TestPresets(unittest.TestCase):
             # no key of a number box either
             bad = {"length", "value", "fast", "slow", "signal", "base_amount", "leverage", "lock_pct", "atr_length",
                    "atr_value", "alloc_pct", "stop_pct", "stop_usd", "adx_level", "entry_wait", "levels", "pct", "gap",
-                   "alma_offset", "alma_sigma", "n", "di_length", "smoothing", "level", "ema_length", "tp_n"}
+                   "alma_offset", "alma_sigma", "n", "di_length", "smoothing", "level", "ema_length", "ma_length", "tp_n"}
             keys = {str(k) for path, _ in walk(p["plan"]) for k in path}
             self.assertFalse(keys & bad, (p["name"], keys & bad))
 
@@ -84,7 +84,7 @@ class TestPresets(unittest.TestCase):
     def test_only_booleans_and_known_option_texts(self):
         ok_str = {"Candles", "HMA", "EMA", "MA rising / falling", H.MACD_HIST, H.SIZE_FIXED, H.BASIS_ATR,
                   H.TP_FROM_SIGNAL, H.TRAIL_CANDLE, "ma2",
-                  "Heikin Ashi", "ALL", "Price above / below MA", H.SIZE_ALLOC, H.STOP_BAL, H.CT_EMA,   # V3 (2026-11-02)
+                  "Heikin Ashi", "ALL", "Price above / below MA", H.SIZE_ALLOC, H.STOP_BAL, H.CT_EMA, H.CT_OWN,   # V3 (2026-11-02; counter trend by its own MA 2026-11-09)
                   "ma1", H.RSI_MODES[3],   # RSI MA Cross (2026-11-02)
                   H.MX_MODES[1],   # EMA Cross (2026-11-03)
                   H.MX_MODES[0]}   # MA 1 over MA 2 (2026-11-03)
@@ -142,7 +142,8 @@ class TestPresets(unittest.TestCase):
         self.assertIs(pl["wait_first_reversal"], True)
         self.assertIs(pl["allow_reentry"], False)                    # "Follow the main No Mid-Trend Re-entry" (owner)
         self.assertEqual(pl["sizing"], {"method": H.SIZE_ALLOC, "stop_on": True, "stop_basis": H.STOP_BAL,
-                                        "counter": {"on": True, "by": H.CT_EMA}})
+                                        "counter": {"on": True, "by": H.CT_OWN, "ma_type": "EMA",
+                                                    "ma_modes": ["Price above / below MA"]}})
         for k in ("sl", "be", "trail", "tp"):
             self.assertEqual(pl[k], {"on": False}, k)
         self.assertEqual(pl["shadow"], {"on": True})
@@ -289,7 +290,7 @@ class TestV3PlusNumbersIsAValidPlan(TestPresetPlusNumbersIsAValidPlan):
                     "adx": {"di_length": 7, "smoothing": 7, "level": 15.0, "di_required": False}},
             "hold": {"adx_level": 20.0},
             "sizing": {"alloc_pct": 20.0, "leverage": 5,
-                       "counter": {"alloc_pct": 10.0, "leverage": 3, "ema_length": 100},
+                       "counter": {"alloc_pct": 10.0, "leverage": 3, "ma_length": 100},
                        "stop_pct": 6.0},
             "shadow": {"trades": 3, "slippage_ticks": 1, "tracker_start": 100.0},
         }
@@ -307,7 +308,7 @@ class TestV3PlusNumbersIsAValidPlan(TestPresetPlusNumbersIsAValidPlan):
             "entry_wait": 0, "ind": {"ma1": {"length": 9}, "ma2": {"length": 40},
                                      "adx": {"di_length": 7, "smoothing": 7, "level": 15.0, "di_required": False}},
             "hold": {"adx_level": 20.0},
-            "sizing": {"alloc_pct": 20.0, "leverage": 5, "counter": {"alloc_pct": 10.0, "leverage": 3, "ema_length": 100},
+            "sizing": {"alloc_pct": 20.0, "leverage": 5, "counter": {"alloc_pct": 10.0, "leverage": 3, "ma_length": 100},
                        "stop_pct": 6.0}, "shadow": {"trades": 3, "slippage_ticks": 1, "tracker_start": 100.0}})
         full["name"] = "V3"
         H.validate_plan(full)

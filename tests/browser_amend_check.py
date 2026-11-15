@@ -100,6 +100,15 @@ class Handler(BaseHTTPRequestHandler):
 PLAN = {"name": "x", "chart_type": "Candles"}
 
 
+
+def apply_review(page):
+    """Confirm needs a Start-as choice when that box is shown (2026-11-09): pick Follow, then confirm."""
+    page.wait_for_timeout(150)
+    if page.is_visible("#hub-startas-box") and not page.is_checked("#startas-follow") and not page.is_checked("#startas-new"):
+        page.click("#startas-follow"); page.wait_for_timeout(120)
+    page.click("#hub-review-apply")
+
+
 def main():
     from playwright.sync_api import sync_playwright
     server = HTTPServer(("127.0.0.1", 0), Handler)
@@ -141,6 +150,7 @@ def main():
               page.is_visible("#amend-stops") and page.locator('input[name="amend-stops"]').count() == 2 and checked("amend-stops") == [])
         check("'now' without a stops choice: Confirm still off", page.is_disabled("#hub-review-apply"))
         page.click('input[name="amend-stops"][value="looser"]'); wait(150)
+        if page.is_visible("#hub-startas-box") and not page.is_checked("#startas-follow"): page.click("#startas-follow"); wait(120)   # Start-as needs a choice too (v8)
         check("'now' + stops chosen: Confirm on", not page.is_disabled("#hub-review-apply"))
         page.click('input[name="amend-when"][value="next"]'); wait(150)
         check("'next' needs no stops choice: Confirm on, stops hidden", not page.is_disabled("#hub-review-apply") and not page.is_visible("#amend-stops"))
@@ -149,7 +159,7 @@ def main():
         page.click('input[name="amend-stops"][value="tighter"]'); wait(100)
         STATE["puts"].clear()
         STATE["answer"] = {"status": "done", "applied": ["Stop Loss: now 98."], "kept": ["Max Loss per Trade: kept."], "waits": True}
-        page.click("#hub-review-apply"); wait(700)
+        apply_review(page); wait(700)
         sent = STATE["puts"][-1] if STATE["puts"] else {}
         check("the choice is sent with the plan", sent.get("amend") == {"when": "now", "stops": "tighter"} and "plan" in sent, str(sent))
         txt = page.inner_text("#hub-msg")
@@ -161,7 +171,7 @@ def main():
         check("box shown again and EMPTY (the last choice is not remembered)", box_shown() and checked("amend-when") == [] and page.is_disabled("#hub-review-apply"))
         page.click('input[name="amend-when"][value="next"]'); wait(100)
         STATE["puts"].clear(); STATE["answer"] = {"status": "next"}
-        page.click("#hub-review-apply"); wait(700)
+        apply_review(page); wait(700)
         sent = STATE["puts"][-1] if STATE["puts"] else {}
         check("'next' is sent without stops", sent.get("amend") == {"when": "next"}, str(sent))
         check("answer: the open trade keeps its rules", "keeps its rules" in page.inner_text("#hub-msg"), page.inner_text("#hub-msg"))
@@ -170,15 +180,16 @@ def main():
         open_review()
         page.click('input[name="amend-when"][value="now"]'); page.click('input[name="amend-stops"][value="tighter"]'); wait(100)
         STATE["answer"] = {"status": "error", "why": "exchange down"}
-        page.click("#hub-review-apply"); wait(700)
+        apply_review(page); wait(700)
         check("a failed change says the trade was NOT changed", "NOT changed (exchange down)" in page.inner_text("#hub-msg"), page.inner_text("#hub-msg"))
 
         # ---- Execute also shows it; no trade open: no box, old behaviour, nothing sent
         STATE["status"] = None
         open_review()
+        if page.is_visible("#hub-startas-box") and not (page.is_checked("#startas-follow") or page.is_checked("#startas-new")): page.click("#startas-follow"); wait(120)
         check("no trade open (pair not running): no box, Confirm on", not box_shown() and not page.is_disabled("#hub-review-apply"))
         STATE["puts"].clear(); STATE["answer"] = None
-        page.click("#hub-review-apply"); wait(700)
+        apply_review(page); wait(700)
         sent = STATE["puts"][-1] if STATE["puts"] else {}
         check("no box: the plan is sent without any amend choice", "amend" not in sent and "plan" in sent, str(sent))
         STATE["status"] = "IDLE"

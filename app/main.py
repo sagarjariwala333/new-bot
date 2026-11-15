@@ -85,6 +85,11 @@ CONFLICT_ALERT_AFTER_SECONDS = 180
 async def _start_trading_engines() -> None:
     await manager.start_all_enabled()
     await okx_manager.start_all_enabled()
+    try:
+        from app.arb import service as arb_service
+        arb_service.apply_scanner()          # read-only price scan, only if the owner switched it on
+    except Exception:
+        logging.getLogger("main").exception("Could not start the arbitrage scanner")
 
 
 async def _claim_when_free() -> None:
@@ -161,6 +166,11 @@ async def lifespan(app: FastAPI):
             pass
     await manager.shutdown_all()
     await okx_manager.shutdown_all()
+    try:
+        from app.arb import service as arb_service
+        await arb_service.shutdown()
+    except Exception:
+        logging.getLogger("main").exception("Could not stop the arbitrage scanner")
     singleton_lock.release_lock_on_clean_shutdown()
 
 

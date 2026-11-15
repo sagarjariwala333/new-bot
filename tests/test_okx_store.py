@@ -47,11 +47,12 @@ class TestOKXAccountPersistence(unittest.TestCase):
         self.assertNotIn("supersecretvalue", raw)
         self.assertNotIn("mypassphrase", raw)
 
-    def test_max_five_accounts(self):
-        for i in range(5):
+    def test_max_seven_accounts(self):
+        self.assertEqual(okx_store_module.MAX_OKX_ACCOUNTS, 7)
+        for i in range(7):
             self.store.create_account(f"Sub{i}", "k", "s", "p", demo=True)
         with self.assertRaises(ValueError):
-            self.store.create_account("Sub6", "k", "s", "p", demo=True)
+            self.store.create_account("Sub8", "k", "s", "p", demo=True)
 
     def test_max_five_pairs_per_account(self):
         acc = self.store.create_account("Sub1", "k", "s", "p", demo=True)

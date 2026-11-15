@@ -107,6 +107,15 @@ def ticked(page, fid):
     return page.eval_on_selector_all(f"#hub_{fid} input[type=checkbox]", "xs => xs.filter(x => x.checked).map(x => x.value)")
 
 
+
+def apply_review(page):
+    """Confirm needs a Start-as choice when that box is shown (2026-11-09): pick Follow, then confirm."""
+    page.wait_for_timeout(150)
+    if page.is_visible("#hub-startas-box") and not page.is_checked("#startas-follow") and not page.is_checked("#startas-new"):
+        page.click("#startas-follow"); page.wait_for_timeout(120)
+    page.click("#hub-review-apply")
+
+
 def main():
     from playwright.sync_api import sync_playwright
     server = HTTPServer(("127.0.0.1", 0), Handler)
@@ -127,7 +136,7 @@ def main():
     def save():
         page.click("#hub-save-btn"); wait(300)
         if page.is_visible("#dlg-hub-review"):
-            page.click("#hub-review-apply"); wait(800)
+            apply_review(page); wait(800)
     with sync_playwright() as p:
         b = p.chromium.launch(); page = b.new_page(viewport={"width": 1500, "height": 900})
         errors = []; page.on("pageerror", lambda e: errors.append(str(e)))

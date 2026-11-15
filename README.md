@@ -8,6 +8,8 @@ entirely blank, and a pair with no saved plan does not start.
 
 Nothing in this package starts trading by itself.
 
+**Arbitrage tab (new):** see `docs/ARBITRAGE_FOR_DEV.md` and `docs/SMOKE_TEST_ARBITRAGE.txt`. Everything starts OFF; not yet tested on a real exchange.
+
 ## Who does what
 
 | Person | Does |

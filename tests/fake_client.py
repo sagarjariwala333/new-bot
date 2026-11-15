@@ -128,8 +128,10 @@ class FakeClient:
             "triggerPrice": str(self.mark_price),
         }
 
-    async def get_user_trades(self, symbol: str, order_id: int | None = None, limit: int = 50) -> list[dict]:
+    async def get_user_trades(self, symbol: str, order_id: int | None = None, limit: int = 50,
+                              start_ms: int | None = None) -> list[dict]:
         self.get_user_trades_calls.append(order_id)
+        self.get_user_trades_start_ms = getattr(self, "get_user_trades_start_ms", []) + [start_ms]
         if self.fail_get_user_trades:
             raise BinanceAPIError(500, {"code": -1001, "msg": "simulated failure"})
         if order_id is None:

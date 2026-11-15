@@ -149,9 +149,9 @@ def main():
         check("Next entry line for allocation", "10% of the available balance" in pv and "100% of the balance" in pv, pv)
         check("counter boxes hidden until Counter-trend size is ticked", not vis("counter_alloc") and not vis("counter_lev") and not vis("counter_line"))
         page.check("#hub_counter_on"); wait(150)
-        check("Counter-trend size: line + Allocation against + Leverage against, no dropdown / EMA box",
-              vis("counter_line") and vis("counter_alloc") and vis("counter_lev") and not vis("counter_by") and not vis("counter_ema"))
-        check("line asks for a CTREND tick", "tick CTREND" in page.inner_text("#hub_counter_line"), page.inner_text("#hub_counter_line"))
+        check("Counter-trend size: line + dropdown + Allocation against + Leverage against, no EMA box",
+              vis("counter_line") and vis("counter_by") and vis("counter_alloc") and vis("counter_lev") and not vis("counter_ema"))
+        check("line asks to choose what decides it", "choose below" in page.inner_text("#hub_counter_line"), page.inner_text("#hub_counter_line"))
         page.fill("#hub_counter_alloc", "0"); page.fill("#hub_counter_lev", "5"); page.press("#hub_counter_lev", "Tab"); wait(150)
         check("Next entry line says NO counter-trend entry at 0", "Against the trend: NO entry (0)" in page.inner_text("#hub_size_preview"), page.inner_text("#hub_size_preview"))
         openfn("ind")

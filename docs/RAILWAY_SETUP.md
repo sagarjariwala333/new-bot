@@ -72,3 +72,6 @@ You cannot check, and should not try: Add Pair, Start, or anything that trades. 
 1. Log in. Open **Default Settings**. Every field is blank: fill every field for Binance and/or OKX. Press **Confirm Default Settings**, review, confirm. Enter your alert email.
 2. Add a **testnet / demo** account with testnet/demo API keys and create a pair. Start it. Watch the log. Check the exchange shows the stop order.
 3. Only then add real accounts. Turn **Live trading** ON when you are ready. It is OFF by default and real-money accounts cannot start while it is OFF.
+
+## Arbitrage tab
+No new variables or services. Its files live in `DATA_DIR/arb/` (on the `/data` volume, so inside the backup). API keys for it are entered in the tab, stored encrypted with the same master key. Use the "Stop new trades" button instead of a STOP.txt file on Railway. Details: `docs/ARBITRAGE_FOR_DEV.md`.

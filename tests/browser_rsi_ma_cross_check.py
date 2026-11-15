@@ -117,6 +117,15 @@ def ticked(page, fid):
 CROSS = "RSI crosses its own MA"
 
 
+
+def apply_review(page):
+    """Confirm needs a Start-as choice when that box is shown (2026-11-09): pick Follow, then confirm."""
+    page.wait_for_timeout(150)
+    if page.is_visible("#hub-startas-box") and not page.is_checked("#startas-follow") and not page.is_checked("#startas-new"):
+        page.click("#startas-follow"); page.wait_for_timeout(120)
+    page.click("#hub-review-apply")
+
+
 def main():
     from playwright.sync_api import sync_playwright
     server = HTTPServer(("127.0.0.1", 0), Handler)
@@ -133,7 +142,7 @@ def main():
         page.click("#hub-save-btn"); wait(300)
         if page.is_visible("#dlg-hub-review"):
             seen["review"] = page.inner_text("#dlg-hub-review")
-            page.click("#hub-review-apply"); wait(800)
+            apply_review(page); wait(800)
     def open_pair():
         page.click("#maintab-hub"); wait(300)
         page.select_option("#hub-acct-select", index=1); wait(300)
