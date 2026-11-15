@@ -114,6 +114,15 @@ def pick(page, fid, value):
     page.wait_for_timeout(120)
 
 
+
+def apply_review(page):
+    """Confirm needs a Start-as choice when that box is shown (2026-11-09): pick Follow, then confirm."""
+    page.wait_for_timeout(150)
+    if page.is_visible("#hub-startas-box") and not page.is_checked("#startas-follow") and not page.is_checked("#startas-new"):
+        page.click("#startas-follow"); page.wait_for_timeout(120)
+    page.click("#hub-review-apply")
+
+
 def main():
     from playwright.sync_api import sync_playwright
     server = HTTPServer(("127.0.0.1", 0), Handler)
@@ -146,7 +155,7 @@ def main():
         choose_account_and_pair()
         check("menu + settings show after choosing the account", page.is_visible("#hub-form") and page.is_visible("#hub-menu"))
         names = page.eval_on_selector_all(".hubx-iname", "els=>els.map(e=>e.firstChild.textContent)")   # name only (the "i" icon is a child span)
-        check("menu has the 18 functions in order (one tab per function)", names == ["Pair", "Chart type", "Indicators", "Indicator Combination", "On a flip signal", "Hold rule", "Entry wait", "Entry size", "Max Loss per Trade", "Stop Loss", "Break-Even", "Trailing Stop", "Take profit", "Shadow mode", "Cooldown after a loss", "Loss limit", "Exit when", "Support / Resistance"], str(names))
+        check("menu has the 19 functions in order (one tab per function)", names == ["Pair", "Chart type", "Indicators", "Indicator Combination", "On a flip signal", "Hold rule", "Entry wait", "Entry size", "Max Loss per Trade", "Stop Loss", "Break-Even", "Trailing Stop", "Take profit", "Shadow mode", "Ignore late signals", "Cooldown after a loss", "Loss limit", "Exit when", "Support / Resistance"], str(names))
         check("each menu row has its description", all(len(d) > 20 for d in page.eval_on_selector_all(".hubx-idesc", "els=>els.map(e=>e.innerText)")))
         check("pick step: menu title and summary page", "click to pick" in page.inner_text("#hub-menu-title") and page.is_visible("#hub-pick-pane") and not page.is_visible("#hub-fill-pane"))
         check("8 needed functions (Stop Loss is a must, 2026-10-26) + Hold rule (default on, 2026-10-25) are picked", page.inner_text("#hub-progress").startswith("9 picked"))
@@ -171,7 +180,7 @@ def main():
         page.click("#hub-save-btn"); page.wait_for_timeout(200)
         check("Save without a timeframe is stopped with a message", "timeframe" in page.inner_text("#hub-msg") and not page.is_visible("#dlg-hub-review"))
         # every number / choice box starts blank (timeframe shows the pair's own saved value)
-        vals = page.eval_on_selector_all("#hub-panes input[type=number], #hub-panes select", "els=>els.filter(e=>e.id!=='hub_timeframe'&&e.id!=='hub-pair-select'&&e.id!=='hub_hold_level'&&e.id!=='hub_entry_wait'&&e.id!=='hub_trail_c_value').map(e=>e.value)")
+        vals = page.eval_on_selector_all("#hub-panes input[type=number], #hub-panes select", "els=>els.filter(e=>e.id!=='hub_timeframe'&&e.id!=='hub-pair-select'&&e.id!=='hub_hold_level'&&e.id!=='hub_entry_wait'&&e.id!=='hub_trail_c_value'&&e.id!=='hub_flip_choice'&&e.id!=='hub_counter_total').map(e=>e.value)")
         check("Candles Wait starts at 0 (owner 2026-10-25)", page.input_value("#hub_entry_wait") == "0")
         check("Hold rule ADX starts at 25 (owner 2026-10-25)", page.input_value("#hub_hold_level") == "25")
         check("Signal candle trailing Distance starts at 100 = 1 ATR, editable (owner 2026-10-28)", page.input_value("#hub_trail_c_value") == "100")
@@ -279,7 +288,7 @@ def main():
         rv = page.inner_text("#hub-review-body")
         check("review lists the choices", "Strategy: BTC 1H compounding" in rv and "At least 2" in rv and "50% of the last profit" in rv and "Email alert on margin: ON" in rv and "5 % of entry amount" in rv, rv[:600])
         check("save review says Confirm and save", page.inner_text("#hub-review-apply") == "Confirm and save")
-        page.click("#hub-review-apply"); page.wait_for_timeout(800)
+        apply_review(page); page.wait_for_timeout(800)
         pc = store.get_account(acc.id).pairs["TESTUSDT"]
         pl = pc.plan or {}
         check("plan saved on the server", bool(pl), str(pl)[:300])
@@ -297,16 +306,16 @@ def main():
         # ---- Execute
         page.click("#hub-execute-btn"); page.wait_for_timeout(300)
         check("Execute review says START trading", "START trading" in page.inner_text("#hub-review-apply") and "start" in page.inner_text("#hub-review-title").lower())
-        page.click("#hub-review-apply"); page.wait_for_timeout(800)
+        apply_review(page); page.wait_for_timeout(800)
         check("Execute saved and started the pair", len(STARTED) == 1 and "started" in page.inner_text("#hub-msg"), page.inner_text("#hub-msg"))
         # ---- the plan is saved but the start is refused (e.g. live trading switch OFF): say so plainly
         START_FAILS.append(1)
-        page.click("#hub-execute-btn"); page.wait_for_timeout(300); page.click("#hub-review-apply"); page.wait_for_timeout(700)
+        page.click("#hub-execute-btn"); page.wait_for_timeout(300); apply_review(page); page.wait_for_timeout(700)
         msg = page.inner_text("#hub-msg")
         check("start refused: message says the plan is saved but the pair did not start, with the reason", msg.startswith("Plan saved, but the pair did not start") and "live trading is OFF" in msg and len(STARTED) == 1, msg[:200])
         # ---- a refused plan shows the server's words and starts nothing
         openfn("combine"); page.fill("#hub_entry_min", "9")
-        page.click("#hub-execute-btn"); page.wait_for_timeout(300); page.click("#hub-review-apply"); page.wait_for_timeout(700)
+        page.click("#hub-execute-btn"); page.wait_for_timeout(300); apply_review(page); page.wait_for_timeout(700)
         msg = page.inner_text("#hub-msg")
         check("N bigger than the ticked indicators is refused with the server's words, nothing started", msg.startswith("Not saved") and "N is 9" in msg and len(STARTED) == 1, msg[:200])
         check("the saved plan is unchanged after the refusal", (store.get_account(acc.id).pairs["TESTUSDT"].plan or {}).get("entry_min") == 2)

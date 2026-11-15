@@ -96,6 +96,29 @@ def list_trades(account_id: str, symbol: str) -> list[TradeRecord]:
     return out
 
 
+_last_cache: dict = {}
+
+
+def last_trade_legs(account_id: str, symbol: str) -> list[TradeRecord]:
+    """The legs (take-profit fills and the final close) of the LAST trade: every row with the opened_at of the
+    newest row. Read-only; cached until the file changes. Never raises."""
+    try:
+        path = _path(account_id, symbol)
+        if not path.exists():
+            return []
+        stt = path.stat()
+        key = (stt.st_mtime_ns, stt.st_size)
+        hit = _last_cache.get(path)
+        if hit and hit[0] == key:
+            return hit[1]
+        rows = list_trades(account_id, symbol)
+        legs = ([t for t in rows if t.opened_at == rows[-1].opened_at] if rows[-1].opened_at else [rows[-1]]) if rows else []
+        _last_cache[path] = (key, legs)
+        return legs
+    except Exception:
+        return []
+
+
 def stats(account_id: str, symbol: str) -> dict:
     trades = list_trades(account_id, symbol)
     closed = [t for t in trades if t.pnl is not None]

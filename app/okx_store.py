@@ -46,7 +46,7 @@ from app.store import _clean_pair_dict
 
 OKX_ACCOUNTS_FILE = DATA_DIR / "okx_accounts.json"
 
-MAX_OKX_ACCOUNTS = 5           # OKX regular/standard-user sub-account cap
+MAX_OKX_ACCOUNTS = 7           # owner 2026-11-11: 7 accounts (same as Binance)
 MAX_PAIRS_PER_OKX_ACCOUNT = 5  # per the owner's hard requirement 3
 
 

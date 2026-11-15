@@ -100,6 +100,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self): self._go("DELETE")
 
 
+
+def apply_review(page):
+    """Confirm needs a Start-as choice when that box is shown (2026-11-09): pick Follow, then confirm."""
+    page.wait_for_timeout(150)
+    if page.is_visible("#hub-startas-box") and not page.is_checked("#startas-follow") and not page.is_checked("#startas-new"):
+        page.click("#startas-follow"); page.wait_for_timeout(120)
+    page.click("#hub-review-apply")
+
+
 def main():
     from playwright.sync_api import sync_playwright
     server = HTTPServer(("127.0.0.1", 0), Handler)
@@ -118,7 +127,7 @@ def main():
     def save():
         dismiss(); page.click("#hub-save-btn"); wait(300)
         if page.is_visible("#dlg-hub-review"):
-            page.click("#hub-review-apply"); wait(800)
+            apply_review(page); wait(800)
     def picked(fn): return page.get_attribute(f'.hubx-item[data-fn="{fn}"], #hub-menu button[data-fn="{fn}"]', "aria-pressed") == "true"
     def setv(i, v): page.fill("#hub_" + i, str(v))
     with sync_playwright() as p:
@@ -130,7 +139,7 @@ def main():
         page.click("#hub-confirm-btn"); wait(200)
         page.select_option("#hub-pair-select", "AAAUSDT"); wait(500)
         names = page.eval_on_selector_all("#hub-menu button", "bs => bs.map(b => b.querySelector('.hubx-iname').firstChild.textContent)")
-        check("menu: the two functions are still where they were (Exit when comes after them)", names[-4:-1] == ["Cooldown after a loss", "Loss limit", "Exit when"] and len(names) == 18, str(names))
+        check("menu: the two functions are still where they were (Exit when comes after them)", names[-4:-1] == ["Cooldown after a loss", "Loss limit", "Exit when"] and len(names) == 19, str(names))
         check("an older plan loads with both NOT picked", not picked("cooldown") and not picked("losslimit"))
         # pick both
         page.click("#hub-edit-btn"); wait(100)
@@ -157,7 +166,7 @@ def main():
         rv = page.inner_text("#hub-review-body") if page.is_visible("#dlg-hub-review") else ""
         check("review lists the cooldown and the loss limit", "Cooldown after a loss: 3 candle close(s)" in rv and "Loss limit (this pair" in rv and "20 USDT a day" in rv, rv[-700:])
         if page.is_visible("#dlg-hub-review"):
-            page.click("#hub-review-apply"); wait(800)
+            apply_review(page); wait(800)
         pl = plan_of("AAAUSDT") or {}
         check("saved: cooldown 3 candles (no losses-in-a-row key), loss limit daily 20 (no weekly key)",
               pl.get("cooldown") == {"on": True, "candles": 3} and pl.get("loss_limit") == {"on": True, "daily": 20}, str(pl.get("cooldown")) + str(pl.get("loss_limit")))
@@ -184,7 +193,7 @@ def main():
         rv = page.inner_text("#hub-review-body") if page.is_visible("#dlg-hub-review") else ""
         check("review names the % limits", "5 % of the balance a day" in rv and "10 % of the balance a week" in rv and "20 USDT a day" in rv, rv[-600:])
         if page.is_visible("#dlg-hub-review"):
-            page.click("#hub-review-apply"); wait(800)
+            apply_review(page); wait(800)
         pl = plan_of("AAAUSDT") or {}
         check("saved: USDT and % together", pl.get("loss_limit") == {"on": True, "daily": 20, "weekly": 60, "daily_pct": 5, "weekly_pct": 10}, str(pl.get("loss_limit")))
         setv("loss_daily_pct", 101); save()

@@ -42,6 +42,10 @@ class TestAccountPersistence(unittest.TestCase):
         self.assertEqual(key, "key123")
         self.assertEqual(secret, "secret456")
 
+    def test_limits_are_7_accounts_5_pairs(self):
+        self.assertEqual(store_module.MAX_ACCOUNTS, 7)
+        self.assertEqual(store_module.MAX_PAIRS_PER_ACCOUNT, 5)
+
     def test_max_accounts_enforced(self):
         for i in range(store_module.MAX_ACCOUNTS):
             self.store.create_account(f"Acc{i}", "k", "s", False)

@@ -398,3 +398,8 @@ Menu is now 9 functions: Pair & chart, Indicators, Combine & flip + hold rule, E
 - Fixed: app/api/__init__.py forgot_password used AuthStore (not imported) -> server error, no reset email, and the error showed which username exists. Now uses auth_store.RESET_TOKEN_TTL_SECONDS.
 - Tests added: tests/test_manager.py, tests/test_okx_manager.py (shadow-only start failure), tests/test_app_imports.py (forgot password sends the email; wrong username = same reply, no email). Each fails on the old code.
 - Audit left alone (low risk, not asked): unused imports/variables, dead helper functions, corrupt reconciliation file skipped silently, list_all_pending_reconciliations never called, walk-forward / Monte Carlo POST without CSRF, failed-login dict unbounded, sessions survive a password change. Unit tests run ~80% of app statements; main.py and the web layer are covered only by import checks (FastAPI is not installed in the dev sandbox).
+
+## Added 2026-11-15 (Arbitrage tab complete; owner: "Ok. Let's go.. complete this tab.")
+- New tab "Arbitrage" (spatial / funding / triangular, mock + live). Read `docs/ARBITRAGE_FOR_DEV.md`. Dev must run `docs/SMOKE_TEST_ARBITRAGE.txt` on testnet/demo before any real money.
+- Owner's account rule (his words): "Same account, with rules. The arbitrage bot skips every coin the hub trades on that account, uses isolated margin only, and has a margin cap so it can't eat the hub's free balance."
+- Everything starts OFF. Live needs: mode live + typed LIVE, risk boxes filled, margin cap, working keys; triangular also typed YES.

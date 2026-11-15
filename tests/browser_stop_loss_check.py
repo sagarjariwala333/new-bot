@@ -107,6 +107,15 @@ def ticked(page, fid):
     return page.eval_on_selector_all(f"#hub_{fid} input[type=checkbox]", "xs => xs.filter(x => x.checked).map(x => x.value)")
 
 
+
+def apply_review(page):
+    """Confirm needs a Start-as choice when that box is shown (2026-11-09): pick Follow, then confirm."""
+    page.wait_for_timeout(150)
+    if page.is_visible("#hub-startas-box") and not page.is_checked("#startas-follow") and not page.is_checked("#startas-new"):
+        page.click("#startas-follow"); page.wait_for_timeout(120)
+    page.click("#hub-review-apply")
+
+
 def main():
     from playwright.sync_api import sync_playwright
     server = HTTPServer(("127.0.0.1", 0), Handler)
@@ -174,7 +183,7 @@ def main():
         rv = page.inner_text("#hub-review-body") if page.is_visible("#dlg-hub-review") else page.inner_text("#hub-msg")
         check("old plan: can save without SL (review says NOT SET)", "Stop Loss: NOT SET (trades still open, you get an email: No SL was set for this trade. Set it manually.)" in rv, rv[:900])
         if page.is_visible("#dlg-hub-review"):
-            page.click("#hub-review-apply"); wait(800)
+            apply_review(page); wait(800)
         check("saved without SL", store.get_account(acc.id).pairs["AAAUSDT"].plan.get("sl") == {"on": False},
               str(store.get_account(acc.id).pairs["AAAUSDT"].plan.get("sl")))
         openfn("sl")
@@ -184,7 +193,7 @@ def main():
         rv = page.inner_text("#hub-review-body") if page.is_visible("#dlg-hub-review") else page.inner_text("#hub-msg")
         check("review: Stop Loss line", "Stop Loss: Structure (swing low / high) · N candles: 10 · Time stop: 5 candles, not in profit = close" in rv, rv[:900])
         if page.is_visible("#dlg-hub-review"):
-            page.click("#hub-review-apply"); wait(800)
+            apply_review(page); wait(800)
         sl = store.get_account(acc.id).pairs["AAAUSDT"].plan.get("sl")
         check("saved: Structure 10, time stop 5", sl == {"on": True, "basis": STRUCT, "length": 10, "time_on": True, "time_candles": 5}, str(sl))
         page.set_viewport_size({"width": 390, "height": 800}); wait(200)

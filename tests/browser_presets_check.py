@@ -248,8 +248,9 @@ def main():
         check("V3: all 3 flip answers Yes, Fresh Reversal ticked, No Mid-Trend Re-entry ticked",
               on("flip_same_entry") and on("flip_same_hold") and on("flip_same_wait") and on("wfr") and on("reentry"))
         check("V3: Entry size = Allocation % of balance", page.evaluate("[...document.querySelectorAll('#hub_size_method input:checked')].map(x => x.value)") == [ALLOC])
-        check("V3: Max Loss ticked, % of available balance; Counter-trend ticked, decided by EMA length",
-              on("stop_on") and val("stop_basis") == "% of available balance" and on("counter_on") and val("counter_by") == "EMA")
+        check("V3: Max Loss ticked, % of available balance; Counter-trend ticked, decided by its own EMA, price above / below",
+              on("stop_on") and val("stop_basis") == "% of available balance" and on("counter_on") and val("counter_by") == "own"
+              and val("counter_ma_type") == "EMA" and val("counter_ma_length") == "" and ticks("counter_ma_modes") == ["Price above / below MA"])
         check("V3: Shadow ticked; Break-Even, Trailing Stop, Take profit NOT ticked; Stop Loss has no 'Measured on' (= no SL)",
               on("shadow_on") and not on("be_on") and not on("trail_on") and not on("tp_on") and val("sl_basis") == "")
         check("V3 menu: core (Stop Loss is always in the menu) + Hold rule + Max Loss + Shadow picked, no BE / TS / TP",
@@ -261,7 +262,7 @@ def main():
         # the owner keys in his own numbers (arbitrary ones here), then Save to library
         setv("ma1_length", 9); setv("ma2_length", 40)
         setv("adx_di_length", 7); setv("adx_smoothing", 7); setv("adx_level", 15)
-        setv("alloc_pct", 20); setv("leverage", 5); setv("counter_alloc", 10); setv("counter_lev", 3); setv("counter_ema", 100)
+        setv("alloc_pct", 20); setv("leverage", 5); setv("counter_alloc", 10); setv("counter_lev", 3); setv("counter_ma_length", 100)
         setv("stop_pct", 6)
         setv("shadow_trades", 3); setv("shadow_slip", 1); setv("shadow_start", 100)
         page.click("#hub-lib-save-btn"); wait(250)
@@ -275,7 +276,7 @@ def main():
               sp.get("chart_type") == "Heikin Ashi" and sp["combine_entry"] == "ALL" and sp["ind"]["candle"]["entry"] is True
               and sp["ind"]["ma1"]["type"] == "HMA" and sp["ind"]["ma2"]["type"] == "EMA"
               and sp["allow_reentry"] is False and sp["wait_first_reversal"] is True and sp["hold"]["on"] is True
-              and sp["sizing"]["method"] == ALLOC and sp["sizing"]["stop_on"] is True and sp["sizing"]["counter"]["by"] == "EMA"
+              and sp["sizing"]["method"] == ALLOC and sp["sizing"]["stop_on"] is True and sp["sizing"]["counter"]["by"] == "own" and sp["sizing"]["counter"]["ma_length"] == 100 and sp["sizing"]["counter"]["ma_type"] == "EMA" and "ema_length" not in sp["sizing"]["counter"]
               and sp["shadow"]["on"] is True and sp["sl"]["on"] is False and sp["tp"]["on"] is False
               and sp["be"]["on"] is False and sp["trail"]["on"] is False, str(sp)[:300])
 

@@ -1,3 +1,6 @@
+Version: V-15.11.2026.5   (format V-day.month.year.N, N = the build of that day)
+Contents: DOCS ONLY change vs V-15.11.2026.4 (new docs/ARBITRAGE_FOR_DEV.md + pointers in README / HANDOFF / RAILWAY_SETUP / FULL_BUILD_NOTES; no code change). Previous contents: Arbitrage tab COMPLETE (Steps 3+4) - LIVE orders for spatial / funding / triangular with API keys panel, check keys, margin cap, isolated margin only, skip of hub coins on the same key, live-mock shadow, Stop-new-trades button, typed LIVE confirmation, triangular typed-YES second lock, optional Telegram message on every trade opened / closed (off / live / all, default live), live trades resumed after restart. Everything starts OFF. See docs/SMOKE_TEST_ARBITRAGE.txt (dev must run it before real money). Includes Steps 1-2 and everything from V-11.11.2026.2.
+
 strategy_hub_bot - CLEAN HUB BUILD (owner only)
 Built: 2026-10-24 SGT (see the zip file name for the time).
 

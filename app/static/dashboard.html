@@ -211,9 +211,6 @@
 
 <div id="login-overlay">
   <div class="box">
-    <div style="font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:12px; text-align:center;">
-      Futures Bot <span style="color:var(--blue); margin-left:4px;">v1.3.2</span>
-    </div>
     <div id="login-view">
       <h2 style="margin-top:0;">Sign in</h2>
       <label>Username</label>
@@ -254,12 +251,6 @@
       </div>
       <div id="reset-msg" class="msg"></div>
     </div>
-    <div style="margin-top:16px; padding-top:12px; border-top:1px solid var(--border); font-size:11px; color:var(--muted); text-align:center;">
-      v1.3.2 · 2026-11-06 (Audit Fixes)
-    </div>
-  </div>
-  <div style="position:absolute; bottom:16px; font-size:11px; color:var(--muted); opacity:0.75; text-align:center; left:0; right:0;">
-    Futures Bot v1.3.2 (2026-11-06 Audit Fixes)
   </div>
 </div>
 
@@ -278,8 +269,8 @@
 
 <div class="topbar">
   <div>
-    <h1>Futures Bot <span style="font-size:11px; font-weight:400; color:var(--muted); opacity:0.8; margin-left:8px;">v1.3.2 (2026-11-06 Audit Fixes)</span></h1>
-    <div class="sub">Binance: 12 accounts × 3 pairs · OKX: 5 accounts × 5 pairs · every setting is editable per pair (changes to a pair with an open trade apply once it is flat).</div>
+    <h1>Futures Bot</h1>
+    <div class="sub">Binance: 7 accounts × 5 pairs · OKX: 7 accounts × 5 pairs · every setting is editable per pair (changes to a pair with an open trade apply once it is flat).</div>
   </div>
   <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
     <button id="btn-stop-all" style="background:#7a1a1a;" onclick="confirmGlobalControl('stop')">🛑 STOP ALL</button>
@@ -315,6 +306,7 @@
   <button class="main-tab-btn" id="maintab-analysis" onclick="switchMainTab('analysis')">Analysis</button>
   <button class="main-tab-btn" id="maintab-tracker" onclick="switchMainTab('tracker')">Tracker</button>
   <button class="main-tab-btn" id="maintab-chart" onclick="switchMainTab('chart')">Chart</button>
+  <button class="main-tab-btn" id="maintab-arb" onclick="switchMainTab('arb')">Arbitrage</button>
   <button class="main-tab-btn" id="maintab-defaults" onclick="switchMainTab('defaults')">Default Settings</button>
 </div>
 
@@ -409,6 +401,59 @@
       </div>
     </div>
     <div class="empty" id="ledger-empty">Pick a pair above to view its trade history.</div>
+  </div>
+</div>
+
+<!-- ============================== ARBITRAGE TAB (Step 1: settings + read-only scan) ============================== -->
+<div class="tabpage" id="tabpage-arb">
+  <div class="panel">
+    <h2 style="margin:0 0 4px;">Arbitrage <span data-ih="arb.tab"></span></h2>
+    <div class="sub">The scanner READS public prices and shows the gaps. A module set to <b>mock</b> trades with PRETEND money. A module set to <b>live</b> sends REAL orders,
+      but only after every item in the Live trading panel below is done. Everything starts OFF.</div>
+    <div id="arb-status" class="sub"></div>
+    <div id="arb-notes" class="sub" style="color:var(--warn, #e0b341);"></div>
+    <div id="arb-errors" style="display:none; background:#3a1d22; border:1px solid #7a3a44; border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:13px; line-height:1.6;"></div>
+    <div id="arb-form"></div>
+    <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
+      <label class="sub" for="arb-confirm-live" style="align-self:center; margin:0;">To switch a module to live, type LIVE: <span data-ih="arb.live_confirm"></span></label><input type="text" id="arb-confirm-live" size="6" autocomplete="off" placeholder="LIVE">
+      <button class="btn-primary" id="arb-save" onclick="arbSave()">Save settings</button>
+      <button onclick="arbLoad(true)">Undo my edits</button>
+      <span id="arb-saved" class="sub" style="align-self:center; margin:0;"></span>
+    </div>
+  </div>
+  <div class="panel" id="arb-live-panel">
+    <h3 style="margin:0 0 4px;">Live trading (REAL money) <span data-ih="arb.live"></span></h3>
+    <div class="sub">Use a SEPARATE sub-account's API key if you can. If you enter the same key as a hub account, the arbitrage skips every coin that hub account trades.
+      Isolated margin only. Keys are stored encrypted and never shown again (only the last 4 characters).</div>
+    <div id="arb-live-banner" style="display:none; background:#3a1d22; border:1px solid #7a3a44; border-radius:8px; padding:8px 12px; margin:8px 0; font-size:13px;"></div>
+    <h4 style="margin:10px 0 4px;">API keys <span data-ih="arb.keys"></span></h4>
+    <div id="arb-keys"></div>
+    <div style="margin-top:8px;"><button id="arb-keys-check" onclick="arbCheckKeys()">Check keys (read only, sends no order)</button>
+      <span id="arb-keys-msg" class="sub" style="margin-left:8px;"></span></div>
+    <div id="arb-keys-result" class="sub" style="margin-top:6px; line-height:1.6;"></div>
+    <h4 style="margin:12px 0 4px;">What is still missing before a module can go live</h4>
+    <div id="arb-checklist" class="sub" style="line-height:1.6;"></div>
+    <h4 style="margin:12px 0 4px;">Triangular: second lock <span data-ih="arb.tri_yes"></span></h4>
+    <div class="sub">Triangular live needs the tick above AND the word YES typed here. It locks again at every restart.</div>
+    <div id="arb-tri-lock" style="margin-top:4px;"></div>
+    <h4 style="margin:12px 0 4px;">Stop new trades <span data-ih="arb.stop"></span></h4>
+    <div id="arb-stop"></div>
+  </div>
+  <div class="panel">
+    <h3 style="margin:0 0 8px;">Best gaps now <span data-ih="arb.board"></span></h3>
+    <div id="arb-board"></div>
+  </div>
+  <div class="panel">
+    <h3 style="margin:0 0 4px;">Results: mock (pretend) and LIVE (real) <span data-ih="arb.mock"></span></h3>
+    <div class="sub">Works only while the scanner is on. A mock module you switch off is paused. A LIVE module you switch off keeps closing its open trades (no new ones). "live-mock" is the pretend shadow that runs next to a live module.</div>
+    <div id="arb-mock-problems" style="display:none; background:#3a1d22; border:1px solid #7a3a44; border-radius:8px; padding:8px 12px; margin-bottom:10px; font-size:13px;"></div>
+    <div id="arb-mock"></div>
+    <div style="margin-top:12px;">
+      <button id="arb-reset-btn" onclick="arbResetAsk()">Reset mock results</button> <span data-ih="arb.reset"></span>
+      <span id="arb-reset-ask" style="display:none; margin-left:8px;">Delete ALL mock wallets, open mock trades and the trade list?
+        <button id="arb-reset-yes" onclick="arbResetDo()">Yes, reset</button> <button id="arb-reset-no" onclick="arbResetCancel()">Cancel</button></span>
+      <span id="arb-reset-msg" class="sub" style="margin-left:8px;"></span>
+    </div>
   </div>
 </div>
 
@@ -550,6 +595,22 @@
 <dialog id="dlg-hub-review">
   <h2 id="hub-review-title">Review before saving</h2>
   <div id="hub-review-body" style="max-height:45vh; overflow-y:auto;"></div>
+  <div id="hub-startas-box" style="margin-top:12px; padding:10px 12px; border:1px solid #2f5d8a; border-radius:6px; background:#10202e;">
+    <b>Start this plan as:</b> <span class="sub">(choose one)</span>
+    <div style="margin:6px 0 0 4px; line-height:1.8;">
+      <input type="radio" id="startas-follow" name="startas-mode" value="follow"> <label for="startas-follow">Follow through from past trades <span data-ih="startas.follow"></span></label><br>
+      <input type="radio" id="startas-new" name="startas-mode" value="new"> <label for="startas-new">New <span data-ih="startas.new"></span></label>
+    </div>
+    <div id="startas-boxes" style="display:none; margin:6px 0 0 24px; line-height:1.8;">
+      <div class="sub">Tick what starts again (unticked stays as it is):</div>
+      <input type="checkbox" id="startas-first_flip"> <label for="startas-first_flip">First trade waits for a fresh flip <span data-ih="startas.first_flip"></span></label><br>
+      <input type="checkbox" id="startas-size"> <label for="startas-size">Size starts again at the base amount <span data-ih="startas.size"></span></label><br>
+      <input type="checkbox" id="startas-loss_streak"> <label for="startas-loss_streak">Losses in a row start again at 0 <span data-ih="startas.loss_streak"></span></label><br>
+      <input type="checkbox" id="startas-reentry"> <label for="startas-reentry">Clear the Mid-Trend Re-entry block <span data-ih="startas.reentry"></span></label>
+    </div>
+    <div id="startas-line" class="sub" style="margin-top:6px;"></div>
+    <div class="sub" style="margin-top:4px;">An open trade is never touched. If a trade is open, the choice applies after it closes.</div>
+  </div>
   <div id="hub-amend-box" style="display:none; margin-top:12px; padding:10px 12px; border:1px solid #8a6d1d; border-radius:6px; background:#2a2410;">
     <b>A trade is open on this pair.</b> Choose when these changes apply:
     <div style="margin:6px 0 0 4px; line-height:1.8;">
@@ -971,6 +1032,10 @@ const HELP = {
   "chart.srtable": ["Levels now", "The levels as the bot sees them now.", "One row per level. Tick the columns you want to see. A diagonal line shows its price now and its slope per candle.", "", "", "Read only."],
   "fn.exitwhen": ["Exit when", "Closes the open trade when the moving average(s) curve against it.", "At a candle close, if the signal you chose is against the trade (long: the average value is lower than on the candle before, short: higher), the bot closes the trade. Then it waits for a fresh entry signal, or flips to the other side, as you choose. A flip signal on the same candle is done first.", "Picked = ON. Not picked = OFF.", "", "Optional function. Pick it in the menu to use it. It uses the MA 1 and MA 2 numbers in Indicators."],
   "fn.cooldown": ["Cooldown after a loss", "After a losing trade the pair waits a number of candles before it enters again.", "When a trade has closed completely and its result (every part added up, net of fees) is below 0, the next candle closes are skipped: no new entry on them. An entry that a flip would make at the same moment is skipped too. A trade that ends at 0 or in profit starts nothing. It only stops a NEW entry. It never touches a trade that is open. Shadow mode, Analysis and the Pine script do not use it.", "Candles to wait. Optional: Losses in a row before the wait starts (empty = after every loss).", "Wait 3, after every loss: the trade loses, the next 3 candle closes are skipped, then the bot may enter again.", "The wait is counted in the candles of this pair's timeframe."],
+  "fn.latesig": ["Ignore late signals", "Do not open a NEW trade on a signal whose candle closed too long ago.", "If the bot was down, restarting or blocked and a signal is found late, the price may have moved far from the signal candle's close. Ticked: a new entry is skipped when more than your number of minutes have passed since that candle closed. Closes (flip, stop, exit) are never skipped. Off = as before.", "Minutes after the candle close. 1 or more.", "30: the 4H candle closed 50 minutes ago, so no entry. The next signal is judged fresh. You get a Telegram message.", "Optional. Off by default."],
+  "late_min": ["Latest minutes after the candle close", "The most minutes after the signal candle's close that a new entry may still be opened.", "The bot normally enters within seconds of the close. Keep this above the time a normal entry needs (e.g. 15 or 30).", "A whole number, 1 to 1440.", "30 = enter only within 30 minutes of the candle close.", ""],
+  "counter_total": ["Counter-trend running total", "Which running total counter-trend entries grow on.", "Only for Fixed base amount. Separate: trend trades grow on their own total, counter-trend trades on theirs (a counter-trend 40 stays near 40, a trend 80 near 80). One total shared: both use the one last closed total (as plans worked before), so a counter-trend entry can jump to the trend size.", "Separate (default for a new plan) or One total shared.", "Trend base 80, counter-trend base 40: Separate keeps counter-trend entries starting from 40.", "Plans saved before this option keep One total shared until you change it."],
+  "flip_choice": ["What the flip does", "Reverse, or close only and wait for the entry rules.", "Reverse (default): close and open the opposite side at once, with no ADX / DI check on the new side. Close only: the trade closes on the flip signal, the bot goes flat, and enters only when the full ENTRY rules say so (e.g. Supertrend + ADX + DI, Entry wait, Mid-Trend Re-entry rules).", "Reverse, or Close only then wait for the entry rules.", "Supertrend flips against you while ADX is weak: Reverse opens the other side anyway; Close only stays flat until ADX / DI agree.", "Changing it applies from the next trade."],
   "cd_candles": ["Candles to wait", "How many candle closes are skipped after a loss.", "The candle close right after the loss is the first one skipped. 1 = skip that one close, 3 = skip three closes.", "", "3 on a 1h pair = about 3 hours with no new entry.", "Whole number, 1 or more."],
   "cd_losses": ["Losses in a row before the wait starts", "Optional. Start the wait only after this many losing trades in a row.", "Empty = the wait starts after every loss. 2 = the first loss does nothing, the second loss in a row starts the wait. A win (or a trade that ends at 0) starts the count again from 0. While the row stays at or above this number, every new loss starts the wait again.", "", "2: loss, loss = wait. Loss, win, loss = no wait.", "Whole number, 1 or more."],
   "fn.losslimit": ["Loss limit", "No new entry once the loss of the day or the week of this pair has reached your limit.", "It adds up everything this pair has closed since the day (or week) started, in USDT, net of fees. Wins count against losses. Each limit is either an amount in USDT or a % of the account balance at the start of that day (or week). When the result is down by your limit, this pair makes no new entry until the period is over, and you get an email once. It never touches a trade that is open: an open trade keeps its own stops, take profit, trailing stop and flip. A loss that is still open is not counted, only what has been closed. A day starts at 00:00 Singapore time, a week on Monday at 00:00. The same limits for a whole account or for all accounts together are in the Loss limits box (next to Presets).", "Daily amount, Daily %, Weekly amount, Weekly %. Key in one or more.", "Daily 20 USDT: closed results of today add up to -20 or worse = no new entry until tomorrow 00:00.", "Shadow mode, Analysis and the Pine script do not use it."],
@@ -1021,7 +1086,7 @@ const HELP = {
   "card.counter": ["Counter-trend size", "The size for entries AGAINST the trend.", "Ticked: an entry against the trend uses its own amount and leverage. What counts as counter trend is your CTREND tick in Indicators.", "", "", "0 = no counter-trend entry at all."],
   "card.marginalert": ["Margin alert", "An email when the margin is short.", "", "", "", ""],
   "size_preview": ["Next entry", "What the next entry would be with the numbers you keyed in.", "Allocation %: the % of the balance times the leverage. Fixed base: the last closed total (never below the base) times the leverage. Against the trend: its own size, or NO entry when it is 0.", "", "Base 100, last closed total 120, 10x: 120 USDT margin x 10 = 1,200 USDT position.", "Display only. It changes nothing."],
-  "counter_line": ["Counter trend decided by", "The indicator that decides if an entry is with or against the trend.", "It is the indicator you ticked CTREND in Indicators. With the trend = it says the same side as the entry; anything else = against the trend.", "", "", "Change it in Indicators (CTREND column)."],
+  "counter_line": ["Counter trend decided by", "The indicator that decides if an entry is with or against the trend.", "What decides it now: its own moving average, or the indicator you ticked CTREND in Indicators. With the trend = it says the same side as the entry; anything else = against the trend.", "", "", "Change it in the list below, or in Indicators (CTREND column)."],
   "card.tp": ["Take profit", "What all the targets are measured on.", "Measured on (% of ATR or % of price movement) and, for ATR, the ATR length are shared by the 3 targets. Each target below has its own distance and its own share.", "", "", ""],
   "card.tp1": ["TP 1", "The first take profit target.", "A distance from your entry price. When it is hit, the share you set is closed.", "", "", ""],
   "card.tp2": ["TP 2", "The second take profit target.", "It is placed only after TP 1 is hit.", "", "", ""],
@@ -1060,8 +1125,13 @@ const HELP = {
   "lock_pct": ["% of last profit added to the next entry", "An optional share of the last profit that goes into the next entry. The rest is locked out.", "Next entry = the entry just closed + this % of its profit. A loss comes off in full. The base is still the minimum.", "Empty = off, and the whole total is carried.", "Entry 100, profit 10, 50%: next entry is 105. Entry 100, loss 20: next entry is 80, or the base if the base is higher.", ""],
   "leverage": ["Leverage", "How many times your margin is multiplied into the position.", "Position size = margin x leverage. Higher leverage gives bigger gains and bigger losses, and brings the liquidation price closer.", "", "Margin 100 at 10x opens 1000.", "The bot sets this leverage on the exchange for the pair."],
   "counter_on": ["Counter-trend size", "A second size used when an entry goes against the trend.", "Ticked: an entry with the trend uses the size above; an entry against the trend uses its own amount and leverage below. What counts as counter trend is your CTREND tick in Indicators (any trend indicator, e.g. MA 1 = EMA 200).", "Ticked = two sizes. Not ticked = one size for all entries.", "", "0 against the trend = no counter-trend entry at all."],
-  "counter_by": ["Counter trend decided by", "What decides if an entry is WITH or AGAINST the trend.", "EMA length: the chart close against the EMA below (as before). An indicator (MA 1, MA 2, MA Crossover, ADX / DI, RSI, MACD, Candle colour, Structure break): the entry is with the trend when that indicator says the same side as the entry, using its own conditions; anything else is against the trend. Bollinger Bands (the half): a long in the lower half of the band and a short in the upper half is with the trend; the other half, and the middle line itself, is against it. Every entry counts, a flip too (a flip is an entry the other way).", "EMA length, MA 1, MA 2, MA Crossover, ADX / DI, RSI, MACD, Candle colour, Structure break, Bollinger Bands (the half).", "MACD as Main for ENTRY, MA 1 = EMA 50 here: a long with the close above EMA 50 = full size, below = the against-the-trend size.", "It is the same setting as the CTREND tick in Indicators: change one and the other follows. Choppiness, Volume and ATR cannot decide it (they have no side). Structure break gives a side only on the breakout candle."],
-  "ind.col_ctrend": ["CTREND column", "Tick the ONE indicator that decides the counter trend.", "It does not have to be ticked for ENTRY or FLIP. At every entry (and every flip) it decides which size is used: with the trend = the normal size, against = the size in Entry size. Ticking it turns on the second size in Entry size.", "One only. Untick = the EMA length decides (as before).", "", "Same setting as 'Counter trend decided by' in Entry size."],
+  "counter_by": ["Counter trend decided by", "What decides if an entry is WITH or AGAINST the trend.", "Its own moving average: pick the type (SMA, EMA, WMA, HMA, ALMA), the length and the condition in the boxes that appear; it needs no indicator ticked. EMA length (older plans only): the chart close against an EMA, as old plans did. An indicator (MA 1, MA 2, MA Crossover, ADX / DI, RSI, MACD, Candle colour, Structure break): the entry is with the trend when that indicator says the same side as the entry, using its own conditions; anything else is against the trend. Bollinger Bands (the half): a long in the lower half of the band and a short in the upper half is with the trend; the other half, and the middle line itself, is against it. Every entry counts, a flip too (a flip is an entry the other way).", "Its own moving average, MA 1, MA 2, MA Crossover, ADX / DI, RSI, MACD, Candle colour, Structure break, Bollinger Bands (the half).", "Its own moving average = EMA 200, price above/below: a long with the close above EMA 200 = full size, below = the against-the-trend size. Or MACD as Main for ENTRY, MA 1 = EMA 50 here: a long with the close above EMA 50 = full size, below = the against-the-trend size.", "It is the same setting as the CTREND tick in Indicators: change one and the other follows. Choppiness, Volume and ATR cannot decide it (they have no side). Structure break gives a side only on the breakout candle."],
+  "ind.col_ctrend": ["CTREND column", "Tick the ONE indicator that decides the counter trend.", "It does not have to be ticked for ENTRY or FLIP. At every entry (and every flip) it decides which size is used: with the trend = the normal size, against = the size in Entry size. Ticking it turns on the second size in Entry size.", "One only. Untick = its own moving average decides (set in Entry size).", "", "Same setting as 'Counter trend decided by' in Entry size."],
+  "counter_ma_type": ["Counter-trend MA type", "The kind of moving average that decides the counter trend.", "SMA, EMA, WMA, HMA or ALMA, worked out on the chart close (Heikin Ashi close when the chart type is Heikin Ashi). It is separate from MA 1 and MA 2, so those stay free for entries.", "SMA, EMA, WMA, HMA, ALMA.", "EMA with length 200.", "Shown when Counter trend decided by = Its own moving average."],
+  "counter_ma_length": ["Counter-trend MA length", "How many candles the counter-trend average uses.", "Whole number, 1 to 500. No default: you key it in.", "", "200 = a 200-candle average.", "Shown when Counter trend decided by = Its own moving average."],
+  "counter_ma_modes": ["Counter-trend condition", "When an entry counts as WITH the trend.", "Price above / below MA: a long is with the trend when the close is above the MA, a short when below. MA rising / falling: a long is with the trend when the MA is rising, a short when it is falling. Tick both: both must agree. Anything else is AGAINST the trend. Every entry counts, a flip too.", "Price above / below MA, MA rising / falling.", "EMA 200 + Price above / below: long above it = normal size, long below it = the against-the-trend size.", "Shown when Counter trend decided by = Its own moving average."],
+  "counter_alma_offset": ["Counter-trend ALMA offset", "Only for the ALMA type.", "A higher offset follows recent price closer. Empty = 0.85.", "", "0.85", "Shown only when the type is ALMA."],
+  "counter_alma_sigma": ["Counter-trend ALMA sigma", "Only for the ALMA type.", "Controls how smooth the line is. Empty = 6.", "", "6", "Shown only when the type is ALMA."],
   "counter_ema": ["Trend EMA length", "The EMA used to decide the trend.", "Chart close above this EMA = up-trend. Below it = down-trend. A long is with the trend in an up-trend. A short is with the trend in a down-trend.", "", "EMA 200: close above the 200 EMA means up-trend.", ""],
   "counter_alloc": ["Allocation % against the trend", "The share of your available balance used for trades AGAINST the trend.", "Same as Allocation %, but only for trades against the trend. 0 = NO counter-trend entries at all (a flip into that side closes and stays flat).", "", "5 = 5% for counter-trend trades. 0 = none.", "Shown only when the size method is Allocation %."],
   "counter_base": ["Base amount against the trend (USDT)", "The base amount, in USDT, for trades AGAINST the trend.", "Its own base for entries against the trend. There is one running total for both. 0 = NO counter-trend entries at all (a flip into that side closes and stays flat).", "", "0 = none.", "Shown only when the size method is Fixed base amount."],
@@ -1226,10 +1296,74 @@ const HELP = {
   "amend.next": ["Apply from the next trade", "The open trade keeps its own rules. The new plan starts from the next trade.", "Nothing on the open trade is touched: its stops, Take profit and exits stay as they are. The whole new plan is saved and starts once the pair is flat.", "You must pick this or 'Apply to the open trade now'.", "", "This is how Save worked before."],
   "amend.tighter": ["Only tighter", "A stop on the open trade moves only if the new level protects MORE than the one it has now.", "Applies to Max Loss per Trade, Stop Loss and the Trailing Stop. A new level that protects less is NOT used, and a stop that you turned off is NOT taken away. The answer after saving lists what was changed and what was kept.", "Pick this or 'Allow looser too' (only asked when you apply to the open trade now).", "Long trade, Stop Loss now 97: new 98 is used, new 95 is kept out.", "Take profit, Break-Even, Exit when and the Hold rule are not stops: they change as you set them."],
   "amend.looser": ["Allow looser too", "The new stop level is used as it is, also when it protects less than the one the trade has now.", "Applies to Max Loss per Trade, Stop Loss and the Trailing Stop. A stop you turned off is removed. A looser stop means the trade can lose more before it is stopped.", "Pick this or 'Only tighter' (only asked when you apply to the open trade now).", "Long trade, Stop Loss now 97: new 95 is used.", "The stop on the exchange is moved to the new level."],
+  "startas.follow": ["Follow through from past trades", "Nothing is restarted. The pair keeps its memory from the past trades.", "The size built on the last closed trade, the losses in a row, the Cooldown after a loss, the Mid-Trend Re-entry block and the 'first trade' flag all stay as they are. A new plan simply carries on from where the pair is.", "Pick this or 'New'. Nothing is pre-selected.", "BTC last closed total 35.82: the next entry is still built on it.", "Choosing this also cancels an earlier 'New' that was still waiting for an open trade to close."],
+  "startas.new": ["New", "You choose which memories start again. Only the ticked ones are restarted.", "Tick one or more of the four boxes. Unticked ones stay as they are. Nothing is ticked for you.", "Pick this or 'Follow through'. At least one box must be ticked.", "Tick 'Size starts again at the base amount' only: the next entry uses the base amount, the losses in a row stay.", "An open trade is never touched. If a trade is open the choice is kept and applied when it closes."],
+  "startas.first_flip": ["First trade waits for a fresh flip", "The next entry waits for a new flip of the entry signal, as for a brand new pair.", "Only matters when 'Fresh Reversal on First Trade' is ON in the plan. It makes the pair forget that it has already traded.", "Tick it when you do not want to enter on a signal that is already running.", "Signal is already short when you save: no entry until it flips long and back to short.", "If the plan has Fresh Reversal on First Trade OFF, ticking this changes nothing and you are told."],
+  "startas.size": ["Size starts again at the base amount", "The next entry uses the base amount, not the total of the last closed trade.", "Only matters with Entry size = Fixed base amount. It forgets the last closed total.", "Tick it for a clean start of the compounding.", "Base 50, last closed total 35.82: next entry uses 50 (it never goes below the base anyway). A total above the base, e.g. 80, is forgotten and 50 is used.", "If the plan does not use the fixed base amount, ticking this changes nothing and you are told."],
+  "startas.loss_streak": ["Losses in a row start again at 0", "The count of losing trades in a row is set to 0 and a running Cooldown after a loss is ended.", "Only matters when Cooldown after a loss is ON in the plan.", "Tick it when old losses should not count towards the new plan's cooldown.", "2 losses in a row, cooldown after 3: after this tick, 3 more losses are needed.", "If Cooldown after a loss is OFF in the plan, ticking this changes nothing and you are told."],
+  "startas.reentry": ["Clear the Mid-Trend Re-entry block", "A side that was blocked after the last close may enter again at once.", "Removes the block left by the last closed trade, including the block after 'Exit when'.", "Tick it when the last trade should not hold back the new plan.", "Last trade was long and the signal is still long: normally no new long until the signal ends. Ticked: it may enter.", "Only the block is cleared. All other entry rules still apply."],
   "chart.pair": ["Pair", "The account and pair whose chart you want to see.", "The real candles of that pair, in the pair's own timeframe, with its real trades, its shadow trades and the shadow tracker. It updates every 5 seconds while this tab is open.", "", "", "Read only: nothing on this tab trades."],
   "chart.price": ["Real price", "The real candles of the pair from the exchange (green up, red down).", "Blue marks are your real trades (triangle = entry, dot = exit). Orange hollow marks are the shadow's paper trades. Move the mouse over a candle to see its open, high, low and close, and the shadow tracker at that time.", "", "", ""],
   "chart.levels": ["Stops and targets", "The levels of the open REAL trade.", "Max Loss per Trade, Stop Loss, Trailing Stop (the one on the exchange is marked) and the take-profit targets that are still waiting.", "", "", "Shown only while a real trade is open."],
   "chart.shadow": ["Shadow tracker", "The paper equity of the shadow, one point per candle, under the same candles.", "It starts at the Shadow box's tracker starting amount and moves only with the shadow's paper trades. If the line rises while the price trends, the shadow is following the trend. The dashed line is the starting amount.", "", "", "Shown only when Shadow mode is picked for the pair. It is paper only and never real money."],
+  "arb.tab": ["Arbitrage tab", "Finds price gaps between Binance and OKX (and funding and triangular gaps) and trades them with pretend money.", "Step 2: the scanner reads public prices; modules set to mock trade pretend money on them. No real order and no API key. Live orders come in Step 3.", "", "", "Nothing is requested from the exchanges until you switch the scanner on."],
+  "arb.board": ["Best gaps now", "The best gaps found in the last scan, per module.", "Net = the gap minus fees and slippage. A gap that is not positive after fees is not a profit.", "", "", "Prices come from the top of the order book, so a big order can get a worse price."],
+  "arb.mock": ["Mock trading", "Trades with pretend money on the real prices the scanner reads.", "Each module has its own pretend wallets (you set the start amount). Fills are at the best price plus your slippage, whole size, instantly. Fees use the fee % above.", "", "", "Real fills can be worse (thin books, delay), so mock results look better than live will."],
+  "arb.reset": ["Reset mock results", "Deletes all pretend wallets, open mock trades and the trade list.", "Use it to start a fresh test. It cannot be undone. It never touches real money.", "", "", ""],
+  "arb.scanner_on": ["Scanner on", "Starts or stops the price reading.", "Off = no request goes to Binance or OKX from this tab.", "", "", "All reads go through the same API guard as your pairs, so the scanner cannot cause a block."],
+  "arb.loop_seconds": ["Scan every (seconds)", "How often the prices are read.", "Minimum 2. A slower scan uses less of the exchange request limit.", "", "", ""],
+  "arb.exchange": ["Exchange on", "Which exchanges are scanned.", "Spatial needs both on.", "", "", ""],
+  "arb.testnet": ["Test network", "Reads the exchange's test network instead of the real one.", "Test prices are not real, so gaps there mean nothing.", "", "", "Keep off for real prices."],
+  "arb.top_n": ["Top N pairs", "How many coins are scanned, ranked by 24h volume.", "Higher = more chances but more data to read.", "", "", "Coins in Always include are added on top."],
+  "arb.min_volume": ["Min 24h volume", "Coins that trade less than this per day are skipped.", "", "", "", ""],
+  "arb.min_top_size": ["Min size at best price", "Skips a gap if the best price only has less than this (USDT) behind it.", "A thin top price disappears as soon as you trade.", "", "", ""],
+  "arb.include": ["Always include", "Coins that are always scanned, like BTC, ETH.", "Separate with commas.", "", "", ""],
+  "arb.exclude": ["Never use", "Coins that are never scanned.", "Separate with commas.", "", "", ""],
+  "arb.refresh": ["Refresh the list", "How often the coin list and trading rules are read again.", "", "", "", "Changing Top N or the switches applies at once."],
+  "arb.fees": ["Fees", "Taker fee used in the gap maths.", "Use your real fee level.", "", "", "Percent, so 0.05 means 0.05%."],
+  "arb.spatial": ["Spatial", "Buy where cheaper, sell where dearer (Binance vs OKX).", "Futures: long on the cheaper, short on the dearer. Spot: buy on one, sell on the other.", "", "", ""],
+  "arb.mode": ["Mode", "mock = pretend money. live = real orders.", "Live is not available yet (Step 3).", "", "", "First real run must be tiny."],
+  "arb.markets": ["Markets", "Which markets spatial uses.", "", "", "", ""],
+  "arb.trade_size": ["Trade size", "How much (USDT) each mock trade uses.", "Used by mock trading now, and by live orders later.", "", "", ""],
+  "arb.min_profit": ["Enter at net gap", "Enter only when the net gap is at least this %.", "Used by mock trading now, and by live orders later.", "", "", ""],
+  "arb.exit_profit": ["Exit at net profit", "Close when the net profit reaches this %.", "Used by mock trading now, and by live orders later.", "", "", ""],
+  "arb.slippage": ["Slippage per fill", "Extra cost per fill for price moving against you.", "Spatial futures counts 4 fills, spot 2, triangular 3.", "", "", ""],
+  "arb.max_open": ["Max open trades", "How many trades may be open at once.", "Used by mock trading now, and by live orders later.", "", "", ""],
+  "arb.leverage": ["Futures leverage", "Leverage for the futures leg (sets the pretend margin).", "Used by mock trading now, and by live orders later.", "", "", ""],
+  "arb.max_hold": ["Max hold", "Close a trade after this many seconds. 0 = off.", "Used by mock trading now, and by live orders later.", "", "", ""],
+  "arb.stop_loss": ["Stop loss", "Close when the loss reaches this %. 0 = off.", "Used by mock trading now, and by live orders later.", "", "", ""],
+  "arb.funding": ["Funding rate", "Buy spot and short the perpetual on the same exchange, collect the funding.", "Only the side where longs pay shorts is used.", "", "", ""],
+  "arb.min_funding": ["Min funding", "Enter only when the funding rate per payment is at least this %.", "", "", "", ""],
+  "arb.expected_periods": ["Funding payments counted", "How many payments are counted for the expected net.", "", "", "", ""],
+  "arb.breakeven": ["Max break-even payments", "Skip if the fees need more payments than this to be earned back.", "", "", "", ""],
+  "arb.basis": ["Min basis", "Futures price vs spot price, in %. Below this the gap is skipped.", "", "", "", ""],
+  "arb.exit_funding": ["Exit funding", "Close when the funding rate falls below this %.", "Used by mock trading now, and by live orders later.", "", "", ""],
+  "arb.fund_refresh": ["Read funding every", "Seconds between funding readings.", "", "", "", ""],
+  "arb.triangular": ["Triangular", "USDT to coin to bridge coin back to USDT on one exchange.", "Locked: needs the confirm tick here AND typing YES (added in Step 4).", "", "", "Stays off by default."],
+  "arb.tri_lock": ["Confirm (first lock)", "First of two locks for triangular.", "The board only shows when this is ticked.", "", "", ""],
+  "arb.bridge": ["Bridge coins", "Coins used as the middle step.", "", "", "", ""],
+  "arb.order_type": ["Order type", "market, limit_ioc (limit with a price buffer, cancel the rest) or limit_wait (wait some seconds).", "Live only (Step 3). Mock fills at the best price plus the slippage you set.", "", "", ""],
+  "arb.buffer": ["Price buffer", "How far past the best price a limit_ioc order may go, in %.", "Live only (Step 3). Mock fills at the best price plus the slippage you set.", "", "", ""],
+  "arb.wait": ["Wait seconds", "How long limit_wait waits for a fill.", "Live only (Step 3). Mock fills at the best price plus the slippage you set.", "", "", ""],
+  "arb.sequence": ["Order sequence", "simultaneous = both legs at once. harder_first = the harder leg first.", "Live only (Step 3). Mock fills at the best price plus the slippage you set.", "", "", ""],
+  "arb.exit_type": ["Exit order type", "How trades are closed.", "Live only (Step 3). Mock fills at the best price plus the slippage you set.", "", "", ""],
+  "arb.max_size": ["Max size per trade", "No live trade may be bigger than this (USDT). 0 = off.", "Live only. Mock ignores it. Live refuses to start while this is empty.", "", "", ""],
+  "arb.daily_loss": ["Stop after daily loss", "Stops new live trades for the day after this loss (USDT). 0 = off.", "Live only. Mock results never count. Live refuses to start while this is empty.", "", "", ""],
+  "arb.live": ["Live trading", "Real orders on your exchanges. A module goes live only when: its mode is live and you typed LIVE when saving, the risk boxes are filled, the margin cap is set (futures), and the API keys work.", "Each live engine starts only if every check passes; if one fails, the reason is shown and nothing is sent. Start with a tiny trade size, one module, on a separate sub-account.", "", "", ""],
+  "arb.keys": ["API keys", "Enter the key for each exchange the live modules use. Use a key that can trade but CANNOT withdraw.", "Binance spot may stay blank: then the futures key is used. After saving, only the last 4 characters are shown. Check keys makes read-only calls (balance, position mode, open positions) and sends no order.", "", "", ""],
+  "arb.margin_cap": ["Margin cap", "The most margin (USDT) the arbitrage may use on one exchange at one time, so it can never eat the hub's free balance.", "Required before a live module that uses futures can start. The arbitrage also uses isolated margin only and skips coins the hub trades on the same key.", "", "", ""],
+  "arb.live_confirm": ["Type LIVE", "Switching a module from mock to live needs the word LIVE typed in this box when you press Save.", "It is only needed at the moment you switch. A module that is already live does not ask again.", "", "", ""],
+  "arb.tri_yes": ["Triangular second lock", "Triangular live needs the confirm tick AND the word YES typed here. It locks again after every restart.", "Triangular has to win three trades in a row at once, so fills often fail halfway. That is why it has two locks.", "", "", ""],
+  "arb.stop": ["Stop new trades", "Creates the kill-switch file. No NEW trade opens (mock or live). Open trades are still closed normally.", "Press again to allow new trades. This is the same as putting the file in the data folder by hand.", "", "", ""],
+  "arb.alert_trades": ["Telegram on every trade", "Sends a Telegram message when a trade opens and when it closes (with the result).", "off = none. live = real trades only (default). all = also mock and shadow trades. Problem alerts (one leg, stuck trade, daily loss) are always sent for live trades.", "", "", ""],
+  "arb.kill": ["Kill-switch file", "If a file with this name exists in the arbitrage data folder, no NEW trade opens (exits still work).", "Works for mock now and for live later.", "", "", ""],
+  "arb.live_mock": ["Shadow mock while live", "Runs a pretend copy next to live, to compare.", "", "", "", ""],
+  "arb.one_leg_f": ["One side filled (futures)", "close_filled = close the side that filled. hold = keep it.", "Only matters when one side fills. Mock fills both sides, so it rarely happens here; live is Step 3.", "", "", ""],
+  "arb.one_leg_s": ["One side filled (spot)", "hold_for_profit = keep the coins until the profit % below. close_filled = sell at once.", "Only matters when one side fills. Mock fills both sides, so it rarely happens here; live is Step 3.", "", "", ""],
+  "arb.hold_profit": ["Sell when profit reaches", "Used when spot holds a leftover.", "Only matters when one side fills. Mock fills both sides, so it rarely happens here; live is Step 3.", "", "", ""],
+  "arb.hold_stop": ["Hold stop loss", "Sell a held leftover at this loss %. 0 = off.", "Only matters when one side fills. Mock fills both sides, so it rarely happens here; live is Step 3.", "", "", ""],
+  "arb.hold_max": ["Hold max minutes", "Sell a held leftover after this long. 0 = off.", "Only matters when one side fills. Mock fills both sides, so it rarely happens here; live is Step 3.", "", "", ""],
+  "arb.block_pair": ["Block the pair while held", "No new trade on a coin while a leftover of it is held.", "Only matters when one side fills. Mock fills both sides, so it rarely happens here; live is Step 3.", "", "", ""],
 };
 const PF_HELP = { timeframe: "pf.timeframe", isolated_margin: "pf.isolated_margin", poll_seconds: "pf.poll_seconds", telegram_enabled: "pf.telegram_enabled", ws_staleness_seconds: "pf.ws_staleness_seconds", trigger_px_type: "pf.trigger_px_type" };
 function helpKey(id) { return String(id).replace(/^ma[12]_/, "ma_").replace(/^tp[123]_/, "tpN_"); }
@@ -1490,7 +1624,7 @@ function baseV3Cell(s) {
 
 // ---------------- Main tab switching ----------------
 function switchMainTab(tab) {
-  for (const name of ['trading', 'okx', 'hub', 'ledger', 'analysis', 'tracker', 'chart', 'defaults']) {
+  for (const name of ['trading', 'okx', 'hub', 'ledger', 'analysis', 'tracker', 'chart', 'arb', 'defaults']) {
     document.getElementById(`tabpage-${name}`).classList.toggle('active', name === tab);
     document.getElementById(`maintab-${name}`).classList.toggle('active', name === tab);
   }
@@ -1498,6 +1632,7 @@ function switchMainTab(tab) {
   if ((tab === 'okx' || tab === 'hub') && !okxLoadedOnce) { okxLoadedOnce = true; loadOKXAccounts(); }
   if (tab === 'defaults') loadDefaultSettings();
   if (tab === 'chart') { if (!okxLoadedOnce) { okxLoadedOnce = true; loadOKXAccounts(); } chartStart(); } else chartStop();
+  if (tab === 'arb') arbStart(); else arbStop();
 }
 let okxLoadedOnce = false;
 
@@ -1547,7 +1682,7 @@ function renderAccounts() {
   for (const a of accounts) {
     const div = document.createElement('div');
     div.className = 'acct-item' + (a.id === selectedAccountId ? ' active' : '');
-    div.innerHTML = `<div><div class="name">${a.name}</div><div class="meta">${a.pair_count}/3 pairs</div></div>
+    div.innerHTML = `<div><div class="name">${a.name}</div><div class="meta">${a.pair_count}/5 pairs</div></div>
       <span class="pill ${a.testnet ? 'testnet' : 'mainnet'}">${a.testnet ? 'TESTNET' : 'LIVE'}</span>`;
     div.onclick = () => selectAccount(a.id);
     list.appendChild(div);
@@ -1557,11 +1692,271 @@ function renderAccounts() {
 
 function selectAccount(id) {
   selectedAccountId = id;
+  resetPairView();      // a card / Close box of the other account must never carry over
   renderAccounts();
   renderPairs();
 }
 
 function currentAccount() { return accounts.find(a => a.id === selectedAccountId); }
+
+function fmtDuration(sec) {
+  if (sec === null || sec === undefined || !isFinite(sec) || sec < 0) return '—';
+  sec = Math.floor(sec);
+  const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60), x = sec % 60;
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m ${String(x).padStart(2, '0')}s`;
+  return `${m}m ${String(x).padStart(2, '0')}s`;
+}
+// The server clock, not this device's clock, decides the countdown and the time in trade.
+function serverSkewMs(s) { return (s && s.live && s.live.server_ms && s._fetched) ? (s.live.server_ms - s._fetched) : 0; }
+// The candle countdown ticks every second without redrawing the page (only the spans that carry the close time).
+setInterval(() => {
+  document.querySelectorAll('[data-close-ms]').forEach(el => {
+    const skew = Number(el.getAttribute('data-skew')) || 0;
+    el.textContent = fmtDuration((Number(el.getAttribute('data-close-ms')) - (Date.now() + skew)) / 1000);
+  });
+}, 1000);
+
+// ---- Pairs: list, then tap (owner 2026-11-08, demo "Option 1"). The list shows each pair's last price and P/L;
+// tapping a line opens that pair's card (plan, check now, buttons). Close trade always asks first.
+// Every state below is tied to ACCOUNT + SYMBOL, so another account's pair with the same symbol never inherits it.
+let openPairKey = '';       // 'accountId:SYMBOL' of the open card ('' = the list)
+let closeConfirmKey = '';   // 'accountId:SYMBOL' whose "Close now?" box is showing (kept so the 5-second refresh does not drop it)
+let closeBusyKey = '';      // a close request is on its way for this pair (blocks a second tap)
+let closeDoneMsg = '';
+let closeDoneTimer = null;
+
+function resetPairView() { openPairKey = ''; closeConfirmKey = ''; closeDoneMsg = ''; }
+function pairKey(accId, sym) { return `${accId}:${sym}`; }
+function escH(v) { return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
+function signed(n, d = 2) { return (n === null || n === undefined) ? '—' : (n > 0 ? '+' : '') + fmt(n, d); }
+function plColour(n) { return n === null || n === undefined || n === 0 ? 'var(--muted)' : (n > 0 ? 'var(--green)' : 'var(--red)'); }
+function pairIsOpen(s) { return ['IN_POSITION', 'UNPROTECTED', 'CLOSING'].includes(s.status) && (s.direction === 'LONG' || s.direction === 'SHORT'); }
+// Stop only pauses: the trade (and its resting stop) can still be open on the exchange.
+function pairStoppedWithTrade(s) { return s.status === 'STOPPED' && (s.direction === 'LONG' || s.direction === 'SHORT'); }
+
+function pairBadges(pc, s) {
+  const reconList = s.pending_reconciliations || [];
+  const reconBadge = reconList.length
+    ? `<span class="badge ERROR" title="${escH(reconList.map(r => r.context + ': ' + r.detail).join(' | '))}">⚠ RECONCILE (${reconList.length})</span>` : '';
+  const pendingBadge = s.config_update_pending
+    ? `<span class="badge" style="background:#3a3410; color:#e8c95a;" title="A config change is queued and will apply once this pair is flat.">⏳ UPDATE QUEUED</span>` : '';
+  const frozenBadge = pc.frozen
+    ? `<span class="badge" style="background:#4a0f14; color:#ff8a8a;" title="Frozen - editing, starting, stopping, restarting, closing and deleting are all refused until unfrozen.">🔒 FROZEN</span>` : '';
+  const shadowBadge = s.shadow_only ? ' <span class="badge" style="background:#3a2a10; color:#f5a742;" title="Real trading is stopped; the shadow keeps running.">SHADOW RUNNING</span>' : '';
+  const stoppedTrade = pairStoppedWithTrade(s)
+    ? ' <span class="badge ERROR" title="Stop only pauses the bot. The trade can still be open on the exchange.">⚠ STOPPED - TRADE MAY BE OPEN</span>' : '';
+  return `${shadowBadge} ${reconBadge} ${pendingBadge} ${frozenBadge} ${stoppedTrade}`;
+}
+
+function openPair(accId, sym) { openPairKey = pairKey(accId, sym); closeConfirmKey = ''; closeDoneMsg = ''; renderPairs(); }
+function backToPairList() { openPairKey = ''; closeConfirmKey = ''; renderPairs(); }
+function askCloseTrade(accId, sym) { closeConfirmKey = pairKey(accId, sym); closeDoneMsg = ''; renderPairs(); }
+function cancelCloseTrade() { closeConfirmKey = ''; renderPairs(); }
+async function confirmCloseTrade(accId, sym) {
+  const key = pairKey(accId, sym);
+  if (closeBusyKey) return;                    // a second tap while the first is on its way does nothing
+  closeBusyKey = key; closeConfirmKey = '';
+  renderPairs();
+  let msg;
+  try {
+    const r = await api(`/api/accounts/${accId}/pairs/${sym}/close-trade`, {method: 'POST'});
+    msg = r && r.closed ? `${sym}: trade closed at market.`
+      : (r && r.message ? `${sym}: ${r.message}` : `${sym}: close sent. Status ${r && r.status}. The bot keeps trying until the exchange shows it flat.`);
+  } catch (e) { msg = `${sym}: close failed - ${e.message}`; }
+  closeBusyKey = '';
+  closeDoneMsg = msg;
+  if (closeDoneTimer) clearTimeout(closeDoneTimer);
+  closeDoneTimer = setTimeout(() => { closeDoneMsg = ''; renderPairs(); }, 20000);   // the note goes away by itself
+  openPairKey = '';
+  try { await refreshStatus(); } catch (e) {}
+  renderPairs();
+}
+
+function pairListRow(acc, sym, pc, s) {
+  const status = s.status || (pc.enabled ? 'STARTING' : 'IDLE');
+  const open = pairIsOpen(s);
+  const live = s.live || {};
+  const last = live.last_price;
+  const dirClass = s.direction === 'LONG' ? 'dir-LONG' : (s.direction === 'SHORT' ? 'dir-SHORT' : '');
+  const pl = open && live.pnl !== null && live.pnl !== undefined
+    ? `<div style="font-size:17px; font-weight:800; color:${plColour(live.pnl)};">${signed(live.pnl)} USDT</div>`
+    : `<div style="font-size:13px; color:var(--muted);">${open ? 'P/L —' : 'no open trade'}</div>`;
+  const feed = s.feed_stale ? ' <span class="badge STALE">STALE</span>' : '';
+  return `<button type="button" onclick="openPair('${acc.id}','${sym}')" style="width:100%; min-height:64px; text-align:left; display:flex; justify-content:space-between; align-items:center; gap:10px; background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px 14px; margin-bottom:8px; color:var(--text); cursor:pointer;">
+      <span style="display:flex; flex-direction:column; gap:3px;">
+        <span style="font-size:17px; font-weight:800;">${sym} <span style="font-size:12px; color:var(--muted); font-weight:400;">${escH(pc.timeframe)}</span></span>
+        <span style="font-size:13px;"><span class="${dirClass}">${s.direction || 'FLAT'}</span> <span style="color:var(--muted);">last ${last == null ? '—' : fmt(last)}</span>${feed}</span>
+        <span><span class="badge ${status}">${status}</span>${pairBadges(pc, s)}</span>
+      </span>
+      <span style="text-align:right;">${pl}</span>
+    </button>`;
+}
+
+// ---- Hub pair card: everything that used to need the Binance app (owner 2026-11-09). Read-only.
+const HUB_REASON_NAMES = { trailing_stop: 'Trailing Stop', stop_crossed_at_entry: 'Stop (price crossed it at the entry)', signal_flip: 'Flip',
+  exit_when: 'Exit when', sr_exit: 'Support / Resistance exit', time_stop: 'Time stop', manual_partial_close: 'Closed by hand (part)',
+  manual_close: 'Close trade button', external: 'Closed outside the bot', SL: 'Stop Loss', max_loss: 'Max Loss per Trade',
+  external_while_unprotected: 'Closed outside the bot (while unprotected)', emergency_close_unprotected: 'Emergency close (was unprotected)' };
+function hubReasonName(r) {
+  if (HUB_REASON_NAMES[r]) return HUB_REASON_NAMES[r];
+  const m = /^TP(\d)/.exec(r || '');
+  return m ? 'Take profit ' + m[1] : (r || '?');
+}
+function hubSgt(sec) {
+  try { return new Date(sec * 1000).toLocaleString('en-GB', { timeZone: 'Asia/Singapore', hour12: false, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
+  catch (_) { return '?'; }
+}
+function hubInfoHtml(info, box, kv, open) {
+  if (!info) return '';
+  const head = t => `<div style="font-size:12px; letter-spacing:.08em; color:var(--muted); margin-bottom:6px;">${t}</div>`;
+  const line = t => `<div style="font-size:13px; line-height:1.45; margin:3px 0;">${t}</div>`;
+  let h = '';
+  // 1. take-profit levels
+  if (info.tp && info.tp.length) {
+    const STATE = { pending: 'waiting to be placed', placed: 'resting on Binance', filled: 'filled', cancelled: 'cancelled', skipped: 'skipped', off: 'off' };
+    h += `<div style="${box}">${head('TAKE PROFIT LEVELS')}` + info.tp.map(l =>
+      line(`TP${l.index}: ` + (l.on ? `${fmt(l.price)} closes ${fmt(l.pct)}% <span style="color:var(--muted);">(${escH(STATE[l.state] || l.state || '')})</span>` : '<span style="color:var(--muted);">off</span>'))).join('') + `</div>`;
+  }
+  // 2. orders really resting on the exchange
+  if (info.resting) {
+    const o = info.resting.orders;
+    h += `<div style="${box}">${head('ORDERS RESTING ON BINANCE')}`;
+    if (o == null) h += line('<span style="color:var(--muted);">Could not read them (' + escH(info.resting.error || 'no answer') + ').</span>');
+    else if (!o.length) h += line(open ? '<span style="color:#ff8a8a;"><b>None.</b> No stop or take profit rests on Binance for this trade.</span>' : 'None. Nothing is left behind.');
+    else h += o.map(x => line(`${x.kind === 'stop' ? 'Stop' : 'Limit'} ${escH(x.side)} ${escH(x.type)}` +
+      (x.trigger != null ? ` trigger <b>${fmt(x.trigger)}</b>` : '') + (x.price != null ? ` at <b>${fmt(x.price)}</b>` : '') +
+      (x.qty != null ? ` qty ${escH(x.qty)}` : (x.close_all ? ' (closes all)' : '')) + (x.reduce ? ' · reduce only' : ''))).join('');
+    h += `<div style="font-size:11px; color:var(--muted);">read ${info.resting.age_s}s ago</div></div>`;
+  }
+  // 3. last closed trade
+  if (info.last_trade) {
+    const t = info.last_trade;
+    h += `<div style="${box}">${head('LAST CLOSED TRADE')}` +
+      line(`${escH(t.direction)}, opened ${hubSgt(t.opened_at)}, closed ${hubSgt(t.closed_at)} (SGT)`) +
+      t.legs.map(l => line(`${escH(hubReasonName(l.reason))}: ${l.qty != null ? escH(l.qty) + ' ' : ''}at <b>${fmt(l.exit)}</b> (entry ${fmt(l.entry)})` +
+        (l.pnl != null ? `, <span style="color:${plColour(l.pnl)};">${signed(l.pnl)}</span>` : '') +
+        (l.fee != null ? `, fee ${fmt(l.fee)}` : '') + (l.confirmed ? '' : ' <span style="color:#ffb86b;">(price is an estimate)</span>'))).join('') +
+      (t.pnl != null ? kv('Trade result', `<span style="color:${plColour(t.pnl)};">${signed(t.pnl)} USDT</span>`) : '') + `</div>`;
+  }
+  // 4. next entry size
+  if (info.next_entry) {
+    const n = info.next_entry;
+    h += `<div style="${box}">${head('NEXT ENTRY SIZE')}` + (n.method === 'fixed'
+      ? kv('Base amount', fmt(n.base) + ' USDT') + kv('Last closed total', n.last_total == null ? 'none yet' : fmt(n.last_total) + ' USDT') +
+        kv('Next entry margin', `<span style="color:var(--green);">${fmt(n.next)} USDT</span>`)
+      : kv('Allocation', (n.pct == null ? '?' : fmt(n.pct) + '%') + ' of balance' + (n.leverage != null ? ' at ' + fmt(n.leverage) + 'x' : ''))) + `</div>`;
+  }
+  // 5. memory flags
+  if (info.flags && info.flags.length) {
+    h += `<div style="${box}">${head('WHAT THE PAIR REMEMBERS')}` + info.flags.map(f => kv(escH(f[0]), escH(f[1]))).join('') + `</div>`;
+  }
+  // 6. problems of this trade (from the log)
+  if (info.problems && info.problems.length) {
+    h += `<div style="${box}">${head('RECENT PROBLEMS (FROM THE LOG, SERVER TIME)')}` +
+      info.problems.map(l => `<div style="font-size:12px; line-height:1.4; margin:3px 0; color:#ffb86b; word-break:break-word;">${escH(l)}</div>`).join('') + `</div>`;
+  }
+  return h;
+}
+
+function pairDetailHtml(acc, sym, pc, s) {
+  const status = s.status || (pc.enabled ? 'STARTING' : 'IDLE');
+  const key = pairKey(acc.id, sym);
+  const open = pairIsOpen(s);
+  const frozen = !!pc.frozen;
+  const hubSt = s.hub || null;
+  const card = (hubSt && hubSt.card) || {};
+  const live = s.live || {};
+  const skew = serverSkewMs(s);
+  const dirClass = s.direction === 'LONG' ? 'dir-LONG' : (s.direction === 'SHORT' ? 'dir-SHORT' : '');
+  const box = 'background:#0f1530; border-radius:10px; padding:12px; margin-bottom:10px;';
+  const kv = (k, v) => `<div style="display:flex; justify-content:space-between; gap:10px; font-size:14px; margin:3px 0;"><span style="color:var(--muted);">${k}</span><b style="text-align:right;">${v}</b></div>`;
+  const notional = (s.qty && s.entry_price) ? ` (about ${fmt(s.qty * s.entry_price, 0)} USDT)` : '';
+  let h = `<button type="button" class="small ghost" onclick="backToPairList()" style="min-height:40px; padding:0 16px; margin-bottom:10px;">Back to list</button>
+    <div style="background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:14px;">
+    <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:10px;">
+      <span style="font-size:20px; font-weight:800;">${sym}</span><span style="color:var(--muted); font-size:13px;">${escH(pc.timeframe)}</span>
+      <span class="badge ${status}">${status}</span><span class="${dirClass}" style="font-size:15px;">${s.direction || 'FLAT'}</span>
+      ${s.feed_stale ? '<span class="badge STALE">STALE</span>' : '<span class="badge LIVE">LIVE</span>'} ${pairBadges(pc, s)}
+    </div>`;
+  if (pairStoppedWithTrade(s)) {
+    h += `<div style="border:1px solid var(--red); background:#2a1220; border-radius:10px; padding:12px; margin-bottom:10px; font-size:13px; line-height:1.5;">
+      <b>Stopped, but the trade may still be open on Binance</b> with its stop resting there. The bot is not watching it.
+      Press <b>Start</b> and then <b>Close trade</b>, or close it on Binance.</div>`;
+  }
+  // shared extra numbers: candle countdown, time in trade, distance to the stop, today's result
+  const stopPrice = hubSt ? card.stop_price : s.sl_price;
+  let more = '';
+  if (live.next_close_ms) more += kv('Next candle close in', `<span data-close-ms="${live.next_close_ms}" data-skew="${skew}">${fmtDuration((live.next_close_ms - (Date.now() + skew)) / 1000)}</span>`);
+  if (open && s.opened_at) more += kv('Time in trade', fmtDuration((Date.now() + skew) / 1000 - s.opened_at));
+  if (open && stopPrice != null && live.last_price) {
+    const dist = Math.abs(live.last_price - stopPrice);
+    more += kv('Price to stop', `${fmt(dist)} (${fmt(dist / live.last_price * 100)}%)${s.qty ? ` / ${fmt(dist * s.qty)} USDT` : ''}`);
+  }
+  if (live.today) more += kv('Today (closed trades)', `${live.today.trades} ${live.today.trades === 1 ? 'trade' : 'trades'}${live.today.trades ? ', <span style="color:' + plColour(live.today.pnl) + ';">' + signed(live.today.pnl) + ' USDT</span>' : ''}`);
+  if (!open && hubSt && card.funds) more += kv('Funds', `${fmt(card.funds.available)} available${card.funds.need != null ? ` / next entry needs ${fmt(card.funds.need)}` : ''} <span style="color:${card.funds.ok ? 'var(--green)' : 'var(--red)'};">${card.funds.ok ? 'OK' : 'NOT ENOUGH'}</span>`);
+  if (hubSt) {
+    const pnl = live.pnl;
+    h += `<div style="${box}"><div style="font-size:12px; letter-spacing:.08em; color:var(--muted);">PROFIT / LOSS</div>
+      <div style="font-size:30px; font-weight:800; color:${plColour(open ? pnl : null)};">${open && pnl != null ? signed(pnl) + ' USDT' : '—'}</div>
+      <div style="font-size:13px; color:${plColour(open ? pnl : null)};">${open && live.pnl_pct_margin != null ? signed(live.pnl_pct_margin) + '% of margin' : (open ? '' : 'No open trade')}</div></div>`;
+    h += `<div style="${box}">${kv('Last price', live.last_price == null ? '—' : fmt(live.last_price))}
+      ${open ? kv('Entry', fmt(s.entry_price)) + kv('Size', s.qty == null ? '—' : escH(s.qty) + notional) : ''}
+      ${open ? kv('Stop in charge', card.stop_price == null ? '—' : `${fmt(card.stop_price)} (${escH(card.stop_name || '')})`) : ''}
+      ${open && card.next_stop ? kv('Next stop level', `${fmt(card.next_stop.level)} at price ${fmt(card.next_stop.at)}`) : ''}</div>`;
+    if (more) h += `<div style="${box}">${more}</div>`;
+    h += hubInfoHtml(hubSt.info, box, kv, open);
+    if (!open && (card.why || []).length) {
+      h += `<div style="${box}"><div style="font-size:12px; letter-spacing:.08em; color:var(--muted); margin-bottom:6px;">WHY NO TRADE</div>` +
+        card.why.map(w => `<div style="font-size:13px; line-height:1.45; margin:3px 0;">${escH(w)}</div>`).join('') + `</div>`;
+    }
+    const c = card.check;
+    if (c) {
+      const need = c.combo === 'ANY' ? 'any 1' : (c.combo === 'ALL' ? 'all' : `needs ${c.need}`);
+      h += `<div style="${box}"><div style="font-size:12px; letter-spacing:.08em; color:var(--muted); margin-bottom:6px;">${c.which} CHECK NOW: ${c.side} side (${escH(c.combo)}, ${need}) - last closed candle</div>` +
+        c.rows.map(r => `<div style="display:flex; justify-content:space-between; gap:8px; font-size:13px; margin:3px 0;"><span>${escH(r.text)}</span><span style="padding:3px 9px; border-radius:6px; font-size:12px; font-weight:700; white-space:nowrap; ${r.ok ? 'background:#0f3a26; color:#35d68a;' : 'background:#3a1522; color:#ff8da0;'}">${r.ok ? 'OK' : 'NO'}</span></div>`).join('') +
+        `<div style="font-size:13px; font-weight:700; margin-top:6px;">${c.agree} of ${c.rows.length} agree. ${c.signal ? (c.which === 'FLIP' ? 'Flip signal is ON.' : 'Entry signal is ON.') : (c.which === 'FLIP' ? 'No flip signal.' : 'No entry signal.')}</div></div>`;
+    }
+    h += `<div style="${box}"><div style="font-size:12px; letter-spacing:.08em; color:var(--muted); margin-bottom:6px;">YOUR PLAN (EVERYTHING THAT IS SET)</div>` +
+      (card.plan_lines || []).map(l => `<div style="font-size:13px; line-height:1.45; margin:2px 0;"><span style="color:var(--muted);">${escH(l[0])} </span>${escH(l[1])}</div>`).join('') + `</div>`;
+  } else {
+    // a pair without a Strategy Hub plan keeps its own (older) numbers
+    h += `<div style="${box}">${kv('Last price', live.last_price == null ? '—' : fmt(live.last_price))}
+      ${open ? kv('Profit / loss', live.pnl == null ? '—' : `<span style="color:${plColour(live.pnl)};">${signed(live.pnl)} USDT</span>`) : ''}
+      ${kv('Entry', fmt(s.entry_price))}${kv('Fixed stop', fmt(s.sl_price))}</div>`;
+    if (more) h += `<div style="${box}">${more}</div>`;
+    h += `<div style="${box}"><div style="font-size:12px; color:var(--muted); margin-bottom:6px;">NO STRATEGY HUB PLAN ON THIS PAIR</div>${baseV3Cell(s)}<div style="margin-top:6px;">${tpCell(s)}</div></div>`;
+  }
+  // close trade (always asks first)
+  if (open && closeConfirmKey === key) {
+    const plTxt = live.pnl != null ? ` P/L now <b style="color:${plColour(live.pnl)}">${signed(live.pnl)} USDT</b>.` : '';
+    const after = (hubSt && card.reentry_blocked_after_close)
+      ? 'The bot stays on. This side waits for a fresh signal before it enters again.'
+      : 'The bot stays on. If its entry signal is still on, it may enter again at the next candle close.';
+    h += `<div style="border:1px solid var(--red); background:#2a1220; border-radius:12px; padding:14px; margin-bottom:10px;">
+      <div style="font-size:16px; font-weight:700; margin-bottom:6px;">Close ${sym} at market?</div>
+      <div style="font-size:13px; line-height:1.5; margin-bottom:10px;">Closes only this pair.${plTxt} ${after}</div>
+      <div style="display:flex; gap:10px;"><button type="button" class="ghost" style="flex:1; min-height:48px;" onclick="cancelCloseTrade()">Cancel</button>
+      <button type="button" class="danger" style="flex:1; min-height:48px; font-weight:700;" onclick="confirmCloseTrade('${acc.id}','${sym}')">Close now</button></div></div>`;
+  } else if (open) {
+    h += `<button type="button" class="danger" ${frozen || closeBusyKey ? 'disabled' : ''} ${frozen ? 'title="Frozen - unfreeze first"' : ''} style="width:100%; min-height:52px; font-size:16px; font-weight:800; margin-bottom:10px;" onclick="askCloseTrade('${acc.id}','${sym}')">${closeBusyKey === key ? 'Closing...' : 'Close trade'}</button>`;
+  }
+  // the pair's own buttons (unchanged)
+  h += `<div style="${box}">
+      <button class="small" onclick="viewLog('${acc.id}','${sym}')">Log</button>
+      <button class="small ghost" ${frozen ? 'disabled title="Frozen - unfreeze first"' : ''} onclick="openEditPair('${sym}')">Edit</button>
+      ${pc.enabled
+        ? `<button class="small danger" ${frozen ? 'disabled title="Frozen - unfreeze first"' : ''} onclick="stopPair('${acc.id}','${sym}')">Stop</button>`
+        : `<button class="small" ${frozen ? 'disabled title="Frozen - unfreeze first"' : ''} onclick="startPair('${acc.id}','${sym}')">Start</button>`}
+      <button class="small danger" ${frozen ? 'disabled title="Frozen - unfreeze first"' : ''} onclick="deletePair('${acc.id}','${sym}')">Delete</button>
+      ${frozen
+        ? `<button class="small" onclick="confirmUnfreezePair('${acc.id}','${sym}')">🔓 Unfreeze</button>`
+        : `<button class="small ghost" onclick="confirmFreezePair('${acc.id}','${sym}')">🔒 Freeze</button>`}<br>
+      <button class="small ghost" onclick="goToLedger('binance','${acc.id}','${sym}')">Ledger</button>
+      <button class="small ghost" onclick="goToTracker('binance','${acc.id}','${sym}')">Tracker</button>
+      <button class="small ghost" onclick="goToAnalysis('binance','${acc.id}','${sym}')">Analysis</button></div>`;
+  return h + `</div>`;
+}
 
 function renderPairs() {
   const body = document.getElementById('pairs-body');
@@ -1572,71 +1967,29 @@ function renderPairs() {
   const pairs = acc.pairs || {};
   const symbols = Object.keys(pairs);
   if (!symbols.length) { body.innerHTML = '<div class="empty">No pairs configured on this account yet. Click "+ Add Pair".</div>'; return; }
-
-  let html = `<div class="table-scroll"><table><thead><tr>
-    <th>Symbol</th><th>Status</th><th>Feed</th><th>Direction</th><th>Entry</th><th>Fixed stop</th><th>TP1 / TP2 (tracking)</th><th>Signals</th><th></th>
-    </tr></thead><tbody>`;
-  for (const sym of symbols) {
-    const key = `${acc.id}:${sym}`;
-    const s = statusById[key] || {};
-    const status = s.status || (pairs[sym].enabled ? 'STARTING' : 'IDLE');
-    const dirClass = s.direction === 'LONG' ? 'dir-LONG' : (s.direction === 'SHORT' ? 'dir-SHORT' : '');
-    const ind = s.indicators || {};
-    const feedBadge = s.feed_stale ? '<span class="badge STALE">STALE</span>' : '<span class="badge LIVE">LIVE</span>';
-    // Item 9 fix (2026-09-14): surface a pending-reconciliation flag right
-    // here in the main table, not only in Telegram/logs - a human scanning
-    // the dashboard should see this immediately.
-    // 2026-09-14 redesign: now a LIST (a symbol can have more than one
-    // genuinely unresolved order at once, each tracked independently) -
-    // badge shows a count and every context/detail on hover, not just the
-    // single most-recently-flagged one.
-    const reconList = s.pending_reconciliations || [];
-    const reconBadge = reconList.length
-      ? `<span class="badge ERROR" title="${reconList.map(r => r.context + ': ' + r.detail).join(' | ').replace(/"/g, '&quot;')}">⚠ RECONCILE (${reconList.length})</span>`
-      : '';
-    // 2026-09-15: a config edit made while this pair had an open position
-    // doesn't apply until it's flat again (see the deferred-restart
-    // mechanism) - this makes that queued, not-yet-applied state visible
-    // on the dashboard rather than leaving it silent.
-    const pendingBadge = s.config_update_pending
-      ? `<span class="badge" style="background:#3a3410; color:#e8c95a;" title="A config change is queued and will apply once this pair is flat.">⏳ UPDATE QUEUED</span>`
-      : '';
-    // 2026-09-19, owner request: Freeze - a deliberate, persistent lock
-    // against accidental human clicks, independent of whether the pair
-    // is running. Shown as its own badge (distinct from status) since a
-    // frozen pair can be in ANY status - IDLE, IN_POSITION, whatever it
-    // was in when frozen.
-    const frozen = !!pairs[sym].frozen;
-    const frozenBadge = frozen
-      ? `<span class="badge" style="background:#4a0f14; color:#ff8a8a;" title="Frozen - editing, starting, stopping, restarting, and deleting are all refused until unfrozen.">🔒 FROZEN</span>`
-      : '';
-    html += `<tr>
-      <td><b>${sym}</b><div style="color:var(--muted); font-size:11px;">${pairs[sym].timeframe}</div></td>
-      <td><span class="badge ${status}">${status}</span>${s.shadow_only ? ' <span class="badge" style="background:#3a2a10; color:#f5a742;" title="Real trading is stopped; the shadow keeps running.">SHADOW RUNNING</span>' : ''} ${reconBadge} ${pendingBadge} ${frozenBadge}</td>
-      <td>${feedBadge}</td>
-      <td><span class="${dirClass}">${s.direction || '—'}</span></td>
-      <td>${fmt(s.entry_price)}</td>
-      <td>${fmt(s.sl_price)}</td>
-      <td>${tpCell(s)}</td>
-      <td>${baseV3Cell(s)}</td>
-      <td style="white-space:nowrap;">
-        <button class="small" onclick="viewLog('${acc.id}','${sym}')">Log</button>
-        <button class="small ghost" ${frozen ? 'disabled title="Frozen - unfreeze first"' : ''} onclick="openEditPair('${sym}')">Edit</button>
-        ${pairs[sym].enabled
-          ? `<button class="small danger" ${frozen ? 'disabled title="Frozen - unfreeze first"' : ''} onclick="stopPair('${acc.id}','${sym}')">Stop</button>`
-          : `<button class="small" ${frozen ? 'disabled title="Frozen - unfreeze first"' : ''} onclick="startPair('${acc.id}','${sym}')">Start</button>`}
-        <button class="small danger" ${frozen ? 'disabled title="Frozen - unfreeze first"' : ''} onclick="deletePair('${acc.id}','${sym}')">Delete</button>
-        ${frozen
-          ? `<button class="small" onclick="confirmUnfreezePair('${acc.id}','${sym}')">🔓 Unfreeze</button>`
-          : `<button class="small ghost" onclick="confirmFreezePair('${acc.id}','${sym}')">🔒 Freeze</button>`}<br>
-        <button class="small ghost" onclick="goToLedger('binance','${acc.id}','${sym}')">Ledger</button>
-        <button class="small ghost" onclick="goToTracker('binance','${acc.id}','${sym}')">Tracker</button>
-        <button class="small ghost" onclick="goToAnalysis('binance','${acc.id}','${sym}')">Analysis</button>
-      </td>
-    </tr>`;
+  // a card or Close box that belongs to another account, or to a pair that is gone, is dropped
+  const keyOk = (k) => symbols.some(sym => pairKey(acc.id, sym) === k);
+  if (openPairKey && !keyOk(openPairKey)) openPairKey = '';
+  if (closeConfirmKey && !keyOk(closeConfirmKey)) closeConfirmKey = '';
+  const done = closeDoneMsg
+    ? `<div style="border:1px solid var(--green); background:#0f2a22; border-radius:12px; padding:12px; font-size:13px; margin-bottom:10px;">${escH(closeDoneMsg)}</div>` : '';
+  if (openPairKey) {
+    const sym = openPairKey.slice(acc.id.length + 1);
+    body.innerHTML = done + pairDetailHtml(acc, sym, pairs[sym], statusById[pairKey(acc.id, sym)] || {});
+    return;
   }
-  html += `</tbody></table></div>`;
-  body.innerHTML = html;
+  let total = 0, nOpen = 0, nPriced = 0;
+  let rows = '';
+  for (const sym of symbols) {
+    const s = statusById[pairKey(acc.id, sym)] || {};
+    if (pairIsOpen(s)) { nOpen++; const pl = s.live && s.live.pnl; if (pl != null) { total += pl; nPriced++; } }
+    rows += pairListRow(acc, sym, pairs[sym], s);
+  }
+  const missing = nOpen - nPriced;
+  const totalBox = `<div style="display:flex; justify-content:space-between; align-items:center; background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px 14px; margin-bottom:10px;">
+    <span style="font-size:13px; color:var(--muted);">Open P/L now (${nOpen} ${nOpen === 1 ? 'trade' : 'trades'}${missing ? `, ${missing} without a price` : ''})</span>
+    <b style="font-size:18px; color:${plColour(nPriced ? total : null)};">${nPriced ? signed(total) + ' USDT' : '—'}</b></div>`;
+  body.innerHTML = done + totalBox + rows + '<div style="font-size:12px; color:var(--muted);">Tap a pair to open it. Close trade is inside and always asks first.</div>';
 }
 
 // ---- First-trade reminder (2026-10-01): shown on Start for a pair with NO real trades yet.
@@ -1715,7 +2068,7 @@ async function refreshStatus() {
   try {
     const data = await api('/api/status');
     statusById = {};
-    for (const inst of data.instances) statusById[`${inst.account_id}:${inst.symbol}`] = inst;
+    for (const inst of data.instances) { inst._fetched = Date.now(); statusById[`${inst.account_id}:${inst.symbol}`] = inst; }
     renderPairs();
     renderStartupFailures(data.startup_failures || {});
     if (selectedLogKey) renderLog();
@@ -2017,7 +2370,7 @@ document.getElementById('pair-save').onclick = async () => {
 // functions above - matches every other "separate tabs, own state" OKX
 // decision throughout this project. Mirrors the Binance CRUD/control
 // functions structurally, pointed at /api/okx/... and OKX's own limits
-// (5 accounts, 5 pairs) and fields (passphrase, demo, sub-account label,
+// (7 accounts, 5 pairs) and fields (passphrase, demo, sub-account label,
 // trigger_px_type). Ledger/Analysis integration for OKX is explicitly
 // OUT of scope for this pass (see this tabpage's own HTML comment) -
 // account/pair CRUD + start/stop/log is the actual gap being closed here.
@@ -2450,14 +2803,15 @@ const HUB_RSI_MODES = ['Above / below level', 'Overbought / oversold', 'Divergen
 const HUB_MACD_MODES = ['Histogram above / below 0', 'Zero line'];
 // COUNTER TREND decided by (owner 2026-10-25): the EMA length box, or one indicator that gives a side
 const HUB_CT_BLOCKS = ['ma1', 'ma2', 'mx', 'adx', 'rsi', 'macd', 'candle', 'st', 'bb', 'eb', 'sar'];
-const HUB_CT_OPTS = [['EMA', 'EMA length (below)'], ['ma1', 'MA 1'], ['ma2', 'MA 2'], ['mx', 'MA Crossover'], ['adx', 'ADX / DI'],
+const HUB_CT_OWN_MODES = ['Price above / below MA', 'MA rising / falling'];
+const HUB_CT_OPTS = [['own', 'Its own moving average (below)'], ['EMA', 'EMA length (older plans only)'], ['ma1', 'MA 1'], ['ma2', 'MA 2'], ['mx', 'MA Crossover'], ['adx', 'ADX / DI'],
                      ['rsi', 'RSI'], ['macd', 'MACD'], ['candle', 'Candle colour'], ['st', 'Structure break'], ['bb', 'Bollinger Bands (the half)'], ['eb', 'EMA Band'], ['sar', 'Parabolic SAR']];
 const hubHas = (v, x) => Array.isArray(v) && v.includes(x);
 const HUB_MA_MODES = ['Price above / below MA', 'MA rising / falling', 'Price crossed MA within N candles', 'Pullback to MA (bounce)'];
 const HUB_MX_MODES = ['MA 1 above / below MA 2', 'MA 1 crossed MA 2 within N candles'];
 const HUB_CHARTS = ['Candles', 'Heikin Ashi', 'Renko'];
 const HUB_COMBINES = ['ALL', 'ANY', 'At least N'];
-const HUB_FLIP_ACTIONS = ['Reverse (close + open opposite)'];   // 2026-10-25: "Close only" removed - a flip always opens the new side
+const HUB_FLIP_ACTIONS = ['Reverse (close + open opposite)', 'Close only, then wait for the entry rules'];   // 2026-10-25: "Close only" removed - a flip always opens the new side
 const HUB_SIZE_ALLOC = 'Allocation % of balance';
 const HUB_SIZE_FIXED = 'Fixed base amount (grows with the last closed total)';
 const HUB_STOP_BAL = '% of available balance';
@@ -2505,6 +2859,7 @@ const HUB_FUNCS = [
   { id: 'trail', name: 'Trailing Stop', sw: 'trail_on', desc: 'Replaces the Stop Loss once it takes charge and only tightens: Step, lowest low / highest high, a moving average, the signal candle, or the Supertrend line.' },
   { id: 'tp', name: 'Take profit', sw: 'tp_on', desc: 'Up to 3 targets in % of ATR or % of price movement. Each one closes part of the position.' },
   { id: 'shadow', name: 'Shadow mode', sw: 'shadow_on', desc: 'A paper copy of the strategy that runs all the time; after a new high, the next N trades are off.' },
+  { id: 'latesig', name: 'Ignore late signals', sw: 'late_on', desc: 'No new entry when the signal candle closed more than N minutes ago (bot was down or blocked).' },
   { id: 'cooldown', name: 'Cooldown after a loss', sw: 'cooldown_on', desc: 'After a losing trade the pair waits N candles before it enters again.' },
   { id: 'losslimit', name: 'Loss limit', sw: 'loss_on', desc: 'No new entry once the closed loss of the day / week of this pair reaches your amount. Open trades are not touched.' },
   { id: 'exitwhen', name: 'Exit when', sw: 'exit_on', desc: 'Close the trade when the moving average(s) curve against it. Then wait for a fresh signal, or flip to the other side.' },
@@ -2623,6 +2978,7 @@ const HUB_FN_CARDS = {
   ],
   flipact: [
     { id: 'flipact', t: 'On a flip signal', f: [
+      { id: 'flip_choice', l: 'What the flip does', t: 'sel', o: [[HUB_FLIP_ACTIONS[0], 'Reverse (close + open the opposite)'], [HUB_FLIP_ACTIONS[1], 'Close only, then wait for the entry rules (ADX / DI checked)']], dflt: HUB_FLIP_ACTIONS[0], init: HUB_FLIP_ACTIONS[0], path: ['flip_action'], h: 'Reverse (default): close and open the opposite side at once. Close only: close, go flat, enter again only when the full ENTRY rules agree.' },
       { id: 'flip_same_entry', l: 'Same as entry (ticked = Yes)', t: 'bool', dflt: true, path: ['flip_rules', 'same_entry'], h: 'Yes: the flip follows your ENTRY rules (ENTRY ticks, Main for ENTRY, Indicator Combination for ENTRY). No: you set the flip rules: the FLIP ticks in Indicators, Main for FLIP, Indicator Combination for FLIP.' },
       { id: 'flip_same_hold', l: 'Same as hold rule (ticked = Yes)', t: 'bool', dflt: true, path: ['flip_rules', 'same_hold'], h: 'Yes: the flip follows the Hold rule tab. No: the flip has its own hold rule below.' },
       { id: 'flip_hold_on', l: 'Flip own hold rule', t: 'bool', path: ['flip_rules', 'hold_on'], when: ['flip_same_hold', v => v === false], h: 'Ticked: the flip is not done while the trade is in profit and ADX is below the level below. Not ticked: no hold.' },
@@ -2652,11 +3008,17 @@ const HUB_FN_CARDS = {
       { id: 'size_preview', l: 'Next entry', t: 'info', when: ['size_method', v => !!v], h: 'What the next entry would be with the numbers above. Display only: it changes nothing.' }] },
     { id: 'counter', t: 'Counter-trend size', f: [
       { id: 'counter_on', l: 'Counter-trend size', t: 'bool', path: ['sizing', 'counter', 'on'], h: 'Ticked: entries AGAINST the trend use the size below. What counts as counter trend is your CTREND tick in Indicators.' },
-      { id: 'counter_line', l: 'Counter trend decided by', t: 'info', when: ['counter_on', v => v === true], h: 'Set by the CTREND tick in Indicators.' },
-      { id: 'counter_by', l: 'Counter trend decided by', t: 'sel', o: HUB_CT_OPTS, dflt: 'EMA', hidden: true, path: ['sizing', 'counter', 'by'], when: ['counter_on', v => v === true], h: '' },
-      { id: 'counter_ema', l: 'Trend EMA length', t: 'int', min: 1, hidden: true, path: ['sizing', 'counter', 'ema_length'], when: ['counter_on', v => v === true], and: ['counter_by', v => !v || v === 'EMA'], h: '' },
+      { id: 'counter_line', l: 'Counter trend decided by', t: 'info', when: ['counter_on', v => v === true], h: 'Shows what decides it now. Change it in the list below.' },
+      { id: 'counter_by', l: 'Counter trend decided by', t: 'sel', o: HUB_CT_OPTS, dflt: 'own', path: ['sizing', 'counter', 'by'], when: ['counter_on', v => v === true], h: 'Its own moving average (any type), or one indicator you tick as CTREND in Indicators.' },
+      { id: 'counter_ma_type', l: 'Counter-trend MA type', t: 'sel', o: HUB_MA_TYPES, dflt: 'EMA', path: ['sizing', 'counter', 'ma_type'], when: ['counter_on', v => v === true], and: ['counter_by', v => v === 'own'], h: 'SMA, EMA, WMA, HMA or ALMA. Worked out on the chart close of the chart type you chose.' },
+      { id: 'counter_ma_length', l: 'Counter-trend MA length', t: 'int', min: 1, max: 500, path: ['sizing', 'counter', 'ma_length'], when: ['counter_on', v => v === true], and: ['counter_by', v => v === 'own'], h: 'How many candles the average uses (1 to 500). You key it in: no default.' },
+      { id: 'counter_ma_modes', l: 'Counter-trend condition (tick 1 or more)', t: 'multi', o: HUB_CT_OWN_MODES, dflt: [HUB_CT_OWN_MODES[0]], path: ['sizing', 'counter', 'ma_modes'], when: ['counter_on', v => v === true], and: ['counter_by', v => v === 'own'], h: 'WITH the trend when price is above the MA (long) or below it (short), and/or the MA is rising (long) or falling (short). Tick both: both must agree.' },
+      { id: 'counter_alma_offset', l: 'Counter-trend ALMA offset', t: 'num', path: ['sizing', 'counter', 'ma_alma_offset'], when: ['counter_ma_type', v => v === 'ALMA'], h: 'Only for ALMA. Empty = 0.85.' },
+      { id: 'counter_alma_sigma', l: 'Counter-trend ALMA sigma', t: 'num', path: ['sizing', 'counter', 'ma_alma_sigma'], when: ['counter_ma_type', v => v === 'ALMA'], h: 'Only for ALMA. Empty = 6.' },
+      { id: 'counter_ema', l: 'Trend EMA length (older plan)', t: 'int', min: 1, path: ['sizing', 'counter', 'ema_length'], when: ['counter_on', v => v === true], and: ['counter_by', v => v === 'EMA'], h: 'Only for plans saved the old way: chart close against this EMA. Pick "Its own moving average" to use the new box.' },
       { id: 'counter_alloc', l: 'Allocation % against the trend', t: 'num', min: 0, path: ['sizing', 'counter', 'alloc_pct'], when: ['counter_on', v => v === true], and: ['size_method', v => v === HUB_SIZE_ALLOC], h: 'The % of the available balance used for trades against the trend. 0 = no counter-trend entry.' },
-      { id: 'counter_base', l: 'Base amount against the trend (USDT)', t: 'num', min: 0, path: ['sizing', 'counter', 'base_amount'], when: ['counter_on', v => v === true], and: ['size_method', v => v === HUB_SIZE_FIXED], h: 'Own base for entries against the trend. One running total for both. 0 = no counter-trend entry.' },
+      { id: 'counter_base', l: 'Base amount against the trend (USDT)', t: 'num', min: 0, path: ['sizing', 'counter', 'base_amount'], when: ['counter_on', v => v === true], and: ['size_method', v => v === HUB_SIZE_FIXED], h: 'Own base for entries against the trend. Its own base for entries against the trend (the running total is chosen below). 0 = no counter-trend entry.' },
+      { id: 'counter_total', l: 'Counter-trend running total', t: 'sel', o: [['separate', 'Separate: counter-trend trades grow on their own total'], ['shared', 'One total shared with trend trades']], dflt: 'shared', init: 'separate', path: ['sizing', 'counter', 'total'], when: ['counter_on', v => v === true], and: ['size_method', v => v === HUB_SIZE_FIXED], h: 'Fixed base only. Separate (default for a new plan): trend and counter-trend each grow on their own last total. Shared: one total for both.' },
       { id: 'counter_lev', l: 'Leverage against the trend', t: 'int', min: 1, path: ['sizing', 'counter', 'leverage'], when: ['counter_on', v => v === true], h: 'Leverage for trades against the trend.' }] },
     { id: 'marginalert', t: 'Margin alert', f: [
       { id: 'margin_alert', l: 'Email alert on margin', t: 'bool', path: ['sizing', 'margin_alert'], h: 'Email me when an entry needs more margin than the available balance (other pairs on the account have already taken part of it).' }] },
@@ -2731,6 +3093,11 @@ const HUB_FN_CARDS = {
       { id: 'exit_on', l: 'Use Exit when', t: 'bool', path: ['exit_when', 'on'], auto: true },
       { id: 'exit_signal', l: 'Signal', t: 'sel', o: HUB_EXIT_SIGNALS, path: ['exit_when', 'signal'], when: ['exit_on', v => v === true], h: 'Both: MA 1 and MA 2 must both curve against the trade. MA 2 only: the slower one alone. Curving against = the value after the candle close is lower than the one before (long) or higher (short). It uses the MA 1 and MA 2 numbers in Indicators.' },
       { id: 'exit_after', l: 'After the close', t: 'sel', o: HUB_EXIT_AFTERS, path: ['exit_when', 'after'], when: ['exit_on', v => v === true], h: 'Wait: the bot stays flat until a fresh entry signal (the same side waits until its signal has ended). Flip: the bot also opens the other side.' }] },
+  ],
+  latesig: [
+    { id: 'latesig', t: 'Ignore late signals', f: [
+      { id: 'late_on', l: 'Ignore late signals', t: 'bool', path: ['late_skip', 'on'], auto: true },
+      { id: 'late_min', l: 'Latest minutes after the candle close', t: 'int', min: 1, max: 1440, path: ['late_skip', 'minutes'], when: ['late_on', v => v === true], h: 'No new entry if the signal candle closed more than this many minutes ago.' }] },
   ],
   cooldown: [
     { id: 'cooldown', t: 'Cooldown after a loss', f: [
@@ -2992,7 +3359,7 @@ function hubVisible(f) {
 function hubCtBy() {
   const on = hubEl('counter_on'), by = hubEl('counter_by');
   if (!on || !by || !on.checked) return null;
-  return by.value || 'EMA';
+  return by.value || null;
 }
 function hubCtSync() {
   const by = hubCtBy();
@@ -3010,13 +3377,17 @@ function hubSizeLines() {
   if (line) {
     const by = hubCtBy();
     const nm = Object.fromEntries(HUB_BLOCKS.map(b => [b.k, b.t]));
-    let txt = 'Nothing yet: tick CTREND on one indicator in Indicators.';
+    let txt = 'Nothing yet: choose below what decides it.';
     if (by === 'bb') {
       txt = 'Bollinger half - CTREND in Indicators. A long in the lower half of the band (a short in the upper half) uses the normal size; the other half, and the middle line itself, uses the size against the trend.';
+    } else if (by === 'own') {
+      const ty = hubEl('counter_ma_type').value, ln = hubEl('counter_ma_length').value;
+      const md = hubValue(hubField('counter_ma_modes')) || [];
+      txt = ty && ln && md.length ? `Its own ${ty} ${ln}: ${md.join(' + ')}` : 'Its own moving average: key in the type, length and condition below.';
     } else if (by && by !== 'EMA') {
       const blk = by === 'ma1' || by === 'ma2' ? ` (${hubEl(by + '_type').value || '?'} ${hubEl(by + '_length').value || '?'})` : '';
       txt = `${nm[by] || by}${blk} - CTREND in Indicators`;
-    } else if (by === 'EMA' && hubEl('counter_ema').value) txt = `EMA ${hubEl('counter_ema').value} (older plan) - tick CTREND in Indicators to change it`;
+    } else if (by === 'EMA' && hubEl('counter_ema').value) txt = `EMA ${hubEl('counter_ema').value} (older plan) - pick Its own moving average to change it`;
     line.textContent = txt;
   }
   const pv = document.getElementById('hub_size_preview');
@@ -3058,7 +3429,7 @@ function hubCtTicked(ev) {
     hubEl('counter_on').checked = true;
     by.value = t.dataset.ct;
   } else if (by.value === t.dataset.ct) {
-    by.value = 'EMA';
+    by.value = 'own';
   }
 }
 function hubBlockNeeded(k) {
@@ -3066,7 +3437,7 @@ function hubBlockNeeded(k) {
   const ticked = x => hubEl(`${x}_entry`).checked || (ownFlip && hubEl(`${x}_flip`).checked);
   if (ticked(k)) return true;
   const ct = hubCtBy();
-  if (ct && ct !== 'EMA' && (ct === k || (ct === 'mx' && (k === 'ma1' || k === 'ma2')))) return true;
+  if (ct && ct !== 'EMA' && ct !== 'own' && (ct === k || (ct === 'mx' && (k === 'ma1' || k === 'ma2')))) return true;
   if ((k === 'ma1' || k === 'ma2') && ticked('mx')) return true;
   if (k === 'adx' && hubEl('hold_on').checked) return true;
   if (k === 'adx' && hubEl('flip_same_hold') && !hubEl('flip_same_hold').checked && hubEl('flip_hold_on').checked) return true;
@@ -3341,6 +3712,10 @@ function hubBuildPlan() {
   // so saving an older plan again is not seen as a change to an open trade
   if (plan.sl && plan.sl.struct_mode === HUB_SLS_EXTREME) { delete plan.sl.struct_mode; delete plan.sl.struct_n; }
   if (plan.trail && plan.trail.candle_start === HUB_TCS_TIGHTER) { delete plan.trail.candle_start; delete plan.trail.candle_profit; }
+  // 2026-11-11: the "how it always worked" values are not written (a plan without the key means them)
+  if (plan.sizing && plan.sizing.counter && plan.sizing.counter.total === 'shared') delete plan.sizing.counter.total;
+  if (plan.flip_action === HUB_FLIP_ACTIONS[0]) delete plan.flip_action;
+  if (plan.late_skip && !plan.late_skip.on) delete plan.late_skip;
   // Stop Loss (owner 2026-10-26): always in the menu, but "Measured on" left empty = no SL, saved as off (set it later)
   if (plan.sl && plan.sl.on && !plan.sl.basis) plan.sl = { on: false };
   const name = (document.getElementById('hub_name').value || '').trim();
@@ -3411,9 +3786,43 @@ function hubSrSummary(plan) {
   if (wait) L.push(`  Retest wait ends when: ${wait}`);
   return L;
 }
+// One ticked indicator in the review, with its numbers and ticked conditions (owner 2026-11-09: "that should be in the
+// summary page too"). Same wording as the server's block_text (strategy_hub.py). Any problem = just the name.
+const HUB_BLOCK_SHORT = { candle: 'Candle colour', ma1: 'MA 1', ma2: 'MA 2', mx: 'MA Crossover', adx: 'ADX / DI',
+  ci: 'Choppiness (CI)', rsi: 'RSI', macd: 'MACD', vol: 'Volume', atr: 'ATR', st: 'Structure break', bb: 'Bollinger Bands',
+  sup: 'Supertrend', sr: 'Support / Resistance', eb: 'EMA Band', sar: 'Parabolic SAR' };
+function hubBlockText(plan, b) {
+  const t = HUB_BLOCK_SHORT[b] || b;
+  try {
+    const p = (plan.ind && plan.ind[b]) || {};
+    const n = v => { if (v === undefined || v === null || v === '') return '?'; const x = Number(v); return isFinite(x) ? String(parseFloat(x.toPrecision(6))) : String(v); };
+    const modes = Array.isArray(p.modes) && p.modes.length ? p.modes.join('; ') : '';
+    const withN = modes.indexOf('within N') >= 0 ? ` (N ${n(p.n)})` : '';
+    const join = parts => parts.filter(x => x).join(', ');
+    if (b === 'candle') return t + (p.strong ? ', strong' : '') + (p.prev_opposite ? ', previous candle opposite' : '');
+    if (b === 'ma1' || b === 'ma2') return join([`${t}: ${p.type || '?'} ${n(p.length)}`, modes]) + withN;
+    if (b === 'mx') return join([`${t}: ${modes}`]) + withN;
+    if (b === 'adx') return join([`${t} ${n(p.di_length)} / ${n(p.smoothing)}`, `at least ${n(p.level)}`, p.di_required ? 'DI must agree' : '', p.rising ? 'rising' : '']);
+    if (b === 'ci') return `${t} ${n(p.length)}, below ${n(p.max)}`;
+    if (b === 'rsi') {
+      const parts = (p.modes || []).map(m => m === 'Above / below level' ? `above / below ${n(p.level)}`
+        : m === 'Overbought / oversold' ? `oversold ${n(p.oversold)} / overbought ${n(p.overbought)}` : String(m));
+      return `${t} ${n(p.length)}: ` + parts.join('; ');
+    }
+    if (b === 'macd') return join([`${t} ${n(p.fast)} / ${n(p.slow)} / ${n(p.signal)}`, modes, p.rising ? 'rising' : '']);
+    if (b === 'vol') return `${t} ${n(p.length)}, x${n(p.mult)}`;
+    if (b === 'atr') return join([`${t} ${n(p.length)} vs average ${n(p.avg_length)}, x${n(p.mult)}`, p.rising ? 'rising' : '']);
+    if (b === 'st') return `${t} ${n(p.length)}`;
+    if (b === 'bb') return `${t} ${n(p.length)}, x${n(p.mult)}`;
+    if (b === 'sup') return join([`${t} ${n(p.atr_length)} / ${n(p.factor)}`, modes]) + withN;
+    if (b === 'eb') return `${t} ${n(p.length)}`;
+    if (b === 'sar') return `${t} ${n(p.step)} / ${n(p.limit)}`;
+  } catch (_) { /* fall through to the name */ }
+  return t;
+}
 function hubSummaryLines(plan) {
   const nm = Object.fromEntries(HUB_BLOCKS.map(b => [b.k, b.t]));
-  const list = which => HUB_BLOCKS.filter(b => plan.ind && plan.ind[b.k] && plan.ind[b.k][which]).map(b => nm[b.k]).join(', ') || 'none';
+  const list = which => HUB_BLOCKS.filter(b => plan.ind && plan.ind[b.k] && plan.ind[b.k][which]).map(b => hubBlockText(plan, b.k)).join(' · ') || 'none';
   const comb = (mode, n) => mode === 'At least N' ? `At least ${n}` : (mode || '?');
   const L = [];
   if (plan.name) L.push(`Strategy: ${plan.name}`);
@@ -3425,7 +3834,7 @@ function hubSummaryLines(plan) {
   const holdTxt = fr.same_hold === false ? (fr.hold_on ? `own hold rule (ADX below ${fr.hold_level})` : 'no hold rule')
     : (plan.hold && plan.hold.on ? `Same as hold rule (ADX below ${plan.hold.adx_level})` : 'Same as hold rule (off)');
   const waitTxt = fr.same_wait === false ? `own wait ${fr.wait} candle(s)` : 'Same as entry wait';
-  L.push(`On a flip: close and open a new direction · ${holdTxt} · ${waitTxt}`);
+  L.push(`On a flip: ${plan.flip_action === HUB_FLIP_ACTIONS[1] ? 'close, go flat, then enter only when the full entry rules agree (ADX / DI checked)' : 'close and open a new direction'} · ${holdTxt} · ${waitTxt}`);
   L.push(`Entry wait: ${plan.entry_wait} candle(s) · Fresh Reversal on First Trade: ${plan.wait_first_reversal ? 'yes' : 'no'} · No Mid-Trend Re-entry: ${plan.allow_reentry ? 'OFF (re-entry allowed)' : 'ON'}`);
   const s = plan.sizing || {};
   const c = s.counter || {};
@@ -3434,8 +3843,9 @@ function hubSummaryLines(plan) {
   const sz1 = fixed ? `${s.base_amount} USDT base amount (grows with the last closed total)${lock}` : `${s.alloc_pct}% of balance`;
   const sz2 = fixed ? `${c.base_amount} USDT base amount` : `${c.alloc_pct}%`;
   L.push(`Size${c.on ? ' WITH the trend' : ''}: ${sz1} at ${s.leverage}x`
-    + (c.on ? ` · AGAINST the trend (${(!c.by || c.by === 'EMA') ? 'chart close vs EMA ' + c.ema_length : (c.by === 'bb' ? 'decided by the Bollinger half' : 'decided by ' + (nm[c.by] || c.by))}): `
-      + (Number(fixed ? c.base_amount : c.alloc_pct) === 0 ? 'NO counter-trend entries (size 0)' : `${sz2} at ${c.leverage}x`) : ''));
+    + (c.on ? ` · AGAINST the trend (${c.by === 'own' ? 'its own ' + c.ma_type + ' ' + c.ma_length + ': ' + (c.ma_modes || []).join(' + ') : (!c.by || c.by === 'EMA') ? 'chart close vs EMA ' + c.ema_length : (c.by === 'bb' ? 'decided by the Bollinger half' : 'decided by ' + (nm[c.by] || c.by))}): `
+      + (Number(fixed ? c.base_amount : c.alloc_pct) === 0 ? 'NO counter-trend entries (size 0)' : `${sz2} at ${c.leverage}x`)
+      + (fixed ? (c.total === 'separate' ? ' · own running total' : ' · one running total shared with the trend') : '') : ''));
   L.push(`Email alert on margin: ${s.margin_alert ? 'ON' : 'OFF'}`);
   const basis = s.stop_basis || HUB_STOP_BAL;
   L.push(`Max Loss per Trade (last line of defense): ${s.stop_on ? (basis === HUB_STOP_USD ? s.stop_usd + ' USDT' : s.stop_pct + ' ' + basis) : 'OFF'}`);
@@ -3465,6 +3875,7 @@ function hubSummaryLines(plan) {
   const ew = plan.exit_when || {};
   L.push(ew.on ? `Exit when: ${ew.signal} - ${ew.after}` : 'Exit when: OFF');
   L.push(...hubSrSummary(plan));
+  L.push(plan.late_skip && plan.late_skip.on ? `Ignore late signals: no new entry if the signal candle closed more than ${plan.late_skip.minutes} minute(s) ago` : 'Ignore late signals: OFF');
   const cd = plan.cooldown || {};
   L.push(cd.on ? `Cooldown after a loss: ${cd.candles} candle close(s) with no new entry` + (cd.after_losses ? `, only after ${cd.after_losses} losses in a row` : ', after every loss') : 'Cooldown after a loss: OFF');
   const ll = plan.loss_limit || {};
@@ -3584,9 +3995,47 @@ function hubAmendChoice() {
 function hubAmendUpdate() {
   const w = document.querySelector('input[name="amend-when"]:checked');
   document.getElementById('amend-stops').style.display = (w && w.value === 'now') ? '' : 'none';
-  document.getElementById('hub-review-apply').disabled = hubAmendChoice() === undefined;   // must choose on purpose
+  if (typeof hubStartAsUpdate === 'function') hubStartAsUpdate();   // Confirm needs BOTH choices
 }
 document.querySelectorAll('input[name="amend-when"], input[name="amend-stops"]').forEach(r => r.onchange = hubAmendUpdate);
+
+function hubStartAsChoice() {
+  const m = document.querySelector('input[name="startas-mode"]:checked');
+  if (!m) return undefined;                                  // not chosen yet
+  if (m.value === 'follow') return { mode: 'follow' };
+  const o = { mode: 'new' };
+  ['first_flip', 'size', 'loss_streak', 'reentry'].forEach(k => { o[k] = document.getElementById('startas-' + k).checked; });
+  return o;
+}
+const HUB_STARTAS_NAMES = { first_flip: 'first trade waits for a fresh flip', size: 'size starts again at the base amount',
+                            loss_streak: 'losses in a row start again at 0', reentry: 'Mid-Trend Re-entry block cleared' };
+function hubStartAsText(c) {
+  if (!c) return 'Not chosen yet.';
+  if (c.mode === 'follow') return 'Follow through from past trades: nothing restarts.';
+  const on = Object.keys(HUB_STARTAS_NAMES).filter(k => c[k]).map(k => HUB_STARTAS_NAMES[k]);
+  return on.length ? 'New. Starts again: ' + on.join('; ') + '.' : 'New: tick at least one thing, or choose follow through.';
+}
+function hubStartAsUpdate() {
+  const m = document.querySelector('input[name="startas-mode"]:checked');
+  document.getElementById('startas-boxes').style.display = (m && m.value === 'new') ? '' : 'none';
+  const c = hubStartAsChoice();
+  document.getElementById('startas-line').textContent = 'Chosen: ' + hubStartAsText(c);
+  const ready = c !== undefined && (c.mode === 'follow' || ['first_flip', 'size', 'loss_streak', 'reentry'].some(k => c[k]));
+  const amendOk = (typeof hubAmendChoice === 'function') ? hubAmendChoice() !== undefined : true;
+  document.getElementById('hub-review-apply').disabled = !(ready && amendOk);   // must choose on purpose
+}
+document.querySelectorAll('input[name="startas-mode"], #startas-boxes input').forEach(r => r.onchange = hubStartAsUpdate);
+
+function hubStartAsResultText(r) {
+  if (!r) return '';
+  if (r.status === 'follow') return 'Started as: follow through. Nothing was restarted.';
+  if (r.status === 'error') return 'The restart choice was NOT applied (' + (r.why || 'error') + '). The pair keeps its memory.';
+  const L = [];
+  if (r.status === 'done') L.push('Started as NEW. Restarted: ' + ((r.done || []).join('; ') || 'nothing') + '.');
+  if (r.status === 'after_close') L.push('Started as NEW. A trade is open, so this is applied when it closes.');
+  (r.notes || []).forEach(x => L.push('• ' + x));
+  return L.join('\n');
+}
 
 async function hubSave(mode) {
   const msg = document.getElementById('hub-msg');
@@ -3602,15 +4051,23 @@ async function hubSave(mode) {
     const f = hubField(fid);
     if (hubVisible(f) && hubValue(f) === undefined) { msg.className = 'msg err'; msg.textContent = 'Choose ' + where + ' first.'; return; }
   }
-  if (hubEl('counter_on').checked && hubCtBy() === 'EMA' && !hubEl('counter_ema').value) {
-    msg.className = 'msg err'; msg.textContent = 'Counter-trend size is ticked: tick CTREND on one indicator in Indicators first.'; return;
+  if (hubEl('counter_on').checked) {
+    const cby = hubCtBy(), cerr = !cby ? 'Counter-trend size is ticked: choose what decides it (Entry size) first.'
+      : cby === 'EMA' && !hubEl('counter_ema').value ? 'Counter-trend size: key in the EMA length, or pick Its own moving average (Entry size).'
+      : cby === 'own' && !hubEl('counter_ma_length').value ? 'Counter-trend size: key in the Counter-trend MA length (Entry size) first.'
+      : cby === 'own' && !hubEl('counter_ma_type').value ? 'Counter-trend size: choose the Counter-trend MA type (Entry size) first.'
+      : cby === 'own' && !hubValue(hubField('counter_ma_modes')) ? 'Counter-trend size: tick at least one Counter-trend condition (Entry size).' : '';
+    if (cerr) { msg.className = 'msg err'; msg.textContent = cerr; return; }
   }
   hubReviewMode = mode;
   const exec = mode === 'execute';
   const open = await hubTradeOpen();
   document.getElementById('hub-amend-box').style.display = open ? '' : 'none';
   document.querySelectorAll('input[name="amend-when"], input[name="amend-stops"]').forEach(r => { r.checked = false; });   // nothing pre-selected
+  document.querySelectorAll('input[name="startas-mode"]').forEach(r => { r.checked = false; });   // nothing pre-selected
+  document.querySelectorAll('#startas-boxes input').forEach(c => { c.checked = false; });
   hubAmendUpdate();
+  hubStartAsUpdate();
   document.getElementById('hub-review-title').textContent = exec ? 'Review before you start trading' : 'Review before saving';
   document.getElementById('hub-review-apply').textContent = exec ? 'Confirm, save and START trading' : 'Confirm and save';
   document.getElementById('hub-review-body').innerHTML =
@@ -3649,13 +4106,17 @@ async function hubApply() {
   const where = { ...hubKey };
   const amend = hubAmendChoice();
   if (amend === undefined) return;                           // the box is shown and no choice made: Confirm stays off
+  const startAs = hubStartAsChoice();
+  if (startAs === undefined) return;                         // no 'Start this plan as' choice: Confirm stays off
   let step = 'plan';
   let amendText = '';
   try {
     // the plan is checked by the server FIRST (a refused plan must not leave a half-saved pair)
     const put = await api(base + '/plan', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                                            body: JSON.stringify(amend ? { plan, amend } : { plan }) });
+                                            body: JSON.stringify(amend ? { plan, amend, start_as: startAs } : { plan, start_as: startAs }) });
     amendText = hubAmendText(put && put.amend_result);
+    const startText = hubStartAsResultText(put && put.start_as_result);
+    if (startText) amendText = amendText ? startText + '\n' + amendText : startText;
     step = 'pair';
     if (Object.keys(pairUpdate).length) {
       await api(base, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pairUpdate) });
@@ -3914,7 +4375,7 @@ const HUB_PRESETS = hubDeepFreeze([
       'On a flip signal: all three Yes (same as entry, same as hold rule, same as entry wait).',
       'Hold rule: picked.',
       'Fresh Reversal on First Trade: ticked. No Mid-Trend Re-entry: ticked.',
-      'Entry size: Allocation % of balance. Counter-trend size: ticked, decided by the EMA length.',
+      'Entry size: Allocation % of balance. Counter-trend size: ticked, decided by its own moving average (EMA, Price above / below MA). You key in its length.',
       'Max Loss per Trade: picked, % of available balance (the fixed stop).',
       'Stop Loss: Measured on left empty (no SL; Max Loss is the fixed stop). Break-Even, Trailing Stop, Take profit: not picked.',
       'Shadow mode: picked.',
@@ -3932,7 +4393,7 @@ const HUB_PRESETS = hubDeepFreeze([
       hold: { on: true },
       wait_first_reversal: true,
       allow_reentry: false,
-      sizing: { method: 'Allocation % of balance', stop_on: true, stop_basis: '% of available balance', counter: { on: true, by: 'EMA' } },
+      sizing: { method: 'Allocation % of balance', stop_on: true, stop_basis: '% of available balance', counter: { on: true, by: 'own', ma_type: 'EMA', ma_modes: ['Price above / below MA'] } },
       sl: { on: false },
       be: { on: false },
       trail: { on: false },
@@ -4462,6 +4923,305 @@ for (const id of ['chart-price', 'chart-shadow']) {
   cv.addEventListener('touchend', () => { CH.drag = null; });
 }
 window.addEventListener('mouseup', () => { CH.drag = null; });
+// ============================== ARBITRAGE TAB (Step 1, read only) ==============================
+const ARB = { state: null, timer: null, loaded: false };
+// [path, label, type, help key, options/extra]   type: bool | num | nnum (empty = not set) | sel | list
+const ARB_GROUPS = [
+  ['Scanner', [
+    ['scanner_on', 'Scanner on', 'bool', 'arb.scanner_on'],
+    ['loop_seconds', 'Scan every (seconds)', 'num', 'arb.loop_seconds'],
+    ['exchanges.binance.enabled', 'Binance on', 'bool', 'arb.exchange'],
+    ['exchanges.okx.enabled', 'OKX on', 'bool', 'arb.exchange'],
+    ['exchanges.binance.testnet', 'Binance test network', 'bool', 'arb.testnet'],
+    ['exchanges.okx.testnet', 'OKX test network', 'bool', 'arb.testnet'],
+  ]],
+  ['Pairs', [
+    ['pairs.top_n', 'Top N pairs by volume', 'num', 'arb.top_n'],
+    ['pairs.min_volume_usdt_24h', 'Min 24h volume (USDT)', 'num', 'arb.min_volume'],
+    ['pairs.min_top_size_usdt', 'Min size at best price (USDT)', 'num', 'arb.min_top_size'],
+    ['pairs.include', 'Always include (coins)', 'list', 'arb.include'],
+    ['pairs.exclude', 'Never use (coins)', 'list', 'arb.exclude'],
+    ['pairs.refresh_minutes', 'Refresh the list every (minutes)', 'num', 'arb.refresh'],
+  ]],
+  ['Fees (used for the gap maths)', [
+    ['fallback_fees_pct.binance.futures', 'Binance futures fee %', 'num', 'arb.fees'],
+    ['fallback_fees_pct.binance.spot', 'Binance spot fee %', 'num', 'arb.fees'],
+    ['fallback_fees_pct.okx.futures', 'OKX futures fee %', 'num', 'arb.fees'],
+    ['fallback_fees_pct.okx.spot', 'OKX spot fee %', 'num', 'arb.fees'],
+  ]],
+  ['Spatial (Binance vs OKX)', [
+    ['modules.spatial.enabled', 'Spatial on', 'bool', 'arb.spatial'],
+    ['modules.spatial.mode', 'Mode', 'sel', 'arb.mode', ['mock', 'live']],
+    ['modules.spatial.markets', 'Markets', 'multi', 'arb.markets', ['futures', 'spot']],
+    ['modules.spatial.trade_size_usdt', 'Trade size (USDT)', 'num', 'arb.trade_size'],
+    ['modules.spatial.min_profit_pct', 'Enter at net gap % of', 'num', 'arb.min_profit'],
+    ['modules.spatial.exit_profit_pct', 'Exit at net profit % of', 'num', 'arb.exit_profit'],
+    ['modules.spatial.slippage_pct', 'Slippage per fill %', 'num', 'arb.slippage'],
+    ['modules.spatial.max_open_trades', 'Max open trades', 'num', 'arb.max_open'],
+    ['modules.spatial.leverage', 'Futures leverage', 'num', 'arb.leverage'],
+    ['modules.spatial.max_hold_seconds', 'Max hold (seconds, 0 = off)', 'num', 'arb.max_hold'],
+    ['modules.spatial.stop_loss_pct', 'Stop loss % (0 = off)', 'num', 'arb.stop_loss'],
+  ]],
+  ['Funding rate (one exchange: spot long + perp short)', [
+    ['modules.funding.enabled', 'Funding on', 'bool', 'arb.funding'],
+    ['modules.funding.mode', 'Mode', 'sel', 'arb.mode', ['mock', 'live']],
+    ['modules.funding.top_n', 'Top N pairs', 'num', 'arb.top_n'],
+    ['modules.funding.trade_size_usdt', 'Trade size (USDT)', 'num', 'arb.trade_size'],
+    ['modules.funding.min_funding_pct', 'Enter at funding % of at least', 'num', 'arb.min_funding'],
+    ['modules.funding.expected_periods', 'Funding payments counted', 'num', 'arb.expected_periods'],
+    ['modules.funding.max_breakeven_periods', 'Max break-even payments', 'num', 'arb.breakeven'],
+    ['modules.funding.min_basis_pct', 'Min basis %', 'num', 'arb.basis'],
+    ['modules.funding.exit_funding_pct', 'Exit when funding % drops below', 'num', 'arb.exit_funding'],
+    ['modules.funding.max_open_trades', 'Max open trades', 'num', 'arb.max_open'],
+    ['modules.funding.leverage', 'Futures leverage', 'num', 'arb.leverage'],
+    ['modules.funding.refresh_seconds', 'Read funding every (seconds)', 'num', 'arb.fund_refresh'],
+  ]],
+  ['Triangular (locked)', [
+    ['modules.triangular.enabled', 'Triangular on', 'bool', 'arb.triangular'],
+    ['modules.triangular.confirm_enable', 'I confirm (first of two locks)', 'bool', 'arb.tri_lock'],
+    ['modules.triangular.mode', 'Mode', 'sel', 'arb.mode', ['mock', 'live']],
+    ['modules.triangular.top_n', 'Top N pairs', 'num', 'arb.top_n'],
+    ['modules.triangular.bridge_coins', 'Bridge coins', 'list', 'arb.bridge'],
+    ['modules.triangular.trade_size_usdt', 'Trade size (USDT)', 'num', 'arb.trade_size'],
+    ['modules.triangular.min_profit_pct', 'Enter at net gap % of', 'num', 'arb.min_profit'],
+    ['modules.triangular.slippage_pct', 'Slippage per fill %', 'num', 'arb.slippage'],
+  ]],
+  ['Orders (used from Step 2 on)', [
+    ['orders.type', 'Order type', 'sel', 'arb.order_type', ['market', 'limit_ioc', 'limit_wait']],
+    ['orders.price_buffer_pct', 'Price buffer % (limit_ioc)', 'num', 'arb.buffer'],
+    ['orders.wait_seconds', 'Wait seconds (limit_wait)', 'num', 'arb.wait'],
+    ['orders.sequence', 'Order sequence', 'sel', 'arb.sequence', ['simultaneous', 'harder_first']],
+    ['orders.exit_type', 'Exit order type', 'sel', 'arb.exit_type', ['market', 'limit_ioc']],
+  ]],
+  ['Safety (live needs these filled in)', [
+    ['risk.max_size_per_trade_usdt', 'Max size per trade (USDT, 0 = off)', 'nnum', 'arb.max_size'],
+    ['risk.daily_loss_limit_usdt', 'Stop after daily loss (USDT, 0 = off)', 'nnum', 'arb.daily_loss'],
+    ['risk.margin_cap_usdt', 'Margin cap per exchange (USDT, live futures)', 'nnum', 'arb.margin_cap'],
+    ['risk.kill_switch_file', 'Kill-switch file name', 'text', 'arb.kill'],
+    ['live_mock.enabled', 'Shadow mock while live', 'bool', 'arb.live_mock'],
+    ['alerts.trades', 'Telegram on every trade opened / closed', 'sel', 'arb.alert_trades', ['off', 'live', 'all']],
+  ]],
+  ['If only one side fills', [
+    ['one_leg.futures.action', 'Futures: action', 'sel', 'arb.one_leg_f', ['close_filled', 'hold']],
+    ['one_leg.spot.action', 'Spot: action', 'sel', 'arb.one_leg_s', ['hold_for_profit', 'close_filled']],
+    ['one_leg.spot.hold_profit_pct', 'Spot: sell when profit % reaches', 'num', 'arb.hold_profit'],
+    ['one_leg.spot.hold_stop_loss_pct', 'Spot: stop loss % (0 = off)', 'num', 'arb.hold_stop'],
+    ['one_leg.spot.hold_max_minutes', 'Spot: max hold minutes (0 = off)', 'num', 'arb.hold_max'],
+    ['one_leg.spot.block_pair_while_held', 'Spot: block the pair while held', 'bool', 'arb.block_pair'],
+  ]],
+];
+
+function arbGet(o, path) { return path.split('.').reduce((a, k) => (a == null ? undefined : a[k]), o); }
+function arbSet(o, path, v) {
+  const ks = path.split('.'); let a = o;
+  for (let i = 0; i < ks.length - 1; i++) { if (a[ks[i]] == null || typeof a[ks[i]] !== 'object') a[ks[i]] = {}; a = a[ks[i]]; }
+  a[ks[ks.length - 1]] = v;
+}
+function arbId(path) { return 'arbf_' + path.replace(/\./g, '__'); }
+
+function arbBuildForm(s) {
+  const box = document.getElementById('arb-form');
+  box.innerHTML = ARB_GROUPS.map(([title, fields], gi) => {
+    const rows = fields.map(([path, label, type, hk, opts]) => {
+      const id = arbId(path), v = arbGet(s, path);
+      let inp = '';
+      if (type === 'bool') inp = `<input type="checkbox" id="${id}" ${v ? 'checked' : ''}>`;
+      else if (type === 'sel') inp = `<select id="${id}">${opts.map(o => `<option value="${o}" ${o === v ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
+      else if (type === 'multi') inp = opts.map(o => `<label style="margin-right:12px;"><input type="checkbox" class="${id}" value="${o}" ${(v || []).includes(o) ? 'checked' : ''}> ${o}</label>`).join('');
+      else if (type === 'list') inp = `<input type="text" id="${id}" value="${escH((v || []).join(', '))}" placeholder="BTC, ETH">`;
+      else if (type === 'text') inp = `<input type="text" id="${id}" value="${escH(v == null ? '' : v)}">`;
+      else inp = `<input type="text" inputmode="decimal" id="${id}" value="${v == null ? '' : escH(v)}" ${type === 'nnum' ? 'placeholder="fill in"' : ''}>`;
+      return `<div style="display:flex; align-items:center; gap:8px; margin:6px 0; flex-wrap:wrap;"><label style="min-width:230px;">${escH(label)} ${ih(hk)}</label>${inp}</div>`;
+    }).join('');
+    return `<details ${gi < 2 ? 'open' : ''} style="margin-bottom:10px;"><summary style="cursor:pointer; font-weight:600;">${escH(title)}</summary><div style="padding:6px 0 6px 10px;">${rows}</div></details>`;
+  }).join('');
+  ARB.live = !!(ARB.state && ARB.state.live_available);
+  document.querySelectorAll('#arb-form select[id$="__mode"] option[value="live"]').forEach(o => { o.disabled = !ARB.live; });
+}
+
+function arbReadForm() {
+  const s = JSON.parse(JSON.stringify(ARB.state.settings));
+  for (const [, fields] of ARB_GROUPS) for (const [path, , type, , opts] of fields) {
+    const id = arbId(path);
+    if (type === 'bool') arbSet(s, path, document.getElementById(id).checked);
+    else if (type === 'sel' || type === 'text') arbSet(s, path, document.getElementById(id).value);
+    else if (type === 'multi') arbSet(s, path, [...document.querySelectorAll('.' + id)].filter(x => x.checked).map(x => x.value));
+    else if (type === 'list') arbSet(s, path, document.getElementById(id).value.split(',').map(x => x.trim().toUpperCase()).filter(Boolean));
+    else {
+      const raw = document.getElementById(id).value.trim().replace(',', '.');
+      if (raw === '') arbSet(s, path, null);
+      else arbSet(s, path, /^-?\d*\.?\d+(e-?\d+)?$/i.test(raw) ? Number(raw) : raw);   // a word stays a word, so the check can say so
+    }
+  }
+  return s;
+}
+
+function arbShowErrors(list) {
+  const el = document.getElementById('arb-errors');
+  if (!list || !list.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = 'block';
+  el.innerHTML = '<b>Not saved. Please fix:</b><ul style="margin:6px 0 0 18px;">' + list.map(e => `<li>${escH(e)}</li>`).join('') + '</ul>';
+}
+
+function arbRender(showForm) {
+  const st = ARB.state, s = st.status;
+  if (showForm) arbBuildForm(st.settings);
+  const bits = [];
+  bits.push(s.running ? 'Scanner: RUNNING' : 'Scanner: OFF');
+  if (s.last_scan_utc) bits.push('last scan ' + s.last_scan_utc + ' UTC (' + (s.scan_ms == null ? '?' : s.scan_ms) + ' ms)');
+  if (s.running) bits.push('Binance request budget used: ' + s.binance_weight_used + ' / 2400 per minute');
+  if (s.paused) bits.push('PAUSED by the API guard (exchange asked us to slow down)');
+  if (s.last_error) bits.push('last problem: ' + s.last_error);
+  document.getElementById('arb-status').textContent = bits.join('  |  ');
+  const notes = (s.notes || []).slice();
+  if (st.problem) notes.push(st.problem);
+  document.getElementById('arb-notes').textContent = notes.join('  ');
+  document.getElementById('arb-board').innerHTML = arbBoardHtml(st.board, s);
+  document.getElementById('arb-mock').innerHTML = arbMockHtml(st.mock);
+  arbLiveRender(st);
+  const pr = document.getElementById('arb-mock-problems'), probs = (st.mock && st.mock.problems) || [];
+  pr.style.display = probs.length ? 'block' : 'none';
+  pr.innerHTML = probs.map(x => escH(x)).join('<br>');
+}
+
+function arbMsg(e) {
+  try { const j = JSON.parse(e.message); if (j.detail && j.detail.errors) return j.detail.errors.join(' '); } catch (_) {}
+  return e.message;
+}
+async function arbPost(url, body) { return api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }); }
+ARB.keyMsg = ARB.keyMsg || {}; ARB.triMsg = ARB.triMsg || '';
+function arbTyping(box) { const a = document.activeElement; return !!a && a.tagName === 'INPUT' && box.contains(a); }   // never wipe what is being typed
+function arbLiveRender(st) {
+  const m = st.mock || {}, banner = document.getElementById('arb-live-banner'), notes = [];
+  if (m.live_open) notes.push('LIVE trades are open: ' + m.live_open + '. ' + (st.status.running ? 'They are being watched.' : 'The scanner is OFF, so they are NOT being managed. Switch the scanner on.'));
+  if (m.kill_switch) notes.push('Stop is ON: no new trades open.');
+  banner.style.display = notes.length ? 'block' : 'none'; banner.innerHTML = notes.map(escH).join('<br>');
+  const keysBox = document.getElementById('arb-keys');
+  if (!arbTyping(keysBox)) {
+    keysBox.innerHTML = Object.entries(st.keys || {}).map(([slot, k]) => {
+      const fields = k.fields.map(f => `<input type="password" autocomplete="new-password" id="arbk_${slot}_${f}" placeholder="${f}" size="18" style="margin-right:6px;">`).join('');
+      const state = k.set ? `<b>set</b> (…${escH(k.tail)})` : (k.uses_futures_key ? 'blank: the futures key is used' : 'not entered');
+      return `<div style="display:flex; align-items:center; gap:8px; margin:6px 0; flex-wrap:wrap;"><span style="min-width:150px;">${escH(k.label)}</span>${fields}` +
+        `<button onclick="arbKeySave('${slot}')">Save</button> <button onclick="arbKeyClear('${slot}')">Clear</button> <span class="sub" style="margin:0;" id="arbk_${slot}_msg">${escH(ARB.keyMsg[slot] || '')}${ARB.keyMsg[slot] ? '' : state}</span></div>`;
+    }).join('');
+  }
+  const cl = st.live_checklist || {}, names = Object.keys(cl).filter(n => st.settings.modules[n].mode === 'live');
+  document.getElementById('arb-checklist').innerHTML = names.length ? names.map(n => cl[n].length
+    ? `<div><b>${escH(n)}</b> (live): ${cl[n].map(escH).join('; ')}</div>` : `<div><b>${escH(n)}</b> (live): all settings and keys present.</div>`).join('')
+    : 'No enabled module is set to live.';
+  const lk = document.getElementById('arb-tri-lock');
+  if (!arbTyping(lk)) lk.innerHTML = st.triangular_unlocked
+    ? 'Triangular live is <b>UNLOCKED</b> until the next restart. <button id="arb-tri-relock" onclick="arbTriLock(true)">Lock again</button>'
+    : 'Locked. <input type="text" id="arb-tri-yes" size="5" autocomplete="off" placeholder="YES"> <button id="arb-tri-unlock" onclick="arbTriLock(false)">Unlock</button> <span id="arb-tri-msg" class="sub" style="margin:0;">' + escH(ARB.triMsg) + '</span>';
+  const sb = document.getElementById('arb-stop');
+  if (!arbTyping(sb)) sb.innerHTML = m.kill_switch
+    ? '<b>Stop is ON</b> (no new trades). <button id="arb-stop-off" onclick="arbStopBtn(false)">Allow new trades</button> <span id="arb-stop-msg" class="sub" style="margin:0;"></span>'
+    : 'New trades allowed. <button id="arb-stop-on" onclick="arbStopBtn(true)">Stop new trades</button> <span id="arb-stop-msg" class="sub" style="margin:0;"></span>';
+}
+async function arbKeySave(slot) {
+  const msg = document.getElementById('arbk_' + slot + '_msg'), k = ARB.state.keys[slot], body = { slot };
+  k.fields.forEach(f => { body[f] = document.getElementById('arbk_' + slot + '_' + f).value.trim(); });
+  try { ARB.state = await arbPost('/api/arb/keys', body); ARB.keyMsg[slot] = ''; k.fields.forEach(f => { const el = document.getElementById('arbk_' + slot + '_' + f); if (el) el.value = ''; }); arbRender(false); }
+  catch (e) { ARB.keyMsg[slot] = 'Not saved: ' + arbMsg(e); msg.textContent = ARB.keyMsg[slot]; }
+}
+async function arbKeyClear(slot) {
+  try { ARB.state = await arbPost('/api/arb/keys', { slot, clear: true }); ARB.keyMsg[slot] = ''; arbRender(false); }
+  catch (e) { ARB.keyMsg[slot] = 'Not cleared: ' + arbMsg(e); document.getElementById('arbk_' + slot + '_msg').textContent = ARB.keyMsg[slot]; }
+}
+async function arbCheckKeys() {
+  const msg = document.getElementById('arb-keys-msg'), out = document.getElementById('arb-keys-result'), b = document.getElementById('arb-keys-check');
+  b.disabled = true; msg.textContent = 'Checking...';
+  try {
+    const r = await arbPost('/api/arb/keys/check'); ARB.state = r;
+    out.innerHTML = Object.entries(r.checks).map(([slot, c]) => `<div>${escH(slot)}: ${c.ok === null ? 'not entered' : (c.ok ? 'OK - ' : '<b>PROBLEM</b> - ') + escH(c.text)}</div>`).join('');
+    msg.textContent = 'Checked ' + new Date().toLocaleTimeString(); arbRender(false);
+  } catch (e) { msg.textContent = 'Check failed: ' + arbMsg(e); } finally { b.disabled = false; }
+}
+async function arbTriLock(lock) {
+  const msg = document.getElementById('arb-tri-msg');
+  try {
+    ARB.state = await arbPost('/api/arb/triangular', lock ? { lock: true } : { typed: document.getElementById('arb-tri-yes').value });
+    ARB.triMsg = ''; arbRender(false);
+  } catch (e) { ARB.triMsg = arbMsg(e); if (msg) msg.textContent = ARB.triMsg; }
+}
+async function arbStopBtn(on) {
+  try { ARB.state = await arbPost('/api/arb/stop', { on }); arbRender(false); }
+  catch (e) { const m = document.getElementById('arb-stop-msg'); if (m) m.textContent = arbMsg(e); }
+}
+
+function arbMockHtml(m) {
+  if (!m) return '';
+  const eng = (m.engines || []).map(e => [escH(e.name), e.mode === 'live' ? '<b>LIVE</b>' : escH(e.mode), e.active ? (e.exit_only ? 'closing only' : 'running') : 'paused', String(e.open), String(e.held), String(e.trades) + ' (' + e.wins + ' wins)',
+    '<b>' + (e.net_pnl_usdt >= 0 ? '+' : '') + Number(e.net_pnl_usdt).toFixed(4) + '</b>', e.wallet_usdt == null ? '-' : Number(e.wallet_usdt).toFixed(2)]);
+  const pos = (m.positions || []).map(p => [escH(p.id), escH(p.module + '/' + p.market), p.mode === 'live' ? '<b>LIVE</b>' : escH(p.mode), escH(p.base), escH(p.kind), escH(p.opened_utc), Number(p.size_usdt).toFixed(2),
+    escH(p.legs.join('; ')), p.net_now == null ? '-' : (p.net_now >= 0 ? '+' : '') + Number(p.net_now).toFixed(4)]);
+  const day = (m.daily || []).map(d => [escH(d.day), escH(d.module), d.mode === 'live' ? '<b>LIVE</b>' : escH(d.mode), String(d.trades), String(d.wins), '<b>' + (d.net >= 0 ? '+' : '') + Number(d.net).toFixed(4) + '</b>']);
+  const tr = (m.trades || []).map(r => [escH(r.closed_utc), escH(r.module + '/' + r.market), r.mode === 'live' ? '<b>LIVE</b>' : escH(r.mode || ''), escH(r.base), escH(r.reason), Number(r.size_usdt).toFixed(2),
+    Number(r.fees_usdt).toFixed(4), '<b>' + (Number(r.net_pnl_usdt) >= 0 ? '+' : '') + Number(r.net_pnl_usdt).toFixed(4) + '</b>']);
+  return (m.kill_switch ? '<div class="sub" style="color:#e0b341;">The stop is ON: no NEW trade opens (exits still work).</div>' : '') +
+    arbTable('Wallets and results', ['Engine', 'Mode', 'State', 'Open', 'Held', 'Closed trades', 'Net result (USDT)', 'Wallet (USDT)'], eng) +
+    arbTable('Open trades', ['Id', 'Module', 'Mode', 'Coin', 'Kind', 'Opened (UTC)', 'Size (USDT)', 'Legs', 'Net now (USDT)'], pos) +
+    arbTable('Daily result (UTC days)', ['Day', 'Module', 'Mode', 'Trades', 'Wins', 'Net (USDT)'], day) +
+    arbTable('Last closed trades', ['Closed (UTC)', 'Module', 'Mode', 'Coin', 'Why closed', 'Size', 'Fees', 'Net (USDT)'], tr);
+}
+function arbResetAsk() { document.getElementById('arb-reset-ask').style.display = 'inline'; document.getElementById('arb-reset-btn').style.display = 'none'; }
+function arbResetCancel() { document.getElementById('arb-reset-ask').style.display = 'none'; document.getElementById('arb-reset-btn').style.display = ''; }
+async function arbResetDo() {
+  arbResetCancel();
+  try {
+    ARB.state = await api('/api/arb/mock/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true }) });
+    arbRender(false);
+    document.getElementById('arb-reset-msg').textContent = 'Mock results deleted ' + new Date().toLocaleTimeString();
+  } catch (e) { document.getElementById('arb-reset-msg').textContent = 'Could not reset: ' + e.message; }
+}
+
+function arbTable(title, cols, rows) {
+  const head = cols.map(c => `<th style="text-align:left; padding:3px 10px 3px 0;">${escH(c)}</th>`).join('');
+  const body = rows.length ? rows.map(r => `<tr>${r.map(c => `<td style="padding:3px 10px 3px 0;">${c}</td>`).join('')}</tr>`).join('')
+    : `<tr><td colspan="${cols.length}" class="sub" style="padding:6px 0;">Nothing to show (switch it on, or wait for the first scan).</td></tr>`;
+  return `<h4 style="margin:10px 0 4px;">${escH(title)}</h4><div style="overflow-x:auto;"><table style="font-size:13px; border-collapse:collapse;"><tr>${head}</tr>${body}</table></div>`;
+}
+function arbPct(v, d) { return (v == null || !isFinite(v)) ? '-' : (v >= 0 ? '+' : '') + Number(v).toFixed(d == null ? 3 : d) + '%'; }
+function arbBoardHtml(b, s) {
+  const sp = (b.spatial || []).map(e => [escH(e.base), escH(e.market), escH(e.buy) + ' @ ' + e.ask, escH(e.sell) + ' @ ' + e.bid, arbPct(e.gap), '<b>' + arbPct(e.net) + '</b>']);
+  const fu = (b.funding || []).map(e => [escH(e.base), escH(e.ex), arbPct(e.rate, 4), arbPct(e.basis), e.periods == null ? '-' : e.periods.toFixed(1), '<b>' + arbPct(e.net) + '</b>']);
+  const tr = (b.triangular || []).map(e => [escH(e.base), escH(e.bridge), escH(e.ex), e.dir === 'fwd' ? 'forward' : 'reverse', '<b>' + arbPct(e.net) + '</b>']);
+  return arbTable('Spatial (net = gap minus fees and slippage)', ['Coin', 'Market', 'Buy on', 'Sell on', 'Gap', 'Net'], sp) +
+    arbTable('Funding rate (per payment)', ['Coin', 'Exchange', 'Funding', 'Basis', 'Break-even payments', 'Net (expected)'], fu) +
+    arbTable('Triangular', ['Coin', 'Bridge', 'Exchange', 'Direction', 'Net'], tr);
+}
+
+async function arbLoad(rebuildForm) {
+  try {
+    ARB.state = await api('/api/arb');
+    const first = !ARB.loaded;
+    ARB.loaded = true;
+    arbRender(first || rebuildForm === true);
+    if (rebuildForm === true) { arbShowErrors([]); document.getElementById('arb-saved').textContent = ''; }
+  } catch (e) { document.getElementById('arb-status').textContent = 'Could not load: ' + e.message; }
+}
+
+async function arbSave() {
+  let body;
+  try { body = arbReadForm(); } catch (e) { arbShowErrors([String(e.message || e)]); return; }
+  const btn = document.getElementById('arb-save'); btn.disabled = true;
+  body.confirm_live = document.getElementById('arb-confirm-live').value.trim();
+  try {
+    ARB.state = await api('/api/arb/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    arbShowErrors([]);
+    document.getElementById('arb-confirm-live').value = '';
+    arbRender(true);
+    document.getElementById('arb-saved').textContent = 'Saved ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    let list = [e.message];
+    try { const j = JSON.parse(e.message); if (j.detail && j.detail.errors) list = j.detail.errors; else if (typeof j.detail === 'string') list = [j.detail]; } catch (_) {}
+    arbShowErrors(list);
+    document.getElementById('arb-saved').textContent = '';
+  } finally { btn.disabled = false; }
+}
+function arbStart() { arbLoad(false); if (!ARB.timer) ARB.timer = setInterval(() => arbLoad(false), 3000); }
+function arbStop() { if (ARB.timer) { clearInterval(ARB.timer); ARB.timer = null; } }
+
 window.addEventListener('resize', () => { if (CH.data && document.getElementById('tabpage-chart').classList.contains('active')) chartDraw(); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && CH.timer) chartLoad(); });
 

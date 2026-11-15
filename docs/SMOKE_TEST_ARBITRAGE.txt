@@ -1,0 +1,51 @@
+ARBITRAGE TAB - SMOKE TEST FOR THE DEV (V-15.11.2026.5)
+=====================================================
+Why: the sandbox where this was built cannot reach Binance or OKX. All logic is tested against fake exchanges
+(41 live tests + 1626 other tests + 61 browser checks), but the real exchange replies were NOT seen.
+Do these on TESTNET / DEMO first, then once on live with a tiny size. Tick each line. Stop at the first failure and send the log line.
+
+A. Setup
+ [ ] 1. Install the build. Open Arbitrage tab. Scanner OFF, nothing live, nothing in Keys. Expect: no errors in the log.
+ [ ] 2. Use a SEPARATE sub-account for the arbitrage. Create API keys: trade ON, withdraw OFF, IP-restrict to the Railway IP if possible.
+ [ ] 3. Binance futures account: set ONE-WAY position mode. OKX account: set net (one-way) mode.
+ [ ] 4. Tick "Binance test network" and "OKX test network" (Exchanges group). Use testnet/demo keys. Save.
+
+B. Keys (read only)
+ [ ] 5. Enter keys in the Live trading panel, press Save for each. Expect: "set (...last4)". The key is never shown again.
+ [ ] 6. Press "Check keys". Expect per key: works, USDT available, one-way mode yes, open futures positions N.
+        Wrong key -> a clear "PROBLEM" line. A hedge-mode account -> says switch to one-way.
+ [ ] 7. If the key is the same as a hub account: the line says "same key as hub account: NAME (its pairs will be skipped)".
+
+C. Gates (nothing may be sent)
+ [ ] 8. Set Spatial = live, press Save with the risk boxes empty. Expect a plain error list (fill in max size, daily loss, margin cap).
+ [ ] 9. Fill them (use tiny: max size 20, daily loss 5, margin cap 20). Save without typing LIVE -> refused. Type LIVE -> saved.
+ [ ] 10. Triangular: switch on, tick "I confirm", set live, type LIVE, save. It must still NOT trade until YES is typed in the lock box.
+         Wrong word -> refused. After a restart it is locked again.
+
+D. First real orders (testnet/demo)
+ [ ] 11. Scanner ON, trade size 10-20 USDT, leverage 2, order type market. Wait for a gap (or lower "Enter at net gap %" to force one on testnet).
+ [ ] 12. Expect in "Open trades": a LIVE row with two legs. On each exchange: the position exists, margin type ISOLATED, leverage as set.
+ [ ] 13. Compare quantity: the OKX position is in contracts. 1 contract = ctVal coins. The tab shows coins. They must match on both sides.
+ [ ] 14. Let it close. Expect: a LIVE row in the trade list, fees close to the exchange's own fee statement, positions on both exchanges = 0.
+ [ ] 15. Spatial spot: needs coins on the sell side. Check the balance check message when the coins are missing.
+
+E. Safety behaviour
+ [ ] 16. Press "Stop new trades". Expect no new entry; an open trade still closes. Press again to allow.
+ [ ] 17. Margin cap: set it below one trade's margin. Expect: no order sent, reason in the log.
+ [ ] 18. Hub coin: put a coin the hub trades (same key only) in the board. Expect the arbitrage skips it.
+ [ ] 19. Existing position: open a position by hand on a coin the bot wants. Expect the bot refuses that coin.
+ [ ] 20. One-leg case (hard to force): cancel/limit-IOC a leg so only one fills. Futures: the filled leg is closed at once.
+         Spot: held until the profit % or stop. Telegram alert arrives.
+ [ ] 21. Restart the app with a LIVE trade open and the module switched off. Expect the trade is picked up again and only closes (no new entry).
+ [ ] 22. Scanner OFF while a LIVE trade is open: the tab shows a red banner "NOT being managed".
+ [ ] 23. Daily loss limit: set 0.01 and lose one tiny trade. Expect no new entries that UTC day.
+
+F. After
+ [ ] 24. "Reset mock results" must NOT delete LIVE rows/state. Check trades.csv still has the live rows.
+ [ ] 25a. Telegram: with 'Telegram on every trade' = live, a message arrives when a LIVE trade opens and when it closes (with net result). off = none. all = also mock.
+ [ ] 25. Look at the Binance weight line in the tab and the log: no 429/418 and no "paused by the API guard".
+
+Known limits (by design)
+ - STOP.txt lives in the data folder; use the Stop button on Railway.
+ - Skip rule works by comparing keys: with a SEPARATE sub-account key nothing is skipped (nothing to clash with).
+ - If the scanner is OFF, nothing is managed (open live trades just sit). The tab warns.

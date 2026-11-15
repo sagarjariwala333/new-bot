@@ -232,5 +232,5 @@ class BaseExchangeAdapter(ABC):
 
     # ---------------------------------------------------------------- trade history
     @abstractmethod
-    async def get_user_trades(self, symbol: str, order_id=None, limit: int = 50) -> list[dict]:
+    async def get_user_trades(self, symbol: str, order_id=None, limit: int = 50, start_ms=None) -> list[dict]:
         ...

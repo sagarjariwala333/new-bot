@@ -94,6 +94,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self): self._go("DELETE")
 
 
+
+def apply_review(page):
+    """Confirm needs a Start-as choice when that box is shown (2026-11-09): pick Follow, then confirm."""
+    page.wait_for_timeout(150)
+    if page.is_visible("#hub-startas-box") and not page.is_checked("#startas-follow") and not page.is_checked("#startas-new"):
+        page.click("#startas-follow"); page.wait_for_timeout(120)
+    page.click("#hub-review-apply")
+
+
 def main():
     from playwright.sync_api import sync_playwright
     server = HTTPServer(("127.0.0.1", 0), Handler)
@@ -149,14 +158,14 @@ def main():
         check("Load did NOT save anything on the pair", plan_of("BBBUSDT") is None)
         check("load message says nothing is saved yet", "Nothing is saved on the pair yet" in page.inner_text("#hub-msg"))
         page.click("#hub-save-btn"); wait(300)
-        page.click("#hub-review-apply"); wait(800)
+        apply_review(page); wait(800)
         p2 = plan_of("BBBUSDT") or {}
         check("Save puts it on BBBUSDT with the timeframe", p2.get("entry_wait") == 2 and p2.get("name") == "BTC trend proven"
               and store.get_account(acc.id).pairs["BBBUSDT"].timeframe == "4h", page.inner_text("#hub-msg")[:200])
         check("first plan on a pair adds no history", L.list_all()["history"] == [])
         # ---- change it -> the old version goes to History
         page.fill("#hub_name", "BTC trend v2"); page.click("#hub-save-btn"); wait(300)
-        page.click("#hub-review-apply"); wait(800)
+        apply_review(page); wait(800)
         h = L.list_all()["history"]
         check("changing the plan keeps the old one in History", len(h) == 1 and h[0]["name"] == "BTC trend proven" and h[0]["note"] == "changed"
               and h[0]["symbol"] == "BBBUSDT", str(h)[:300])

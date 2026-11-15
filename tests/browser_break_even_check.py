@@ -110,6 +110,15 @@ def ticked(page, fid):
     return page.eval_on_selector_all(f"#hub_{fid} input[type=checkbox]", "xs => xs.filter(x => x.checked).map(x => x.value)")
 
 
+
+def apply_review(page):
+    """Confirm needs a Start-as choice when that box is shown (2026-11-09): pick Follow, then confirm."""
+    page.wait_for_timeout(150)
+    if page.is_visible("#hub-startas-box") and not page.is_checked("#startas-follow") and not page.is_checked("#startas-new"):
+        page.click("#startas-follow"); page.wait_for_timeout(120)
+    page.click("#hub-review-apply")
+
+
 def main():
     from playwright.sync_api import sync_playwright
     server = HTTPServer(("127.0.0.1", 0), Handler)
@@ -161,14 +170,14 @@ def main():
         rv = page.inner_text("#hub-review-body") if page.is_visible("#dlg-hub-review") else page.inner_text("#hub-msg")
         check("review: Break-Even line", "Break-Even: Stop Loss to the entry price after TP 1 or after 100% of ATR (ATR length 14) (whichever comes first)" in rv, rv[:900])
         if page.is_visible("#dlg-hub-review"):
-            page.click("#hub-review-apply"); wait(800)
+            apply_review(page); wait(800)
         be = store.get_account(acc.id).pairs["AAAUSDT"].plan.get("be")
         check("saved", be == {"on": True, "after_tp": True, "tp_n": 1, "after_atr": True, "atr_value": 100, "atr_length": 14}, str(be))
         # TP 3 is not used: the server refuses with its words
         openfn("be"); page.fill("#hub_be_tp_n", "3"); page.press("#hub_be_tp_n", "Tab"); wait(100)
         page.click("#hub-save-btn"); wait(300)
         if page.is_visible("#dlg-hub-review"):
-            page.click("#hub-review-apply"); wait(700)
+            apply_review(page); wait(700)
         msg = page.inner_text("#hub-msg")
         check("After TP 3 with TP3 not used is refused", "TP3 is not used" in msg, msg[:200])
         page.set_viewport_size({"width": 390, "height": 800}); wait(200)

@@ -32,6 +32,7 @@ import aiohttp
 import pandas as pd
 
 from app import base_v3_tracker as tracker_mod
+from app.candle_cache import cached_klines
 from app import hub_state
 from app import ledger
 from app import loss_limits
@@ -44,6 +45,19 @@ from app import strategy_hub as hub
 from app import telegram_notifier as tg
 from app.email_notifier import email_notifier
 from app.exchange_adapter import ExchangeAPIError
+
+def _fin(x):
+    """Dashboard numbers: a real finite number, else None (a NaN / infinity must never reach the JSON status)."""
+    return float(x) if isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) else None
+
+
+def _num(x):
+    """Like _fin, but also reads the numbers the exchange sends as text ("97.5"). Dashboard only."""
+    try:
+        return _fin(float(x)) if x is not None and not isinstance(x, bool) else None
+    except (TypeError, ValueError):
+        return None
+
 
 HUB_MIN_BARS = 200   # fewer closed candles than this -> wait for more history (indicators need warm-up)
 
@@ -124,7 +138,7 @@ class HubMixin:
     # ------------------------------------------------------------------ data
     async def _hub_fetch(self, plan: dict):
         """Closed candles -> hub frame -> snapshot of the latest closed candle. Pure read."""
-        raw = await self.client.get_klines(self.symbol, self.pc.timeframe, limit=hub.HUB_HISTORY_CANDLES + 1)
+        raw = await cached_klines(self.client, self.symbol, self.pc.timeframe, hub.HUB_HISTORY_CANDLES + 1)
         df = pd.DataFrame(raw, columns=[
             "open_time", "open", "high", "low", "close", "volume", "close_time",
             "qav", "trades", "tbbav", "tbqav", "ignore",
@@ -140,6 +154,10 @@ class HubMixin:
         self.state.last_candle_time = snap.open_time
         self.state.last_indicators = snap.to_display_dict()
         self.state.updated_at = time.time()
+        try:                      # dashboard card only: the check of every ticked indicator on this candle
+            self._hub_checks = hub.block_checks(frame, plan)
+        except Exception:
+            self._hub_checks = None
         return frame, snap
 
     @staticmethod
@@ -392,6 +410,20 @@ class HubMixin:
             return
 
         direction = "LONG" if on["dir"] == 1 else "SHORT"
+        # IGNORE LATE SIGNALS (optional): a NEW entry whose signal candle closed too long ago is not opened.
+        late, age = hub.signal_is_late(self._plan, on.get("candle", snap.open_time),
+                                       CANDLE_MS.get(getattr(self.pc, "timeframe", None) or ""),
+                                       time.time() * 1000.0)
+        if late:
+            lim = hub.late_skip_minutes(self._plan)
+            msg = (f"LATE SIGNAL - not opening {direction}: the signal candle closed {age:.0f} minute(s) ago "
+                   f"(limit {lim}). Waiting for the next signal.")
+            self._log(msg)
+            self.state.last_decision = f"NO ENTRY - late signal ({age:.0f} min, limit {lim})"
+            self.hub.open_now = None
+            hub_state.save(self.hub)
+            await self._notify(tg.notify_info(self.account_name, self.symbol, msg, self.pc.telegram_enabled))
+            return
         self.state.last_decision = f"OPEN {direction} (flat confirmed, rules unchanged)"
         result = await self._hub_maybe_enter(direction, snap)
         if result in ("opened", "dropped"):
@@ -586,8 +618,8 @@ class HubMixin:
         if fixed:
             # FIXED BASE AMOUNT: the margin is the total of the last closed trade (never below the base);
             # the position is that margin times the leverage.
-            entry_amount = hub.fixed_entry_amount(size_kind, self._plan, self.hub.last_total)
-            last = self.hub.last_total
+            entry_amount = hub.fixed_entry_amount(size_kind, self._plan, self.hub.last_total, self.hub.last_total_ct)
+            last = self.hub.last_total_ct if (size_kind == "counter" and hub.ct_total_separate(self._plan)) else self.hub.last_total
             self._log(f"Entry size: FIXED amount {entry_amount:,.4f} USDT at {lev:g}x "
                       f"({size_kind.upper()} entry; last closed total "
                       f"{('%.4f' % last) if last is not None else 'none yet'}).")
@@ -596,7 +628,9 @@ class HubMixin:
         else:
             if size_kind != "single":
                 by = (self._plan["sizing"].get("counter") or {}).get("by", hub.CT_EMA)
+                cpl = (self._plan["sizing"].get("counter") or {})
                 why = (f"chart close {snap.c_close} vs sizing EMA {snap.size_ema:.2f}" if by == hub.CT_EMA
+                       else f"decided by its own {cpl.get('ma_type')} {cpl.get('ma_length')} ({' + '.join(cpl.get('ma_modes') or [])})" if by == hub.CT_OWN
                        else "decided by the Bollinger half (the middle line)" if by == "bb"
                        else f"decided by {hub.BLOCK_TITLES.get(by, by)}")
                 self._log(f"Entry size: {size_kind.upper()} trade ({why}) -> {alloc}% at {lev:g}x.")
@@ -705,6 +739,7 @@ class HubMixin:
         # Fixed base amount: remember this trade's entry amount; every fill of the trade is added to trade_pnl
         # and the trade's total becomes last_total when it is fully closed (_hub_trade_finished).
         self.hub.trade_amount = entry_amount
+        self.hub.trade_kind = size_kind
         self.hub.trade_pnl = 0.0
         self.hub.res_open = True      # Cooldown after a loss: this trade's fills are added up from now on
         self.hub.res_pnl = 0.0
@@ -718,7 +753,7 @@ class HubMixin:
             try:
                 recent_trades = await self.client.get_user_trades(self.symbol, order_id=entry_order_id, limit=5)
                 if recent_trades:
-                    entry_price = float(recent_trades[-1].get("price") or 0) or None
+                    entry_price = self._avg_fill(recent_trades)
             except Exception as e:
                 self._log(f"Could not recover the real fill price after entry ({e}) - using a mark-price estimate.")
             if entry_price is None:
@@ -937,6 +972,17 @@ class HubMixin:
             self._log(f"Trade closed with a result of {result:+,.4f} USDT ({streak} loss(es) in a row). Cooldown starts after "
                       f"{int(cd.get('after_losses') or 1)} loss(es) in a row.")
 
+    def _hub_apply_waiting_start_as(self) -> None:
+        """"Start this plan as: New" was chosen while a trade was open: now that it is closed (and its own result is
+        booked), restart exactly the memories that were ticked. Runs after the close bookkeeping, so it wins."""
+        if not self._is_hub() or not self.hub.fresh_start:
+            return
+        req = self.hub.fresh_start
+        self.hub.fresh_start = None
+        done = hub_state.apply_start_as(self.hub, req)
+        hub_state.save(self.hub)
+        self._log("Start this plan as NEW (chosen while the trade was open) - applied now: " + ("; ".join(done) or "nothing ticked") + ".")
+
     def _hub_trade_finished(self) -> None:
         """Fixed base amount: the trade is fully closed. Its total (entry amount + all fills added up) is what the
         next entry is built on (never below the base, see hub.fixed_entry_amount)."""
@@ -951,7 +997,11 @@ class HubMixin:
             self._log(f"Trade total with lock-out {lock:g}%: entry amount {self.hub.trade_amount:,.4f}, result "
                       f"{self.hub.trade_pnl:+,.4f} (a profit adds {lock:g}% of it, a loss comes off in full) "
                       f"= {total:,.4f} USDT. The next entry is built on this (never below the base).")
-        self.hub.last_total = total
+        if hub.ct_total_separate(self._plan) and getattr(self.hub, "trade_kind", "") == "counter":
+            self.hub.last_total_ct = total          # separate totals: a counter-trend trade feeds its own total
+        else:
+            self.hub.last_total = total
+        self.hub.trade_kind = ""
         self.hub.trade_amount = None
         self.hub.trade_pnl = 0.0
         hub_state.save(self.hub)
@@ -1159,7 +1209,8 @@ class HubMixin:
         since_ms = float(self.state.opened_at or 0) * 1000.0 - 1000.0
         qty_sum, value, fees, ids, fees_known = 0.0, 0.0, 0.0, [], True
         try:
-            fills = await self.client.get_user_trades(self.symbol, limit=100)
+            fills = await self.client.get_user_trades(self.symbol, limit=100,
+                                                      start_ms=int(since_ms) if since_ms > 0 else None)
         except Exception as e:
             fills = []
             self._log(f"Could not read the exchange fills for the part closed outside the bot ({e}) - the mark "
@@ -1591,7 +1642,7 @@ class HubMixin:
         t0 = self.state.entry_candle_time
         if t0 is None:
             return None
-        raw = await self.client.get_klines(self.symbol, self.pc.timeframe, limit=hub.HUB_HISTORY_CANDLES + 1)
+        raw = await cached_klines(self.client, self.symbol, self.pc.timeframe, hub.HUB_HISTORY_CANDLES + 1)
         df = pd.DataFrame(raw, columns=[
             "open_time", "open", "high", "low", "close", "volume", "close_time",
             "qav", "trades", "tbbav", "tbqav", "ignore",
@@ -1988,7 +2039,7 @@ class HubMixin:
             except Exception as e:
                 self._log(f"Could not read the available balance for the paper size ({e}).")
         events, closed = shadow_book.on_candle(book, snap, self._plan, tick_size=tick, last_total=self.hub.last_total,
-                                               balance=balance, t_ms=int(time.time() * 1000))
+                                               last_total_ct=self.hub.last_total_ct, balance=balance, t_ms=int(time.time() * 1000))
         for ev in events:
             self._log(f"[SHADOW] {ev}")
         await self._hub_shadow_closed(closed, candle_time=snap.open_time)
@@ -2058,10 +2109,249 @@ class HubMixin:
         if self._hub_book_open() and self._hub_live_price() is None:
             await self._hub_shadow_live(await self.client.get_mark_price(self.symbol))
 
+    def _hub_card(self) -> dict:
+        """Read-only numbers for the pairs table: last price, profit / loss, the stop in charge, the next step,
+        the plan in short lines and the check of every ticked indicator. Never raises, never trades."""
+        card = {"plan_lines": [], "stop_name": None, "stop_price": None, "next_stop": None, "check": None,
+                # after a manual Close trade this side waits for a fresh signal only when Mid-Trend Re-entry is OFF
+                "reentry_blocked_after_close": not bool(self._plan.get("allow_reentry"))}
+        try:
+            card["plan_lines"] = hub.plan_lines(self._plan)
+        except Exception:
+            pass
+        d = self.state.direction
+        in_trade = self.state.status in ("IN_POSITION", "UNPROTECTED", "CLOSING") and d in ("LONG", "SHORT")
+        try:
+            lad = self.hub.ladder if in_trade else None
+            if lad and lad.get("direction") == d:
+                name, level = hub.nearest_level(d, lad)
+                card["stop_name"] = hub.LADDER_NAMES.get(name) if name else None
+                card["stop_price"] = _fin(level)
+                st = lad.get("step")
+                if st:
+                    nxt = hub.step_next(d, float(lad["entry"]), st.get("gap"), lad.get("best"),
+                                        begin=st.get("begin"), first=st.get("first"), start=st.get("start"))
+                    if nxt and _fin(nxt[0]) is not None and _fin(nxt[1]) is not None:
+                        card["next_stop"] = {"at": float(nxt[0]), "level": float(nxt[1])}
+        except Exception:
+            pass
+        chk = getattr(self, "_hub_checks", None)
+        if chk:
+            if in_trade:
+                side = "SHORT" if d == "LONG" else "LONG"      # a flip means the OTHER side
+                which = "flip"
+            else:
+                which = "entry"
+                side = "SHORT" if (chk["entry"]["short"] and not chk["entry"]["long"]) else (
+                    "LONG" if chk["entry"]["long"] else (
+                        "SHORT" if sum(r["short"] for r in chk["entry"]["rows"]) > sum(r["long"] for r in chk["entry"]["rows"])
+                        else "LONG"))
+            c = chk[which]
+            key = side.lower()
+            rows = [{"text": r["text"] + (" (Main)" if r["main"] else ""), "ok": bool(r[key])} for r in c["rows"]]
+            card["check"] = {"which": which.upper(), "side": side, "combo": c["combo"], "need": c["need"],
+                             "rows": rows, "agree": sum(1 for r in rows if r["ok"]), "signal": bool(c[key])}
+        card["funds"] = self._funds_card() if not in_trade else None
+        card["why"] = self._why_no_trade(card["check"], card["funds"]) if not in_trade else []
+        return card
+
+    # ----------------------------------------------------------- dashboard extras (owner 2026-11-08)
+    def _next_close_ms(self) -> int | None:
+        """When the current candle closes (ms). Only for timeframes up to 1d (they start on UTC midnight multiples)."""
+        ms = CANDLE_MS.get((getattr(self.pc, "timeframe", None) or "").lower())
+        if not ms or ms > CANDLE_MS["1d"]:
+            return None
+        now = int(time.time() * 1000)
+        return (now // ms + 1) * ms
+
+    async def refresh_funds(self, max_age: float = 60.0) -> None:
+        """Dashboard only: the available balance, read at most once a minute and only for a flat pair that is on.
+        Read-only; a failure just leaves the old number. Never touches a trade."""
+        if not self._is_hub() or self.state.status != "IDLE" or self._stop_requested:
+            return
+        f = getattr(self, "_funds", None)
+        if f and time.time() - f["at"] < max_age:
+            return
+        try:
+            bal = await asyncio.wait_for(self.client.get_available_balance(), timeout=5)
+            self._funds = {"available": float(bal), "at": time.time()}
+        except Exception:
+            pass
+
+    def _funds_card(self) -> dict | None:
+        f = getattr(self, "_funds", None)
+        if not f:
+            return None
+        need = None
+        try:
+            if hub.uses_fixed_base(self._plan):
+                need = float(hub.fixed_entry_amount("single", self._plan, self.hub.last_total))
+        except Exception:
+            need = None
+        avail = _fin(f["available"])
+        if avail is None:
+            return None
+        return {"available": avail, "need": _fin(need), "ok": (_fin(need) is None or avail >= need),
+                "age_s": round(time.time() - f["at"])}
+
+    def _why_no_trade(self, chk_card: dict | None, funds: dict | None) -> list:
+        """Short lines: what a flat pair is waiting for. Read-only."""
+        out = []
+        plan, st = self._plan, self.hub
+        if not self.pc.enabled or self._stop_requested:
+            out.append("This pair is stopped. Press Start.")
+            return out
+        if self.state.feed_stale:
+            out.append("Price feed is stale. No new entry until it is live.")
+        if self.state.status == "ERROR" and self.state.last_error:
+            out.append(f"Error: {self.state.last_error}")
+        if plan.get("wait_first_reversal") and not st.first_trade_done:
+            out.append("First trade: waiting for a fresh flip (no entry on a signal that is already running).")
+        w = st.wait or {}
+        if w.get("pend_dir") and plan.get("entry_wait"):
+            side = "LONG" if w["pend_dir"] == 1 else "SHORT"
+            out.append(f"Entry wait: {side} signal held {w.get('pend_bars', 0)} of {plan['entry_wait']} candle closes.")
+        if st.reentry_block:
+            out.append(f"{'LONG' if st.reentry_block == 1 else 'SHORT'} is blocked until its signal ends (No Mid-Trend Re-entry).")
+        try:
+            tf_ms = CANDLE_MS.get((getattr(self.pc, "timeframe", None) or "").lower())
+            nxt = (self.state.last_candle_time or 0) + (tf_ms or 0)
+            if hub.cooldown_cfg(plan) is not None and tf_ms and hub.cooldown_blocks(st.cooldown_through, nxt):
+                out.append(f"Cooldown after a loss: {hub.cooldown_candles_left(st.cooldown_through, nxt, tf_ms)} candle close(s) left.")
+        except Exception:
+            pass
+        if funds and not funds["ok"]:
+            out.append(f"Not enough funds: the next entry needs {funds['need']:,.2f} USDT, available {funds['available']:,.2f}.")
+        ld = str(self.state.last_decision or "")
+        if ld and not ld.startswith(("NO SIGNAL", "IN ")):
+            out.append(f"Bot's last decision: {ld}")
+        if chk_card:
+            side = chk_card["side"]
+            if chk_card["signal"]:
+                out.append(f"{side} entry signal is ON.")
+            else:
+                need = chk_card["need"]
+                out.append(f"No entry signal: {chk_card['agree']} of {len(chk_card['rows'])} agree on the {side} side "
+                           f"({'needs ' + str(need) if chk_card['combo'] not in ('ALL', 'ANY') else chk_card['combo']}).")
+        return out
+
+    # ----------------------------------------------------------- dashboard info blocks (owner 2026-11-09, read-only)
+    _PROBLEM_WORDS = ("did not go through", "was not cancelled", "Could not", "FAILED", "failed", "error", "Error",
+                      "ESCALATING", "retry", "retries", "UNPROTECTED", "NOT ", "refused", "rejected")
+
+    async def refresh_resting(self) -> None:
+        """Dashboard only: the orders that REALLY rest on the exchange for this pair (stop / take-profit), read at most
+        every 15 s while a trade is open and every 60 s while flat. Read-only; a failure just leaves the old list."""
+        if not self._is_hub() or self._plan_error or getattr(self, "_shadow_only", False):
+            return
+        st = self.state.status
+        if st not in ("IDLE", "IN_POSITION", "UNPROTECTED", "CLOSING") or self._stop_requested:
+            return
+        age = 15.0 if st != "IDLE" else 60.0
+        r = getattr(self, "_resting", None)
+        if r and time.time() - r["at"] < age:
+            return
+        try:
+            regular = await asyncio.wait_for(self.client.get_open_orders(self.symbol), timeout=5)
+            algo = await asyncio.wait_for(self.client.get_open_algo_orders(self.symbol), timeout=5)
+        except Exception as e:
+            self._resting = {"at": time.time(), "orders": (r or {}).get("orders"), "error": str(e)[:120]}
+            return
+        prefixes = getattr(self.client, "client_order_id_prefix", "") or ""
+
+        def first(o, *keys):
+            for k in keys:
+                v = o.get(k)
+                if v not in (None, "", "0", 0):
+                    return v
+            return None
+        orders = []
+        for o in (regular or []):
+            cid = str(o.get("clientOrderId") or o.get("clOrdId") or "")
+            orders.append({"kind": "limit", "type": str(first(o, "type", "ordType") or ""), "side": str(first(o, "side") or ""),
+                           "price": _num(first(o, "price", "px")), "qty": _num(first(o, "origQty", "sz")),
+                           "reduce": str(first(o, "reduceOnly") or "").lower() in ("true", "1"),
+                           "bot": bool(prefixes and cid.startswith(prefixes))})
+        for o in (algo or []):
+            orders.append({"kind": "stop", "type": str(first(o, "orderType", "ordType", "type") or ""), "side": str(first(o, "side") or ""),
+                           "price": _num(first(o, "price", "ordPx")),
+                           "trigger": _num(first(o, "triggerPrice", "triggerPx", "slTriggerPx", "tpTriggerPx")),
+                           "qty": _num(first(o, "quantity", "sz")),
+                           "reduce": str(first(o, "reduceOnly") or "").lower() in ("true", "1"),
+                           "close_all": str(first(o, "closePosition") or "").lower() in ("true", "1")})
+        self._resting = {"at": time.time(), "orders": orders, "error": None}
+
+    def _hub_info(self) -> dict:
+        """Everything the pair card shows besides the basics (owner 2026-11-09: no need to open Binance). Read-only,
+        never raises, never trades."""
+        info = {"tp": None, "resting": None, "last_trade": None, "next_entry": None, "flags": [], "problems": []}
+        plan, st = self._plan, self.hub
+        try:
+            tp = st.tp
+            if tp and tp.get("levels"):
+                info["tp"] = [{"index": l.get("index"), "on": bool(l.get("on")), "price": _fin(l.get("price")), "pct": _fin(l.get("pct")),
+                               "state": l.get("state")} for l in tp["levels"]]
+        except Exception:
+            pass
+        try:
+            r = getattr(self, "_resting", None)
+            if r:
+                info["resting"] = {"orders": r.get("orders"), "age_s": round(time.time() - r["at"]), "error": r.get("error")}
+        except Exception:
+            pass
+        try:
+            legs = ledger.last_trade_legs(self.account_id, self.symbol)
+            if legs:
+                info["last_trade"] = {
+                    "direction": legs[-1].direction, "opened_at": legs[0].opened_at, "closed_at": legs[-1].closed_at,
+                    "legs": [{"reason": t.reason, "qty": _fin(t.qty), "entry": _fin(t.entry_price), "exit": _fin(t.exit_price),
+                              "pnl": _fin(t.pnl), "fee": _fin(t.commission), "net": bool(t.commission_included),
+                              "confirmed": bool(t.confirmed)} for t in legs],
+                    "pnl": _fin(sum(t.pnl for t in legs if t.pnl is not None)),
+                }
+        except Exception:
+            pass
+        try:
+            sz = plan["sizing"]
+            if hub.uses_fixed_base(plan):
+                base = float(sz["base_amount"])
+                nxt = float(hub.fixed_entry_amount("single", plan, st.last_total))
+                info["next_entry"] = {"method": "fixed", "base": base, "last_total": _fin(st.last_total), "next": nxt,
+                                      "lock_pct": sz.get("lock_pct")}
+            else:
+                info["next_entry"] = {"method": "alloc", "pct": _fin(sz.get("alloc_pct")), "leverage": _fin(sz.get("leverage"))}
+        except Exception:
+            pass
+        try:
+            fl = info["flags"]
+            if plan.get("wait_first_reversal"):
+                fl.append(["First trade", "done" if st.first_trade_done else "waits for a fresh flip"])
+            if st.reentry_block:
+                fl.append(["Mid-Trend block", ("LONG" if st.reentry_block == 1 else "SHORT") + " waits until its signal ends"])
+            if hub.cooldown_cfg(plan) is not None:
+                tf_ms = CANDLE_MS.get(getattr(self.pc, "timeframe", None) or "")
+                left = 0
+                if tf_ms and st.cooldown_through is not None and self.state.last_candle_time:
+                    nxt = int(self.state.last_candle_time) + tf_ms
+                    if hub.cooldown_blocks(st.cooldown_through, nxt):
+                        left = hub.cooldown_candles_left(st.cooldown_through, nxt, tf_ms)
+                fl.append(["Losses in a row", f"{st.loss_streak}" + (f", cooldown {left} candle(s) left" if left else "")])
+            if st.fresh_start:
+                fl.append(["Start as NEW", "waiting for the open trade to close"])
+        except Exception:
+            pass
+        try:
+            hits = [l for l in list(self.logs)[-300:] if any(w in l for w in self._PROBLEM_WORDS)]
+            info["problems"] = hits[-5:]
+        except Exception:
+            pass
+        return info
+
     def _hub_status(self) -> dict | None:
         if not self._is_hub():
             return None
         return {
+            "card": self._hub_card(),
             "plan_summary": hub.plan_summary(self._plan),
             "wait": dict(self.hub.wait),
             "open_now": self.hub.open_now,
@@ -2080,4 +2370,5 @@ class HubMixin:
             "shadow_only": bool(getattr(self, "_shadow_only", False)),
             "shadow_equity": (self.hub.shadow_book or {}).get("equity"),
             "shadow_position": ((self.hub.shadow_book or {}).get("current") if self.hub.shadow_book else None),
+            "info": self._hub_info(),
         }

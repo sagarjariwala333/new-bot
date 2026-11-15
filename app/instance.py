@@ -3,7 +3,7 @@ instance.py
 ===========
 
 BotInstance = one live-trading loop for exactly one (account, pair).
-Up to 12 accounts x 3 pairs (Binance) / 5 x 5 (OKX) can run concurrently as
+Up to 7 accounts x 5 pairs (Binance) / 7 x 5 (OKX) can run concurrently as
 asyncio tasks, each fully isolated (own client, own state, own log ring
 buffer) so a problem on one pair never touches another.
 
@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -58,6 +59,7 @@ from app.exchange_adapter import BaseExchangeAdapter, ExchangeAPIError
 from app.binance_futures import BinanceFuturesClient
 from app.store import PairConfig
 from app import telegram_notifier as tg
+from app.candle_cache import cached_klines
 from app import ledger
 from app import risk_guard
 from app import position_state
@@ -122,6 +124,9 @@ class StopAlreadyCrossedError(Exception):
 # trip it, short enough that a genuinely persistent problem doesn't spam
 # alerts indefinitely without ever forcing a human to look at it.
 MAX_CONSECUTIVE_TICK_FAILURES = 5
+# Safety net (2026-11-09): the exit price of a trade that has JUST closed must be close to the live market. Further away
+# than this = the price is wrong (a stale or guessed fill): the mark price is used instead and the owner is told.
+EXIT_PRICE_MAX_DEVIATION = 0.05
 
 
 class _FailureEscalator:
@@ -430,6 +435,21 @@ class BotInstance(HubMixin):
             # racing a second close attempt against the first.
             await self._retry_close()
         await self.stop(keep_shadow=True)
+
+    async def close_trade_now(self, reason: str = "manual_close") -> dict:
+        """Dashboard "Close trade" (owner 2026-11-08): closes THIS pair's open position at market, through the same
+        retried, exchange-confirmed close every other close uses. Unlike emergency_flatten_and_stop it does NOT stop
+        the pair: the bot stays on and waits for the next entry. With "No Mid-Trend Re-entry" the closed side stays
+        blocked until its signal has ended (see _reset_position_state)."""
+        st = self.state.status
+        if st in ("IN_POSITION", "UNPROTECTED"):
+            self._log(f"Manual close requested ({reason}) - closing this pair's position.")
+            await self._close_position(reason=reason)
+            return {"closed": self.state.status == "IDLE", "status": self.state.status}
+        if st == "CLOSING":
+            await self._retry_close()
+            return {"closed": self.state.status == "IDLE", "status": self.state.status}
+        return {"closed": False, "status": st, "message": ("This pair is stopped. The trade may still be open on the exchange: press Start, then Close trade, or close it on Binance." if st == "STOPPED" else "No open trade on this pair.")}
 
     async def _run(self):
         if self._shadow_only:
@@ -932,8 +952,7 @@ class BotInstance(HubMixin):
         recovery etc.) can never accidentally "use up" a candle.
         Returns (snapshot, df_with_indicators) or (None, None) if there
         isn't enough history yet."""
-        raw = await self.client.get_klines(self.symbol, self.pc.timeframe,
-                                           limit=strat.HISTORY_CANDLES + 1)
+        raw = await cached_klines(self.client, self.symbol, self.pc.timeframe, strat.HISTORY_CANDLES + 1)
         df = pd.DataFrame(raw, columns=[
             "open_time", "open", "high", "low", "close", "volume", "close_time",
             "qav", "trades", "tbbav", "tbqav", "ignore",
@@ -1444,7 +1463,7 @@ class BotInstance(HubMixin):
                 recent_trades = await self.client.get_user_trades(
                     self.symbol, order_id=entry_order_id, limit=5)
                 if recent_trades:
-                    entry_price = float(recent_trades[-1].get("price") or 0) or None
+                    entry_price = self._avg_fill(recent_trades)
             except Exception as e:
                 self._log(f"Could not recover the real fill price after entry ({e}) - "
                           f"falling back to a mark-price estimate.")
@@ -1796,6 +1815,13 @@ class BotInstance(HubMixin):
             ))
             return  # stays UNPROTECTED - _tick will call this again next cycle
 
+        if exit_price is None:
+            exit_price, recovered_id = await self._closing_fill_price(exit_order_id, direction)
+            if exit_order_id is None and recovered_id:
+                try:
+                    exit_order_id = int(recovered_id)
+                except (TypeError, ValueError):
+                    pass
         pnl = None
         if exit_price and entry_price:
             sign = 1 if direction == "LONG" else -1
@@ -1865,6 +1891,103 @@ class BotInstance(HubMixin):
         self.state.status = "CLOSING"
         self.state.closing_reason = reason
         await self._retry_close()
+
+    @staticmethod
+    def _avg_fill(trades) -> float | None:
+        """Volume-weighted average price of the given fills; None when no fill has a usable price.
+        (Fills without a size: the last price.)"""
+        qty_sum = value = 0.0
+        last_px = None
+        for f in trades or []:
+            try:
+                px = float(f.get("price") or 0)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(px) or px <= 0:
+                continue
+            last_px = px
+            try:
+                q = float(f.get("qty") or 0)
+            except (TypeError, ValueError):
+                q = 0.0
+            if math.isfinite(q) and q > 0:
+                qty_sum += q
+                value += q * px
+        return (value / qty_sum) if qty_sum > 0 else last_px
+
+    async def _near_market(self, px: float | None, what: str) -> bool:
+        """Safety net for a price the bot LOOKED UP itself (not one the exchange stated): a price more than
+        EXIT_PRICE_MAX_DEVIATION away from the live price cannot be a fill of a trade that just closed. It would
+        give a wrong profit, and with a fixed base amount that profit sets the next entry size. False = do not use
+        it (the caller then uses the mark price as an estimate). If the live price cannot be read, the price passes."""
+        if not px:
+            return False
+        try:
+            mark = float(await self.client.get_mark_price(self.symbol))
+        except Exception:
+            return True
+        if not math.isfinite(mark) or mark <= 0 or abs(px - mark) / mark <= EXIT_PRICE_MAX_DEVIATION:
+            return True
+        msg = (f"The closing price {px:,.8g} found from {what} is more than {EXIT_PRICE_MAX_DEVIATION * 100:g}% away "
+               f"from the live price {mark:,.8g}, so it is NOT used. Check this trade on the exchange.")
+        self._log(msg)
+        try:
+            await self._notify(tg.notify_error(self.account_name, self.symbol, msg, self.pc.telegram_enabled))
+        except Exception:
+            pass
+        return False
+
+    async def _closing_fill_price(self, order_id, direction) -> tuple[float | None, object]:
+        """The REAL fill price of the order that closed the trade: (price, order id) - or (None, order_id).
+        2026-11-09 fix: a market close often answers with a fill price of 0. The old fallback then read the trades
+        of the symbol WITHOUT an order id or start time - Binance returns the OLDEST trades of the last 7 days
+        for that, so a stale price was written to the ledger (BTC short: real +8.28, ledger -14.18) and the
+        wrong profit fed the next entry size. Now: (1) the fills of this exact order, (2) the order's own average
+        price, (3) only the newest closing fills since this trade opened. Never a guess: the caller falls back to
+        the mark price (logged as an estimate) when this returns None."""
+        if order_id:
+            try:
+                px = self._avg_fill(await self.client.get_user_trades(self.symbol, order_id=order_id, limit=100))
+                if px and await self._near_market(px, f"the fills of order {order_id}"):
+                    return px, order_id
+            except Exception as e:
+                self._log(f"Could not read the fills of the closing order {order_id} ({e}).")
+            try:
+                o = await self.client.get_order(self.symbol, order_id)
+                px = float((o or {}).get("avgPrice") or 0) or None
+                if px and math.isfinite(px) and await self._near_market(px, f"order {order_id}"):
+                    return px, order_id
+            except Exception as e:
+                self._log(f"Could not read the closing order {order_id} ({e}).")
+            return None, order_id
+        since_ms = float(self.state.opened_at or 0) * 1000.0 - 1000.0
+        if since_ms <= 0:
+            return None, None            # no known start of the trade: never read old trades
+        close_side = "SELL" if direction == "LONG" else "BUY"
+        try:
+            fills = await self.client.get_user_trades(self.symbol, limit=100, start_ms=int(since_ms))
+        except Exception as e:
+            self._log(f"Could not read the recent fills to find the closing price ({e}).")
+            return None, None
+        entry_oid = str(self.state.entry_order_id) if self.state.entry_order_id else None
+        keep = []
+        for f in fills or []:
+            if f.get("side") and str(f.get("side")).upper() != close_side:
+                continue
+            if f.get("time") is not None and float(f.get("time") or 0) < since_ms:
+                continue
+            if entry_oid and str(f.get("orderId")) == entry_oid:
+                continue
+            keep.append(f)
+        if not keep:
+            return None, None
+        keep.sort(key=lambda r: float(r.get("time") or 0))
+        newest = keep[-1].get("orderId")
+        last_order = [f for f in keep if str(f.get("orderId")) == str(newest)] if newest is not None else keep
+        px = self._avg_fill(last_order)
+        if px and await self._near_market(px, "the recent fills"):
+            return px, newest
+        return None, None
 
     async def _retry_close(self):
         direction = self.state.direction
@@ -1936,34 +2059,20 @@ class BotInstance(HubMixin):
             return
 
         if exit_price is None:
-            # The close request's response was lost/ambiguous, but the
-            # position is NOW confirmed flat - the close itself was safe
-            # (never guessed from the response alone), but the ledger would
-            # otherwise be left with no exit price/PnL for a trade that
-            # genuinely closed. Try to recover the REAL fill from Binance's
-            # own trade records first (most accurate), falling back to the
-            # current mark price only if that's unavailable too - still
-            # better than leaving the ledger blank, though clearly less
-            # precise than a real fill, so this order only tries it as a
-            # second resort.
-            try:
-                recent_trades = await self.client.get_user_trades(self.symbol, limit=5)
-                if recent_trades:
-                    last_trade = recent_trades[-1]
-                    exit_price = float(last_trade.get("price") or 0) or None
-                    if exit_order_id is None:
-                        recovered_id = last_trade.get("orderId")
-                        if recovered_id:
-                            try:
-                                exit_order_id = int(recovered_id)
-                            except (TypeError, ValueError):
-                                pass
-            except Exception as e:
-                self._log(f"Could not recover the real fill price after an ambiguous close ({e}) - "
-                          f"falling back to a mark-price estimate for the ledger.")
+            # The close response had no fill price (a market order often answers with 0) or was lost/ambiguous,
+            # but the position is NOW confirmed flat. Recover the REAL fill of the closing order (see
+            # _closing_fill_price); the mark price only as the last resort, logged as an estimate.
+            exit_price, recovered_id = await self._closing_fill_price(exit_order_id, direction)
+            if exit_order_id is None and recovered_id:
+                try:
+                    exit_order_id = int(recovered_id)
+                except (TypeError, ValueError):
+                    pass
             if exit_price is None:
                 try:
                     exit_price = await self.client.get_mark_price(self.symbol)
+                    self._log(f"No real fill price found for the close - the mark price {exit_price} is used "
+                              f"as an ESTIMATE in the ledger.")
                 except Exception:
                     pass  # exit_price stays None - _record_ledger already handles that safely
 
@@ -2019,9 +2128,12 @@ class BotInstance(HubMixin):
             # ledger/tracker only; never affects any trading decision.
             reason = "external"
             try:
-                recent = await self.client.get_user_trades(self.symbol, limit=5)
-                if recent:
-                    exit_price = float(recent[-1].get("price") or 0) or None
+                exit_price, found_id = await self._closing_fill_price(None, self.state.direction)
+                if found_id:
+                    try:
+                        matched_order_id = int(found_id)
+                    except (TypeError, ValueError):
+                        pass
             except Exception:
                 pass
             if exit_price is None:
@@ -2387,11 +2499,66 @@ class BotInstance(HubMixin):
         position_state.clear_position_state(self.account_id, self.symbol)
         self._hub_result_finished()   # Cooldown after a loss: the trade's result ends / extends the losses in a row
         self._hub_trade_finished()   # fixed base amount: the trade's total becomes the base of the next entry
+        self._hub_apply_waiting_start_as()   # "Start this plan as: New" chosen while this trade was open
         # Clear the real-time commission cache too, so it never grows
         # unbounded and never leaks into a future, unrelated trade.
         self._commission_cache.clear()
 
     # ---------------------------------------------------------------- serialization for the API
+    def _live_numbers(self) -> dict:
+        """Dashboard (owner 2026-11-08): the last tracked mark price and the open trade's profit / loss, for any pair.
+        Read-only; None when the feed is stale or there is no open trade. Never raises."""
+        out = {"last_price": None, "pnl": None, "pnl_pct_margin": None, "next_close_ms": None, "today": None,
+               "server_ms": int(time.time() * 1000)}      # the browser corrects its clock against this
+        try:
+            price = self._hub_live_price()
+            price = float(price) if isinstance(price, (int, float)) and math.isfinite(price) else None
+            out["last_price"] = price
+            d, entry, qty = self.state.direction, self.state.entry_price, self.state.qty
+            if price and entry and qty and d in ("LONG", "SHORT") and self.state.status in ("IN_POSITION", "UNPROTECTED", "CLOSING"):
+                pnl = (1 if d == "LONG" else -1) * (price - entry) * qty
+                out["pnl"] = pnl if math.isfinite(pnl) else None
+                lev = self.state.leverage or (self._plan["sizing"]["leverage"] if self._is_hub() else None)
+                if lev and out["pnl"] is not None:
+                    pct = pnl / (entry * qty / lev) * 100.0
+                    out["pnl_pct_margin"] = pct if math.isfinite(pct) else None
+        except Exception:
+            pass
+        try:
+            out["next_close_ms"] = self._next_close_ms()
+        except Exception:
+            pass
+        try:
+            out["today"] = self._today_result()
+        except Exception:
+            pass
+        return out
+
+    def _today_result(self) -> dict:
+        """Closed trades of today (Singapore day, UTC+8, no daylight saving) from this pair's ledger: count and total
+        result in USDT, the same pnl the Ledger tab shows. Read-only."""
+        from datetime import datetime, timedelta, timezone
+        tz = timezone(timedelta(hours=8))
+        start = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        # The ledger file is only read again when it changed (or the day turned): the status is polled every 5 s.
+        try:
+            st = ledger._path(self.account_id, self.symbol).stat()
+            key = (st.st_mtime_ns, st.st_size, start)
+        except OSError:
+            key = (None, None, start)
+        cached = getattr(self, "_today_cache", None)
+        if cached and cached[0] == key:
+            return cached[1]
+        n, total = 0, 0.0
+        for t in ledger.list_trades(self.account_id, self.symbol):
+            if t.closed_at is None or t.closed_at < start or t.pnl is None:
+                continue
+            n += 1
+            total += t.pnl
+        res = {"trades": n, "pnl": total if math.isfinite(total) else 0.0}
+        self._today_cache = (key, res)
+        return res
+
     def to_status_dict(self) -> dict:
         # Item 9 fix (2026-09-14): surface any pending-reconciliation flag
         # directly in the status the dashboard reads, not just Telegram/logs
@@ -2410,6 +2577,7 @@ class BotInstance(HubMixin):
             "sl_price": self.state.sl_price,
             "strategy": "Strategy Hub" if self._is_hub() else strat.STRATEGY_NAME,
             "hub": self._hub_status(),
+            "live": self._live_numbers(),
             "base_v3": {
                 "fixed_stop": self.state.sl_price,
                 "stop_requested": self.state.stop_target,

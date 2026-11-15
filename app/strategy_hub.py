@@ -56,8 +56,14 @@ COMBINE = (COMBINE_ALL, COMBINE_ANY, COMBINE_ATLEAST)
 # A FLIP (owner 2026-10-25): "A flip is closing current position. Checks for any changes while in flat. Adopt the
 # change if needed and enter based on the new signal" - the flip signal IS the new entry signal, so a flip always
 # opens the new side. "Close only" was removed ("It's complicating things"); an older plan with it becomes a flip.
-FLIP_ACTIONS = ("Reverse (close + open opposite)",)
+FLIP_ACTIONS = ("Reverse (close + open opposite)",
+                "Close only, then wait for the entry rules")
+# 2026-11-11 (owner): the second choice closes on the flip signal, goes flat and then enters ONLY when the full ENTRY
+# rules (e.g. Supertrend + ADX + DI, Entry wait, Fresh Reversal / Mid-Trend Re-entry rules) say so. The first is unchanged.
+FLIP_REVERSE, FLIP_CLOSE_WAIT = FLIP_ACTIONS
 FLIP_CLOSE_ONLY_OLD = "Close only (go flat)"
+CT_TOTAL_SHARED, CT_TOTAL_SEPARATE = "shared", "separate"
+CT_TOTALS = (CT_TOTAL_SHARED, CT_TOTAL_SEPARATE)
 # FLIP TAB (owner 2026-10-25): three Yes / No questions. Yes = the flip follows the main settings.
 #   same_entry: Yes = the flip uses the ENTRY signal (ENTRY ticks, Main, Indicator Combination);
 #               No  = its own FLIP ticks, Main for FLIP, Indicator Combination for FLIP
@@ -190,7 +196,9 @@ EXIT_FLIP = "Close and flip to the other side"
 EXIT_AFTERS = (EXIT_WAIT, EXIT_FLIP)
 CT_EMA = "EMA"
 CT_BLOCKS = ("ma1", "ma2", "mx", "adx", "rsi", "macd", "candle", "st", "bb", "eb", "sar")
-CT_SOURCES = (CT_EMA,) + CT_BLOCKS
+CT_OWN = "own"        # its own moving average (any type / length / simple condition), not tied to a ticked indicator
+CT_OWN_MODES = ("Price above / below MA", "MA rising / falling")
+CT_SOURCES = (CT_EMA, CT_OWN) + CT_BLOCKS
 
 _MA = {"type": ("s", MA_TYPES), "length": ("i", 1), "modes": ("m", MA_MODES), "n": ("i", 0),
        "alma_offset": ("f", None), "alma_sigma": ("f", 0.0001)}
@@ -339,6 +347,11 @@ def upgrade_plan(plan: dict) -> dict:
     sz = p.get("sizing")
     if isinstance(sz, dict) and isinstance(sz.get("counter"), dict):
         sz["counter"].setdefault("by", CT_EMA)      # an older plan: the EMA length decides (as before)
+    if isinstance(sz, dict) and isinstance(sz.get("counter"), dict) and sz["counter"].get("total") == CT_TOTAL_SHARED:
+        del sz["counter"]["total"]                   # "shared" is how it always worked: the same as no key
+    ls_ = p.get("late_skip")
+    if isinstance(ls_, dict) and ls_.get("on") is False and set(ls_) <= {"on", "minutes"}:
+        del p["late_skip"]                           # off = the same as no key
     if p.get("sl") is None:
         p["sl"] = {"on": False}
     if p.get("be") is None:
@@ -658,6 +671,17 @@ def validate_plan(plan: dict) -> dict:
                 _check(_need(ct, "ema_length", "counter-trend sizing"), "i", 1, "counter-trend sizing EMA length")
                 if ct["ema_length"] > 500:
                     raise PlanError("counter-trend sizing: EMA length must be 500 or less")
+            elif by == CT_OWN:
+                _check(_need(ct, "ma_type", "counter-trend sizing"), "s", MA_TYPES, "counter-trend MA type")
+                _check(_need(ct, "ma_length", "counter-trend sizing"), "i", 1, "counter-trend MA length")
+                if ct["ma_length"] > 500:
+                    raise PlanError("counter-trend sizing: MA length must be 500 or less")
+                _check(_need(ct, "ma_modes", "counter-trend sizing"), "m", CT_OWN_MODES, "counter-trend MA condition")
+                if ct["ma_type"] == "ALMA":     # optional; absent = 0.85 / 6
+                    if ct.get("ma_alma_offset") is not None:
+                        _check(ct["ma_alma_offset"], "f", None, "counter-trend ALMA offset")
+                    if ct.get("ma_alma_sigma") is not None:
+                        _check(ct["ma_alma_sigma"], "f", 0.0001, "counter-trend ALMA sigma")
             elif by == "candle" and chart == "Candles":
                 raise PlanError("counter trend decided by Candle colour works only with Heikin Ashi or Renko")
             # 0 = no counter-trend entry at all (owner 2026-10-25)
@@ -667,6 +691,9 @@ def validate_plan(plan: dict) -> dict:
                 _check(_need(ct, "alloc_pct", "counter-trend sizing"), "f", 0.0, "counter-trend allocation %")
                 if ct["alloc_pct"] > 100:
                     raise PlanError("counter-trend sizing: allocation % must be 100 or less")
+            # 2026-11-11: which running total the counter-trend entries are built on (fixed base method only).
+            # Absent = "shared" (as before: one total for trend and counter-trend).
+            _check(ct.get("total", CT_TOTAL_SHARED), "s", CT_TOTALS, "counter-trend total")
             _check(_need(ct, "leverage", "counter-trend sizing"), "i", 1, "counter-trend leverage")
             if ct["leverage"] > 125:
                 raise PlanError("counter-trend sizing: leverage must be 125 or less")
@@ -800,6 +827,18 @@ def validate_plan(plan: dict) -> dict:
             _check(_need(ew, "signal", "exit when"), "s", EXIT_SIGNALS, "Exit when: signal")
             _check(_need(ew, "after", "exit when"), "s", EXIT_AFTERS, "Exit when: after the close")
 
+    # LATE SIGNAL (optional, 2026-11-11): do not enter on a signal whose candle closed more than N minutes ago
+    # (the bot was down / blocked). A plan without the key = OFF. Only NEW entries; closes are never skipped.
+    ls = plan.get("late_skip")
+    if ls is not None:
+        if not isinstance(ls, dict):
+            raise PlanError("Ignore late signals: wrong format")
+        _check(_need(ls, "on", "late signal"), "b", None, "Ignore late signals switch")
+        if ls["on"]:
+            _check(_need(ls, "minutes", "late signal"), "i", 1, "Ignore late signals: minutes")
+            if ls["minutes"] > 1440:
+                raise PlanError("Ignore late signals: minutes must be 1440 or less")
+
     # COOLDOWN AFTER A LOSS (optional, 2026-11-01): after a losing trade the pair waits N candles before it enters again.
     # "Losses in a row" is optional (left out = after every loss). A plan without the key means the cooldown is off.
     cd = plan.get("cooldown")
@@ -888,6 +927,9 @@ def complete_plan(plan: dict) -> dict:
     ct = out["sizing"]["counter"]
     ct.setdefault("by", CT_EMA)
     ct.setdefault("ema_length", 200)
+    ct.setdefault("ma_type", "EMA")                      # used only when the counter trend is decided by its own MA
+    ct.setdefault("ma_length", 200)
+    ct.setdefault("ma_modes", [CT_OWN_MODES[0]])
     ct.setdefault("alloc_pct", out["sizing"]["alloc_pct"])
     ct.setdefault("base_amount", out["sizing"]["base_amount"])
     ct.setdefault("leverage", out["sizing"]["leverage"])
@@ -958,8 +1000,304 @@ def plan_summary(plan: dict) -> str:
 
 
 # ==========================================================================
+# DASHBOARD CARD (owner 2026-11-08): what is ticked, the check now, the next step of the trailing stop.
+# Read-only text for the pairs table; nothing here trades or changes a plan.
+# ==========================================================================
+def _num(v) -> str:
+    try:
+        return f"{float(v):g}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _modes(p: dict) -> str:
+    m = p.get("modes")
+    return "; ".join(str(x) for x in m) if isinstance(m, (list, tuple)) and m else ""
+
+
+def block_text(plan: dict, b: str) -> str:
+    """One ticked indicator in short words, with its numbers and ticked conditions (the owner's own words)."""
+    p = (plan.get("ind") or {}).get(b) or {}
+    t = BLOCK_TITLES.get(b, b)
+    g = p.get
+    try:
+        if b == "candle":
+            return t + (", strong" if g("strong") else "") + (", previous candle opposite" if g("prev_opposite") else "")
+        if b in ("ma1", "ma2"):
+            return f"{t}: {g('type')} {_num(g('length'))}, {_modes(p)}" + (f" (N {_num(g('n'))})" if "within N" in _modes(p) else "")
+        if b == "mx":
+            return f"{t}: {_modes(p)}" + (f" (N {_num(g('n'))})" if "within N" in _modes(p) else "")
+        if b == "adx":
+            return (f"{t} {_num(g('di_length'))} / {_num(g('smoothing'))}, at least {_num(g('level'))}"
+                    + (", DI must agree" if g("di_required") else "") + (", rising" if g("rising") else ""))
+        if b == "ci":
+            return f"{t} {_num(g('length'))}, below {_num(g('max'))}"
+        if b == "rsi":
+            parts = []
+            for m in (p.get("modes") or []):
+                if m == RSI_LEVEL:
+                    parts.append(f"above / below {_num(g('level'))}")
+                elif m == RSI_OBOS:
+                    parts.append(f"oversold {_num(g('oversold'))} / overbought {_num(g('overbought'))}")
+                else:
+                    parts.append(str(m))
+            return f"{t} {_num(g('length'))}: " + "; ".join(parts)
+        if b == "macd":
+            return f"{t} {_num(g('fast'))} / {_num(g('slow'))} / {_num(g('signal'))}, {_modes(p)}" + (", rising" if g("rising") else "")
+        if b == "vol":
+            return f"{t} {_num(g('length'))}, x{_num(g('mult'))}"
+        if b == "atr":
+            return f"{t} {_num(g('length'))} vs average {_num(g('avg_length'))}, x{_num(g('mult'))}" + (", rising" if g("rising") else "")
+        if b == "st":
+            return f"{t} {_num(g('length'))}"
+        if b == "bb":
+            return f"{t} {_num(g('length'))}, x{_num(g('mult'))}"
+        if b == "sup":
+            return f"{t} {_num(g('atr_length'))} / {_num(g('factor'))}, {_modes(p)}" + (f" (N {_num(g('n'))})" if "within N" in _modes(p) else "")
+        if b == "eb":
+            return f"{t} {_num(g('length'))}"
+        if b == "sar":
+            return f"{t} {_num(g('step'))} / {_num(g('limit'))}"
+    except (KeyError, TypeError):
+        pass
+    return t
+
+
+def _combo_text(plan: dict, which: str) -> str:
+    mode = plan.get("combine_" + which)
+    if mode == COMBINE_ATLEAST:
+        return f"At least {_num(plan.get('entry_min' if which == 'entry' else 'flip_min'))}"
+    return str(mode)
+
+
+def _stop_text(basis, value, atr_length=None, usd=None) -> str:
+    if basis == BASIS_ATR:
+        return f"{_num(value)}% of ATR" + (f" (ATR {_num(atr_length)})" if atr_length is not None else "")
+    if basis == BASIS_PRICE:
+        return f"{_num(value)}% of price movement"
+    return str(basis)
+
+
+def plan_lines(plan: dict) -> list:
+    """The WHOLE plan as short [label, text] lines for the dashboard card: every indicator and every feature that is
+    ticked, then one OFF line with what is not used. Nothing is hidden."""
+    ind = plan.get("ind") or {}
+    off = []
+    out = [["Chart", str(plan.get("chart_type"))
+            + (f" (ATR {_num(plan.get('renko_atr_length'))})" if plan.get("chart_type") == "Renko" else "")]]
+
+    def col(which):
+        main = plan.get("main_" + which)
+        return [block_text(plan, b) + (" (Main)" if b == main else "") for b in BLOCKS if (ind.get(b) or {}).get(which)]
+
+    out.append(["ENTRY", f"{_combo_text(plan, 'entry')}: " + (" | ".join(col("entry")) or "none")])
+    fa = str(plan.get("flip_action") or "")
+    if flip_same_entry(plan):
+        out.append(["FLIP", "same as entry. " + fa])
+    else:
+        out.append(["FLIP", f"{_combo_text(plan, 'flip')}: " + (" | ".join(col("flip")) or "none") + f". {fa}"])
+    fr = plan.get("flip_rules") or {}
+    out.append(["Flip rules", "same as entry " + ("yes" if fr.get("same_entry") else "no")
+                + ", same as hold rule " + ("yes" if fr.get("same_hold", True) else "no")
+                + ", same as entry wait " + ("yes" if fr.get("same_wait", True) else "no")])
+    out.append(["Entry wait", f"{_num(plan.get('entry_wait') or 0)} candle(s)"])
+    out.append(["Fresh Reversal on first trade", "on" if plan.get("wait_first_reversal") else "off"])
+    out.append(["Mid-Trend Re-entry", "allowed" if plan.get("allow_reentry") else "not allowed (the closed side waits for a fresh signal)"])
+    _lm = late_skip_minutes(plan)
+    if _lm is not None:
+        out.append(["Ignore late signals", f"no new entry if the signal candle closed more than {_lm} minute(s) ago"])
+
+    sz = plan.get("sizing") or {}
+    if sz.get("method") == SIZE_FIXED:
+        txt = f"Fixed base {_num(sz.get('base_amount'))} USDT, {_num(100 if sz.get('lock_pct') is None else sz.get('lock_pct'))}% of last profit"
+    else:
+        txt = f"{_num(sz.get('alloc_pct'))}% of balance"
+    out.append(["Size", f"{txt}, leverage {_num(sz.get('leverage'))}" + (", margin alert on" if sz.get("margin_alert") else "")])
+    ct = sz.get("counter") or {}
+    if ct.get("on"):
+        if ct.get("by") == CT_OWN:
+            by_txt = f"own {ct.get('ma_type')} {_num(ct.get('ma_length'))} ({' + '.join(ct.get('ma_modes') or [])})"
+        elif ct.get("by") == CT_EMA:
+            by_txt = f"EMA {_num(ct.get('ema_length'))}"
+        else:
+            by_txt = f"{BLOCK_TITLES.get(ct.get('by'), ct.get('by'))}"
+        out.append(["Counter-trend", f"by {by_txt}, size "
+                    + (f"{_num(ct.get('base_amount'))} USDT" if sz.get("method") == SIZE_FIXED else f"{_num(ct.get('alloc_pct'))}%")
+                    + f", leverage {_num(ct.get('leverage'))}"
+                    + ((", own running total (separate from the trend total)" if ct.get("total") == CT_TOTAL_SEPARATE
+                        else ", one running total shared with trend trades") if sz.get("method") == SIZE_FIXED else "")])
+    else:
+        off.append("Counter-trend")
+    if sz.get("stop_on"):
+        if sz.get("stop_basis") == STOP_USD:
+            out.append(["Max Loss", f"{_num(sz.get('stop_usd'))} USDT per trade"])
+        else:
+            out.append(["Max Loss", f"{_num(sz.get('stop_pct'))} {sz.get('stop_basis')}"])
+    else:
+        off.append("Max Loss")
+
+    sl = plan.get("sl") or {}
+    if sl.get("on"):
+        b = sl.get("basis")
+        if b in (BASIS_ATR, BASIS_PRICE):
+            txt = _stop_text(b, sl.get("value"), sl.get("atr_length"))
+        elif b == SL_USD:
+            txt = f"{_num(sl.get('usd'))} USDT"
+        elif b == SL_STRUCT:
+            txt = f"{b}, swing {_num(sl.get('struct_n'))}"
+        elif b == SL_MA:
+            txt = f"{b} ({sl.get('ma')})"
+        else:
+            txt = f"{b}, {_num(sl.get('length'))} candles"
+        if sl.get("time_on"):
+            txt += f". Time stop after {_num(sl.get('time_candles'))} candle(s)"
+        out.append(["Stop Loss", txt])
+    else:
+        off.append("Stop Loss")
+
+    tr = plan.get("trail") or {}
+    if tr.get("on"):
+        ty = tr.get("type")
+        txt = str(ty)
+        if ty == TRAIL_STEP:
+            txt += f", every {_stop_text(tr.get('basis'), tr.get('gap'), tr.get('atr_length'))}"
+            if tr.get("start") == START_BEGIN:
+                txt += f". Begins at a price move {_num(tr.get('begin_value'))}, stop goes to {_num(tr.get('lock_value'))}"
+            elif tr.get("start") == START_SL:
+                txt += ". Starts at the Stop Loss"
+            else:
+                txt += f". Starts at {_num(tr.get('start_value'))}"
+        elif ty == TRAIL_LLHH:
+            txt += f", {_num(tr.get('length'))} candles"
+        elif ty == TRAIL_MA:
+            txt += f" ({tr.get('ma')})"
+        elif ty == TRAIL_CANDLE:
+            txt += f", {_num(tr.get('value'))}% of ATR ({_num(tr.get('atr_length'))})"
+        out.append(["Trailing Stop", txt])
+    else:
+        off.append("Trailing Stop")
+
+    tp = plan.get("tp") or {}
+    if tp.get("on"):
+        lv = [f"{_num(l.get('value'))}% of ATR closes {_num(l.get('pct'))}%" for l in (tp.get("levels") or []) if l.get("on")]
+        out.append(["Take profit", "; ".join(lv) or "on"])
+    else:
+        off.append("Take profit")
+    be = plan.get("be") or {}
+    if be.get("on"):
+        parts = []
+        if be.get("after_tp"):
+            parts.append(f"after TP {_num(be.get('tp_n'))}")
+        if be.get("after_atr"):
+            parts.append(f"after {_num(be.get('atr_value'))}% of ATR ({_num(be.get('atr_length'))})")
+        out.append(["Break-Even", ", ".join(parts) or "on"])
+    else:
+        off.append("Break-Even")
+    hd = plan.get("hold") or {}
+    if hd.get("on"):
+        out.append(["Hold rule", f"ADX at least {_num(hd.get('adx_level'))}"])
+    else:
+        off.append("Hold rule")
+    ew = plan.get("exit_when") or {}
+    if ew.get("on"):
+        out.append(["Exit when", f"{ew.get('signal')}. {ew.get('after')}"])
+    else:
+        off.append("Exit when")
+    sh = plan.get("shadow") or {}
+    if sh.get("on"):
+        out.append(["Shadow", f"{_num(sh.get('trades'))} paper trades after a new tracker high"])
+    else:
+        off.append("Shadow")
+    cd = plan.get("cooldown") or {}
+    if cd.get("on"):
+        out.append(["Cooldown", f"{_num(cd.get('candles'))} candle(s) after {_num(cd.get('after_losses') or 1)} loss(es) in a row"])
+    else:
+        off.append("Cooldown")
+    ll = plan.get("loss_limit") or {}
+    if ll.get("on"):
+        parts = [f"{lab} {_num(ll[k])}{'%' if k.endswith('_pct') else ' USDT'}" for k, lab in
+                 (("daily", "daily"), ("weekly", "weekly"), ("daily_pct", "daily"), ("weekly_pct", "weekly")) if ll.get(k) is not None]
+        out.append(["Loss limit", ", ".join(parts)])
+    else:
+        off.append("Loss limit")
+    sr = plan.get("sr") or {}
+    if sr.get("on"):
+        out.append(["Support / Resistance", "its own strategy" if sr.get("alone") else "on"])
+    else:
+        off.append("Support / Resistance")
+    out.append(["OFF", ", ".join(off) or "nothing"])
+    return out
+
+
+def block_checks(frame, plan: dict) -> dict:
+    """The ticked indicators on the latest closed candle, for both sides, plus the combined signal of that candle."""
+    ind = plan.get("ind") or {}
+    last = frame.iloc[-1]
+    res = {}
+    for which in ("entry", "flip"):
+        if which == "flip" and flip_same_entry(plan):
+            res["flip"] = None
+            continue
+        main = plan.get("main_" + which)
+        rows = []
+        for b in BLOCKS:
+            if (ind.get(b) or {}).get(which):
+                rows.append({"block": b, "text": block_text(plan, b), "main": b == main,
+                             "long": bool(last[f"{b}_long"]), "short": bool(last[f"{b}_short"])})
+        res[which] = {"rows": rows, "combo": _combo_text(plan, which),
+                      "need": int(plan["entry_min" if which == "entry" else "flip_min"])
+                      if plan.get(f"combine_{which}") == COMBINE_ATLEAST else (
+                          len(rows) if plan.get(f"combine_{which}") == COMBINE_ALL else 1),
+                      "long": bool(last[f"{which}_long"]), "short": bool(last[f"{which}_short"])}
+    if res.get("flip") is None:
+        res["flip"] = res["entry"]
+    return res
+
+
+def step_next(direction: str, entry_price: float, gap: float, best: float, begin=None, first=None, start=None):
+    """The next checkpoint of the Step Trailing Stop: (price the market must reach, stop level it then gives), or None."""
+    if gap is None or gap <= 0 or best is None or not math.isfinite(best):
+        return None
+    sign = 1 if direction == "LONG" else -1
+    move = (best - entry_price) * sign
+    if begin is not None and first is not None:
+        if move < begin - 1e-9 * max(1.0, abs(begin)):
+            k = 0
+        else:
+            k = math.floor((move - begin) / gap + 1e-9) + 1
+        at_move, lvl = begin + k * gap, first + sign * k * gap
+    else:
+        if start is None:
+            return None
+        k = max(math.floor(move / gap + 1e-9) + 1, 1)
+        at_move, lvl = k * gap, start + sign * k * gap
+    return entry_price + sign * at_move, lvl
+
+
+# ==========================================================================
 # COOLDOWN AFTER A LOSS (owner 2026-11-01)
 # ==========================================================================
+def late_skip_minutes(plan: dict) -> int | None:
+    """Ignore late signals: the most minutes after the signal candle's close a new entry may still be opened.
+    None = OFF (also for a plan saved without the key)."""
+    ls = (plan or {}).get("late_skip")
+    if isinstance(ls, dict) and ls.get("on") is True:
+        try:
+            return int(ls["minutes"])
+        except (KeyError, TypeError, ValueError):
+            return None
+    return None
+
+
+def signal_is_late(plan: dict, signal_open_ms, candle_ms, now_ms) -> tuple[bool, float]:
+    """(late?, minutes since the signal candle closed). Not late when the option is off or the times are unknown."""
+    lim = late_skip_minutes(plan)
+    if lim is None or not candle_ms or signal_open_ms is None:
+        return False, 0.0
+    age = (float(now_ms) - (float(signal_open_ms) + float(candle_ms))) / 60000.0
+    return age > lim, max(age, 0.0)
+
+
 def cooldown_cfg(plan: dict) -> dict | None:
     """The cooldown of the plan, or None when it is off / not in the plan (an older plan)."""
     cd = (plan or {}).get("cooldown")
@@ -1615,9 +1953,22 @@ def compute_hub(df: pd.DataFrame, plan: dict) -> pd.DataFrame:
         out["flip_long"], out["flip_short"], out["dir_f"] = combine("flip", plan["combine_flip"])
 
     # base signals for the first-reversal rule = the entry signal itself
-    out["size_ema"] = pine_ema(cC, plan["sizing"]["counter"]["ema_length"])   # chart close, for trend / counter sizing
     by = plan["sizing"]["counter"].get("by", CT_EMA)
-    if by == "bb":          # Bollinger half: LONG with the trend in the lower half of the band, SHORT in the upper half
+    if by == CT_EMA:
+        out["size_ema"] = pine_ema(cC, plan["sizing"]["counter"]["ema_length"])   # chart close, for trend / counter sizing
+    else:
+        out["size_ema"] = np.full(n, np.nan)
+    if by == CT_OWN:        # its own moving average on the chart close; every ticked condition must agree
+        cp = plan["sizing"]["counter"]
+        cma = _ma(cp["ma_type"], cC, int(cp["ma_length"]), 0.85 if cp.get("ma_alma_offset") is None else cp["ma_alma_offset"],
+                  6.0 if cp.get("ma_alma_sigma") is None else cp["ma_alma_sigma"])
+        out["ct_ma"] = cma
+        lg, sh = np.ones(n, dtype=bool), np.ones(n, dtype=bool)
+        for m in cp["ma_modes"]:
+            a, b_ = _ma_cond(m, cC, cma, 1, cL, cH)
+            lg, sh = lg & a, sh & b_
+        out["ct_long"], out["ct_short"] = lg, sh
+    elif by == "bb":          # Bollinger half: LONG with the trend in the lower half of the band, SHORT in the upper half
         with np.errstate(invalid="ignore"):
             out["ct_long"], out["ct_short"] = cC < bb_basis, cC > bb_basis
     elif by in CT_BLOCKS:   # counter trend decided by an indicator: the side it says on this candle
@@ -1816,8 +2167,8 @@ def entry_size(direction: str, snap: HubSnapshot, plan: dict) -> tuple[float, fl
     if not ct.get("on"):
         return float(sz["alloc_pct"]), float(sz["leverage"]), "single"
     by = ct.get("by", CT_EMA)
-    if by in CT_BLOCKS:
-        # decided by an indicator: with the trend when it says the same side as the entry (its own conditions)
+    if by in CT_BLOCKS or by == CT_OWN:
+        # decided by an indicator or its own MA: with the trend when it says the same side as the entry (its own conditions)
         with_trend = bool(getattr(snap, "ct_long", False)) if direction == "LONG" else bool(getattr(snap, "ct_short", False))
     else:
         ema = snap.size_ema
@@ -1856,13 +2207,22 @@ def uses_fixed_base(plan: dict) -> bool:
     return plan["sizing"].get("method", SIZE_ALLOC) == SIZE_FIXED
 
 
-def fixed_entry_amount(kind: str, plan: dict, last_total) -> float:
+def ct_total_separate(plan: dict) -> bool:
+    """Fixed base method with counter-trend sizing ON and the owner's choice "separate totals" (2026-11-11):
+    counter-trend trades grow on their own running total, trend trades on theirs."""
+    ct = (plan.get("sizing") or {}).get("counter") or {}
+    return bool(ct.get("on")) and ct.get("total", CT_TOTAL_SHARED) == CT_TOTAL_SEPARATE
+
+
+def fixed_entry_amount(kind: str, plan: dict, last_total, last_total_ct=None) -> float:
     """Fixed base method: the margin (USDT) of the next entry.
     base  = the base amount of this entry type (kind "counter" = the counter-trend base, else the trend base)
     next  = the total of the last fully closed trade (its entry amount + all its fills), but never below base.
     No last closed trade yet (last_total is None / not a number) = the base."""
     sz = plan["sizing"]
     base = float(plan["sizing"]["counter"]["base_amount"]) if kind == "counter" else float(sz["base_amount"])
+    if kind == "counter" and ct_total_separate(plan):
+        last_total = last_total_ct          # separate totals: counter-trend trades have their own running total
     if last_total is None or not math.isfinite(last_total):
         return base
     return max(base, float(last_total))
@@ -1900,7 +2260,7 @@ def stop_price_from_usd(direction: str, entry_price: float, qty: float, loss_usd
     return entry_price - dist if direction == "LONG" else entry_price + dist
 
 
-def paper_size(direction: str, snap: "HubSnapshot", plan: dict, last_total, balance):
+def paper_size(direction: str, snap: "HubSnapshot", plan: dict, last_total, balance, last_total_ct=None):
     """Size of a PAPER (shadow) entry: (allocation % of wallet, leverage, margin USDT or None), or None when it
     cannot be worked out because the balance is needed and not known.
     Allocation method: the plan's allocation %. Fixed base method: the amount the next real entry would use,
@@ -1911,7 +2271,7 @@ def paper_size(direction: str, snap: "HubSnapshot", plan: dict, last_total, bala
     if uses_fixed_base(plan):
         if balance is None or not math.isfinite(balance) or balance <= 0:
             return None
-        margin = fixed_entry_amount(kind, plan, last_total)
+        margin = fixed_entry_amount(kind, plan, last_total, last_total_ct)
         return margin / balance * 100.0, lev, margin
     margin = (balance * alloc / 100.0) if (balance is not None and math.isfinite(balance) and balance > 0) else None
     return alloc, lev, margin

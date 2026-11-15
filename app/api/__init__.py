@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from dataclasses import asdict
@@ -30,6 +31,7 @@ from app import hub_backtest
 from app.instance import _params_from_pair
 from app import hub_api
 from app import chart_api
+from app.arb import service as arb_service
 from app import strategy_library
 from app import hub_menu_layout
 from app import loss_limits
@@ -409,7 +411,7 @@ async def set_pair_plan(account_id: str, symbol: str, body: PlanBody):
         raise HTTPException(404, "pair not found")
     _refuse_if_frozen(acc.pairs[symbol], symbol, "editing the strategy plan")
     try:
-        return await hub_api.apply_plan(store, manager, account_id, symbol, body.plan, amend=getattr(body, "amend", None))
+        return await hub_api.apply_plan(store, manager, account_id, symbol, body.plan, amend=getattr(body, "amend", None), start_as=getattr(body, "start_as", None))
     except hub_api.PlanRefused as e:
         raise HTTPException(400, str(e))
 
@@ -549,6 +551,19 @@ async def stop_pair(account_id: str, symbol: str):
     return {"stopped": True}
 
 
+@router.post("/accounts/{account_id}/pairs/{symbol}/close-trade", dependencies=mutating_deps)
+async def close_trade(account_id: str, symbol: str):
+    """Closes only THIS pair's open trade at market. The pair keeps running (Stop and STOP ALL are different)."""
+    acc = store.get_account(account_id)
+    if acc is None or symbol not in acc.pairs:
+        raise HTTPException(404, "pair not found")
+    _refuse_if_frozen(acc.pairs[symbol], symbol, "closing the trade of")
+    inst = manager.get(account_id, symbol)
+    if inst is None:
+        raise HTTPException(409, "This pair is not running, so the bot cannot close its trade. Close it on the exchange.")
+    return await inst.close_trade_now()
+
+
 @router.post("/accounts/{account_id}/pairs/{symbol}/restart", dependencies=mutating_deps)
 async def restart_pair(account_id: str, symbol: str):
     acc = store.get_account(account_id)
@@ -586,6 +601,11 @@ async def all_status():
     # infrastructure needed for either.
     await manager.restart_any_pending()
     await manager.check_for_orphaned_withdrawal_alerts()
+    # dashboard funds line: read at most once a minute per flat pair (all pairs at the same time, 5 s limit each)
+    await asyncio.gather(*(i.refresh_funds() for i in list(manager.instances.values())), return_exceptions=True)
+    # dashboard: the orders really resting on Binance for each Hub pair (read-only, cached 15 s / 60 s)
+    await asyncio.gather(*(i.refresh_resting() for i in list(manager.instances.values()) if hasattr(i, "refresh_resting")),
+                         return_exceptions=True)
     return {"instances": manager.all_status(), "startup_failures": manager.startup_failures}
 
 
@@ -703,6 +723,65 @@ async def get_chart(platform: str, account_id: str, symbol: str, limit: int = 30
         raise HTTPException(e.status, str(e))
     except Exception as e:
         raise HTTPException(502, f"Could not read the chart data: {e}")
+
+
+# ---------------------------------------------------------------- Arbitrage tab (Step 1: settings + read-only scan)
+@router.get("/arb", dependencies=[auth_dep])
+async def arb_state():
+    return arb_service.get_state()
+
+
+@router.post("/arb/settings", dependencies=mutating_deps)
+async def arb_save(body: dict):
+    confirm = body.pop("confirm_live", None)
+    try:
+        return await arb_service.save_settings(body, confirm)
+    except arb_service.ArbSaveError as e:
+        raise HTTPException(400, {"errors": e.errors})
+
+
+@router.post("/arb/keys", dependencies=mutating_deps)
+async def arb_keys_save(body: dict):
+    slot = body.pop("slot", "")
+    try:
+        return arb_service.save_key(slot, body)
+    except arb_service.ArbSaveError as e:
+        raise HTTPException(400, {"errors": e.errors})
+
+
+@router.post("/arb/keys/check", dependencies=mutating_deps)
+async def arb_keys_check():
+    """Read-only test of the entered keys (balance, position mode, open positions). Sends no order."""
+    try:
+        return await arb_service.check_keys()
+    except Exception as e:
+        raise HTTPException(502, {"errors": [f"Key check failed: {e}"]})
+
+
+@router.post("/arb/stop", dependencies=mutating_deps)
+async def arb_stop(body: dict):
+    try:
+        return arb_service.set_stop(body.get("on") is True)
+    except arb_service.ArbSaveError as e:
+        raise HTTPException(400, {"errors": e.errors})
+
+
+@router.post("/arb/triangular", dependencies=mutating_deps)
+async def arb_triangular(body: dict):
+    try:
+        return arb_service.triangular_lock(None if body.get("lock") is True else body.get("typed"))
+    except arb_service.ArbSaveError as e:
+        raise HTTPException(400, {"errors": e.errors})
+
+
+@router.post("/arb/mock/reset", dependencies=mutating_deps)
+async def arb_reset_mock(body: dict):
+    if body.get("confirm") is not True:
+        raise HTTPException(400, {"errors": ["Send {\"confirm\": true} to reset the mock results"]})
+    try:
+        return await arb_service.reset_mock()
+    except arb_service.ArbSaveError as e:
+        raise HTTPException(500, {"errors": e.errors})
 
 
 # ---------------------------------------------------------------- BASE V3 tracker tab

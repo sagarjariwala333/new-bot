@@ -77,6 +77,7 @@ from urllib.parse import urlencode
 import aiohttp
 
 from app.exchange_adapter import BaseExchangeAdapter, ExchangeAPIError
+from app import api_guard
 from app.binance_futures import SymbolInfo  # shared value type - see note in exchange_adapter.py
 
 MAINNET_BASE = "https://www.okx.com"
@@ -98,7 +99,7 @@ log = logging.getLogger("okx")
 POSITION_LIMIT_CODES = {"54030"}          # this account/sub-account's max open-position notional exceeded
 ORDER_ALREADY_GONE_CODES = {"51400", "51401", "51403", "51603"}  # cancel/query on an order that's already done or never existed
 CLOCK_DRIFT_CODES = {"50113"}             # timestamp expired / request outside receive window
-RATE_LIMIT_CODES = {"50011"}
+RATE_LIMIT_CODES = {"50011", "50061"}   # 50011 too many requests, 50061 sub-account rate limit
 NON_RETRYABLE_CODES = {"51004", "51006", "51008", "51020"}  # bad qty/price/insufficient margin etc - needs a human
 
 
@@ -302,6 +303,13 @@ class OKXFuturesClient(BaseExchangeAdapter):
         query = f"?{urlencode(params, doseq=True)}" if params else ""
         request_path = f"{path}{query}"
         body_str = json.dumps(body, separators=(",", ":")) if body else ""
+        # API-ban protection (2026-11-11): wait for budget BEFORE signing (the timestamp must be fresh).
+        guard = api_guard.okx_guard(signed, getattr(self, "api_key", "") or "")
+        if api_guard.okx_urgent(method, path):
+            await guard.acquire(1, urgent=True)
+        else:
+            async with guard.normal_slot():
+                await guard.acquire(1, urgent=False)
         timestamp = self._iso_timestamp(self._clock_offset_ms)
         headers = {}
         if signed:
@@ -312,6 +320,14 @@ class OKXFuturesClient(BaseExchangeAdapter):
                                     data=body_str if body_str else None) as resp:
             data = await resp.json(content_type=None)
             outer_code = data.get("code") if isinstance(data, dict) else None
+            inner_code = None
+            try:
+                inner_code = ((data.get("data") or [{}])[0] or {}).get("sCode") if isinstance(data, dict) else None
+            except Exception:
+                pass
+            if resp.status == 429 or outer_code in RATE_LIMIT_CODES or inner_code in RATE_LIMIT_CODES:
+                guard.trigger_pause(api_guard.retry_after_seconds(resp.headers, 5.0), resp.status,
+                                    f"(OKX {path} code {outer_code or inner_code})")
             # OKX returns HTTP 200 for almost everything, including per-order
             # failures nested in data[].sCode - so "is this an error" is
             # judged by outer code/HTTP status/inner sCode, not HTTP status
@@ -353,9 +369,8 @@ class OKXFuturesClient(BaseExchangeAdapter):
                     await asyncio.sleep(0.5)
                     continue
                 if e.code in RATE_LIMIT_CODES:
-                    backoff = delay * (2 ** attempt)
-                    log.warning("Rate-limited on %s (code=%s) - backing off %.1fs.", path, e.code, backoff)
-                    await asyncio.sleep(backoff)
+                    log.warning("Rate-limited on %s (code=%s) - paused by the API guard.", path, e.code)
+                    await asyncio.sleep(0.5)
                     continue
                 log.warning("%s failed (attempt %d/%d, code=%s): %s", path, attempt, retries, e.code, e)
                 await asyncio.sleep(delay)
@@ -995,10 +1010,12 @@ class OKXFuturesClient(BaseExchangeAdapter):
             raise OKXAPIError(0, {"msg": "; ".join(errors)})
 
     # ---------------------------------------------------------------- trade history
-    async def get_user_trades(self, symbol: str, order_id=None, limit: int = 50) -> list[dict]:
+    async def get_user_trades(self, symbol: str, order_id=None, limit: int = 50, start_ms=None) -> list[dict]:
         params = {"instType": "SWAP", "instId": symbol, "limit": limit}
         if order_id is not None:
             params["ordId"] = order_id
+        if start_ms is not None:
+            params["begin"] = str(int(start_ms))
         data = await self._request("GET", "/api/v5/trade/fills", params=params)
         try:
             ct_val = float(getattr(await self.get_symbol_info(symbol), "ct_val", 1.0) or 1.0)

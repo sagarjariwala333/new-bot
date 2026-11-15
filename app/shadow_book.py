@@ -147,7 +147,7 @@ def on_price(book: dict, price: float, plan: dict, t_ms: int) -> list[dict]:
     return closed
 
 
-def on_candle(book: dict, snap, plan: dict, *, tick_size: float, last_total, balance, t_ms: int) -> tuple[list[str], list[dict]]:
+def on_candle(book: dict, snap, plan: dict, *, tick_size: float, last_total, balance, t_ms: int, last_total_ct=None) -> tuple[list[str], list[dict]]:
     """One closed candle. Returns (log lines, paper trades that closed fully on this candle)."""
     events: list[str] = []
     closed: list[dict] = []
@@ -266,7 +266,7 @@ def on_candle(book: dict, snap, plan: dict, *, tick_size: float, last_total, bal
 
     if ready != 0 and book["pos"] == 0:
         direction = "LONG" if ready == 1 else "SHORT"
-        size = hub.paper_size(direction, snap, plan, last_total, balance)
+        size = hub.paper_size(direction, snap, plan, last_total, balance, last_total_ct)
         if size is None and hub.counter_entry_off(hub.entry_size(direction, snap, plan)[2], plan):
             events.append(f"paper {direction} not opened: counter-trend entry and the counter-trend size is 0")
         elif size is None:

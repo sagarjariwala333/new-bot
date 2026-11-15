@@ -24,7 +24,7 @@ only in the environment (.env) - never in the JSON file itself, and the
 plaintext key/secret are never returned by any API endpoint (always redacted
 to "********" after the first save).
 
-Hard limits enforced here: max 12 accounts, max 3 pairs per account.
+Hard limits enforced here: max 7 accounts, max 5 pairs per account.
 """
 
 from __future__ import annotations
@@ -47,8 +47,8 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 harden_permissions(DATA_DIR, is_dir=True)
 ACCOUNTS_FILE = DATA_DIR / "accounts.json"
 
-MAX_ACCOUNTS = 12
-MAX_PAIRS_PER_ACCOUNT = 3
+MAX_ACCOUNTS = 7
+MAX_PAIRS_PER_ACCOUNT = 5
 
 
 def _get_or_create_master_key() -> bytes:

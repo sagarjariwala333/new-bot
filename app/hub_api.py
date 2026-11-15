@@ -13,6 +13,7 @@ from __future__ import annotations
 import copy
 from dataclasses import asdict
 
+from app import hub_state
 from app import strategy_hub as hub
 from app import strategy_library as library
 
@@ -60,16 +61,84 @@ def check_amend(amend) -> dict | None:
     return {"when": when, "stops": stops if when == hub.AMEND_NOW else None}
 
 
-async def apply_plan(store, mgr, account_id: str, symbol: str, plan, platform: str = "binance", amend=None) -> dict:
+def check_start_as(start_as) -> dict | None:
+    """The "Start this plan as" choice sent with a Save: {"mode": "follow"} or
+    {"mode": "new", "first_flip": bool, "size": bool, "loss_streak": bool, "reentry": bool}.
+    None = no choice sent = nothing restarts (same as "follow"). "new" needs at least one box ticked."""
+    if start_as is None:
+        return None
+    if not isinstance(start_as, dict):
+        raise PlanRefused("start_as must be an object")
+    mode = start_as.get("mode")
+    if mode == "follow":
+        return {"mode": "follow"}
+    if mode != "new":
+        raise PlanRefused("Choose how the plan starts: follow through from past trades, or new.")
+    out = {"mode": "new"}
+    for k in hub_state.START_AS_BOXES:
+        v = start_as.get(k, False)
+        if not isinstance(v, bool):
+            raise PlanRefused(f"start_as.{k} must be true or false")
+        out[k] = v
+    if not any(out[k] for k in hub_state.START_AS_BOXES):
+        raise PlanRefused("Start as New: tick at least one thing to start again, or choose follow through.")
+    return out
+
+
+def _start_as_notes(plan, req: dict) -> list[str]:
+    """Ticked boxes that have no effect with this plan (shown to the owner, nothing is changed)."""
+    notes = []
+    if req.get("first_flip") and not plan.get("wait_first_reversal"):
+        notes.append("Ticked 'first trade waits for a fresh flip', but this plan has Fresh Reversal on First Trade OFF - no effect.")
+    if req.get("size") and not hub.uses_fixed_base(hub.complete_plan(plan)):
+        notes.append("Ticked 'size starts again at the base amount', but this plan does not use the fixed base amount - no effect.")
+    if req.get("loss_streak") and hub.cooldown_cfg(plan) is None:
+        notes.append("Ticked 'losses in a row start again', but Cooldown after a loss is OFF in this plan - no effect.")
+    return notes
+
+
+async def _start_as(mgr, account_id: str, symbol: str, platform: str, inst, plan, req: dict) -> dict:
+    """Apply the choice to the pair's hub memory. Follow: nothing restarts (and an older waiting request is dropped).
+    New: flat -> restarted now; a trade is open -> kept and applied when that trade closes. Never raises."""
+    try:
+        st = inst.hub if inst is not None and getattr(inst, "hub", None) is not None else \
+            hub_state.load(platform, account_id, symbol)
+        busy = inst is not None and (getattr(inst, "_hub_busy", False) is True or
+                                     inst.state.status in ("IN_POSITION", "UNPROTECTED", "CLOSING"))
+        if req["mode"] == "follow":
+            st.fresh_start = None
+            hub_state.save(st)
+            return {"status": "follow"}
+        notes = _start_as_notes(plan, req)
+        if busy or hub_state.trade_is_open(st):
+            st.fresh_start = {k: req[k] for k in hub_state.START_AS_BOXES}
+            hub_state.save(st)
+            return {"status": "after_close", "notes": notes}
+        st.fresh_start = None
+        done = hub_state.apply_start_as(st, req)
+        hub_state.save(st)
+        return {"status": "done", "done": done, "notes": notes}
+    except Exception as e:
+        import logging
+        logging.getLogger("hub_api").error("Start-as choice for %s failed: %s", symbol, e)
+        return {"status": "error", "why": str(e)}
+
+
+async def apply_plan(store, mgr, account_id: str, symbol: str, plan, platform: str = "binance", amend=None, start_as=None) -> dict:
     try:
         hub.validate_plan(plan)
     except hub.PlanError as e:
         raise PlanRefused(str(e))
     amend = check_amend(amend)
+    start_as = check_start_as(start_as)
     amend_result = None
     _old_plan_to_history(store, account_id, symbol, platform, "changed", plan)
     pc = store.update_pair(account_id, symbol, {"plan": copy.deepcopy(plan)})
     inst = mgr.get(account_id, symbol)
+    start_as_result = None
+    if start_as is not None:
+        # BEFORE any restart: the restarted pair reads the memory from disk
+        start_as_result = await _start_as(mgr, account_id, symbol, platform, inst, plan, start_as)
     stopped_pair = not getattr(pc, "enabled", True) and (inst is None or getattr(inst, "_task", None) is None
                                                          or inst._task.done() or getattr(inst, "_shadow_only", False))
     if stopped_pair and hasattr(mgr, "refresh_shadow_only"):
@@ -96,6 +165,8 @@ async def apply_plan(store, mgr, account_id: str, symbol: str, plan, platform: s
     out = asdict(pc)
     if amend is not None:
         out["amend_result"] = amend_result or {"status": "no_open_trade"}
+    if start_as_result is not None:
+        out["start_as_result"] = start_as_result
     return out
 
 

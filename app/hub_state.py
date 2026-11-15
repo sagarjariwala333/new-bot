@@ -65,6 +65,8 @@ class HubState:
     shadow_wait: dict = field(default_factory=lambda: {"pend_dir": 0, "pend_bars": 0, "pend_from_flip": False})
     plan_hash: str = ""          # which plan the memory above belongs to
     last_total: float | None = None
+    last_total_ct: float | None = None   # counter-trend running total (only when the plan keeps separate totals)
+    trade_kind: str = ""                 # kind of the open trade: "single" / "trend" / "counter"
     trade_amount: float | None = None
     trade_pnl: float = 0.0
     ladder: dict | None = None   # stop ladder of the open trade (Max Loss / Stop Loss / Trailing Stop levels and
@@ -81,6 +83,37 @@ class HubState:
     cooldown_through: int | None = None   # last blocked signal candle (open time ms); None = no cooldown running
     shadow_book: dict | None = None   # SHADOW: the paper copy of the plan that runs all the time (app/shadow_book.py)
     sr_origin: int = 0                # Support / Resistance: how the open trade was entered (0 not by it, 1 bounce, 2 breakout, 3 retest)
+    fresh_start: dict | None = None   # "Start this plan as: New" chosen while a trade was open: applied when that trade has closed
+
+
+START_AS_BOXES = ("first_flip", "size", "loss_streak", "reentry")
+
+
+def trade_is_open(st: HubState) -> bool:
+    """A trade of this pair is open (or its result is still being added up)."""
+    return bool(st.res_open) or st.trade_amount is not None
+
+
+def apply_start_as(st: HubState, req: dict) -> list[str]:
+    """"Start this plan as: New" - restart ONLY the memories the owner ticked. Pure: changes `st`, the caller saves.
+    Never called while a trade is open. Returns the plain-English list of what was restarted."""
+    done = []
+    if req.get("first_flip"):
+        st.first_trade_done = False
+        done.append("first trade waits for a fresh flip")
+    if req.get("size"):
+        st.last_total = None
+        st.last_total_ct = None
+        done.append("size starts again at the base amount")
+    if req.get("loss_streak"):
+        st.loss_streak = 0
+        st.cooldown_through = None
+        done.append("losses in a row start again at 0")
+    if req.get("reentry"):
+        st.reentry_block = 0
+        st.reentry_forced = False
+        done.append("Mid-Trend Re-entry block cleared")
+    return done
 
 
 def _path(platform: str, account_id: str, symbol: str) -> Path:
