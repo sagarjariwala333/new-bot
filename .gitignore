@@ -1,51 +1,60 @@
-# Python bytecode & cache
+# Environments
+.env
+.venv
+env/
+venv/
+
+# Project Data (Trading state, ledgers, saved settings, encrypted keys)
+data/
+*.db
+*.sqlite3
+*.csv
+*.log
+*.key
+
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Caches & Test outputs
 .ruff_cache/
 .pytest_cache/
-.coverage
-htmlcov/
-*.cover
 
-# Virtual Environments
-venv/
-env/
-ENV/
-.venv/
+# Jupyter Notebook
+.ipynb_checkpoints
 
-# Environment Variables & Secrets
-.env
-.env.local
-.env.*.local
-*.pem
-*.key
-data/.master.key
-data/auth.json
-
-# Local runtime & persistence data (mount Volume at /data in Railway/production)
-data/
-data/*
-!data/.gitkeep
-!data/base_v3_tracker/
-!data/hub_state/
-!data/ledger/
-!data/position_state/
-!data/reconciliation/
-
-# OS specific & IDE
-.DS_Store
-Thumbs.db
-desktop.ini
+# VS Code / IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+.project
 
-# Logs & temp files
-*.log
-tmp/
-temp/
-
-# Testing artifacts
-test_reports/
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
