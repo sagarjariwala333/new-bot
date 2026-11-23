@@ -172,7 +172,7 @@ def on_candle(book: dict, snap, plan: dict, *, tick_size: float, last_total, bal
             rec = _close_all(book, snap.close, "FLIP", t_ms)
             closed.append(rec)
             events.append(f"paper {d} closed by flip @ {snap.close} result {rec['result_pct']:+.3f}%")
-        elif hub.exit_decision(d, snap, plan) == "EXIT":
+        elif hub.exit_decision(d, snap, plan, book.get("entry_time")) == "EXIT":
             # EXIT WHEN: the MA(s) curve against the trade at this candle close
             closing_dir = book["pos"]
             rec = _close_all(book, snap.close, "Exit when", t_ms)

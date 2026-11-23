@@ -47,7 +47,7 @@ from tests.test_strategy_hub import make_df  # noqa: E402
 _DF = make_df(1200, seed=3)
 
 
-async def _fake_history(account_id, symbol, timeframe, limit):
+async def _fake_history(account_id, symbol, timeframe, limit, plan=None):
     return _DF.tail(limit).reset_index(drop=True)
 
 

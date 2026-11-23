@@ -142,7 +142,7 @@ def main():
         check("Signal and After boxes show when picked", vis("exit_signal") and vis("exit_after"))
         sig = page.eval_on_selector_all("#hub_exit_signal option", "o => o.map(x => x.value)")
         aft = page.eval_on_selector_all("#hub_exit_after option", "o => o.map(x => x.value)")
-        check("Signal has the 2 choices", [s for s in sig if s] == ["Both MA 1 and MA 2 curve against the trade", "MA 2 only (the slower one) curves against the trade"], str(sig))
+        check("Signal has the 3 choices", [s for s in sig if s] == ["Both MA 1 and MA 2 curve against the trade", "MA 2 only (the slower one) curves against the trade", "Divergence (RSI / MFI / CCI / MACD / Stochastic / OBV / CMO, set below)"], str(sig))
         check("After has the 2 choices", [s for s in aft if s] == ["Close and wait for a fresh signal", "Close and flip to the other side"], str(aft))
         page.select_option("#hub_exit_signal", "Both MA 1 and MA 2 curve against the trade")
         page.select_option("#hub_exit_after", "Close and wait for a fresh signal")

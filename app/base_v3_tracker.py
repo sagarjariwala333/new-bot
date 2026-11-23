@@ -221,7 +221,7 @@ def save(state: TrackerState) -> None:
 def apply_real_close(state: TrackerState, *, result_pct: float, pnl: float, direction: str,
                      entry_price: float | None, exit_price: float | None, reason: str,
                      balance_at_entry: float | None, use_shadow: bool,
-                     approximated: bool = False) -> bool:
+                     approximated: bool = False, every_win: bool = False) -> bool:
     """Applies one REAL closed trade to the tracker. Returns True if this
     trade started a new shadow period.
 
@@ -236,11 +236,13 @@ def apply_real_close(state: TrackerState, *, result_pct: float, pnl: float, dire
     started = False
     if new_high:
         state.peak = state.balance
-        if use_shadow and pnl > 0:
-            sh = state.get_shadow()
-            strat.shadow_activate(sh)
-            state.set_shadow(sh)
-            started = True
+    # Normal rule: a winning trade that makes a new high starts the trades-off period.
+    # every_win (optional, Strategy Hub): ANY winning trade starts it (owner 2026-11-16).
+    if use_shadow and pnl > 0 and (new_high or every_win):
+        sh = state.get_shadow()
+        strat.shadow_activate(sh)
+        state.set_shadow(sh)
+        started = True
     state.real_trades.append({
         "closed_at": time.time(), "direction": direction,
         "entry_price": entry_price, "exit_price": exit_price, "reason": reason,

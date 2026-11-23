@@ -1,103 +1,163 @@
-# Strategy Hub Bot - OWNER BUILD
+# Strategy Hub Bot
 
-Binance and OKX USDⓈ-M perpetual futures bot, run from one web dashboard. You build the strategy for each pair
-yourself in the **Strategy Hub** tab. There is **no preset strategy and no starter value**: a first install is
-entirely blank, and a pair with no saved plan does not start.
+Automated multi-exchange trading bot and web dashboard for **Binance** and **OKX** USDⓈ-M perpetual futures.
 
-**Owner only.** Keep this package private.
+Built with a modular rule-builder engine (**Strategy Hub**), allowing fine-grained customization of indicators, combine/hold logic, entry sizing, multi-stage Take Profit, dynamic trailing stops, and shadow mode.
 
-Nothing in this package starts trading by itself.
+> **Repository:** [https://github.com/sagarjariwala333/new-bot.git](https://github.com/sagarjariwala333/new-bot.git)
 
-**Arbitrage tab (new):** see `docs/ARBITRAGE_FOR_DEV.md` and `docs/SMOKE_TEST_ARBITRAGE.txt`. Everything starts OFF; not yet tested on a real exchange.
+---
 
-## Who does what
+## 🌟 Key Features
 
-| Person | Does |
-|---|---|
-| **IT person (if any)** | Deploys on the owner's Railway project with `docs/RAILWAY_SETUP.md`, then leaves the project. |
-| **Owner** | Types every secret (dashboard password, encryption key, exchange API keys, Telegram/SMTP) into Railway Variables and the dashboard, fills in the Default Settings and each pair's plan, tests, and decides when to turn live trading on. |
+- **Multi-Exchange Execution:** Native async integration with Binance USDⓈ-M Futures and OKX Perpetual Swaps.
+- **Strategy Hub UI:** Visual strategy builder with custom indicators (EMA, RSI, MACD, Supertrend, ATR, Bollinger Bands, Support & Resistance, etc.).
+- **Risk & Safety Protections:**
+  - Client-order-id tracking and duplicate order protection.
+  - Ambiguous-order recovery and filled-quantity confirmation.
+  - Unprotected position detection with emergency flatten safeguard.
+  - Auto leverage-bracket checking and exposure caps.
+  - Stale-feed entry suspension and consecutive-failure auto-stop.
+  - Single-instance atomic locking.
+- **Encrypted Secrets:** Zero plaintext credentials; exchange API keys are encrypted at rest using Fernet encryption (`MASTER_ENC_KEY`).
+- **Arbitrage Module (Beta):** Integrated cross-exchange spatial arbitrage engine (`docs/ARBITRAGE_FOR_DEV.md`).
+- **Telegram & SMTP Alerts:** Real-time push notifications for executions, margin warnings, and system health alerts.
 
-## Project layout
+---
+
+## 📁 Project Architecture
 
 ```
-app/
-  strategy_hub.py      the plan: indicators, flip, wait, sizing, TP, trailing, shadow (pure calculations)
-  hub_trading.py       how a pair with a plan trades (flip order, entry, TP, trailing, shadow)
-  hub_api.py / hub_state.py   saving a plan, per-pair hub memory
-  default_settings.py  blank defaults, validation, Confirm step, alert email, live-trading switch
-  strategy.py / base_v3_tracker.py   shared calculations, tracker + shadow state (older code the hub reuses)
-  instance.py          one live loop per account+pair: orders, stop, recovery
-  manager.py / okx_manager.py   run all Binance / OKX pairs (the start gates live here)
-  binance_futures.py / okx_futures.py   exchange adapters
-  store.py / okx_store.py       encrypted account + pair settings
-  api/                 dashboard API (FastAPI)
-  static/dashboard.html
-  ledger.py, reconciliation.py, risk_guard.py, singleton_lock.py, ...
-deploy/                optional VPS files (systemd, backup, smoke test) - NOT needed on Railway
-docs/RAILWAY_SETUP.md  step-by-step deployment
-docs/HANDOFF_READ_FIRST.md  rules and open items, for a new chat
-railway.json           Railway build/deploy/health-check settings
-tests/                 unittest suite
+strategy_hub_bot/
+├── app/
+│   ├── api/               # FastAPI route controllers (auth, dashboard, hub, settings, arb)
+│   ├── arb/               # Cross-exchange spatial arbitrage engine & scanner
+│   ├── static/            # Frontend dashboard UI (HTML/CSS/JS)
+│   ├── strategy_hub.py    # Indicator math, signal calculation, trailing/SL/TP logic
+│   ├── hub_trading.py     # Execution engine translating hub plans to live exchange orders
+│   ├── binance_futures.py # Binance USDⓈ-M API adapter
+│   ├── okx_futures.py     # OKX Perpetual Swaps API adapter
+│   ├── store.py / okx_store.py  # Encrypted configuration & account persistence
+│   ├── risk_guard.py      # Circuit breakers, drawdown control, and exposure limits
+│   └── instance.py        # Per-pair execution loop & state reconciliation
+├── data/                  # Runtime persistence (ledger, tracker, positions, keys)
+├── deploy/                # Deployment configurations (Systemd unit, backup scripts, smoke tests)
+├── docs/                  # In-depth architectural guides & Railway setup docs
+├── pine/                  # Reference TradingView Pine Script templates
+├── tests/                 # Comprehensive test suite
+├── .env.example           # Environment template
+├── railway.json           # Railway cloud deployment configuration
+├── requirements.txt       # Core project dependencies
+└── run.py                 # Application launcher entry point
 ```
 
-## Run locally (optional)
+---
+
+## 🚀 Quick Start
+
+### 1. Clone & Set Up Environment
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
+git clone https://github.com/sagarjariwala333/new-bot.git
+cd new-bot
+# or cd strategy_hub_bot
+```
+
+Create a virtual environment (Python 3.11 or 3.12 recommended):
+
+```bash
+python -m venv venv
+
+# On Linux/macOS:
+source venv/bin/activate
+
+# On Windows (PowerShell):
+.\venv\Scripts\Activate.ps1
+```
+
+Install dependencies:
+
+```bash
 pip install -r requirements.txt
-cp .env.example .env              # then fill in the secrets; set HOST=127.0.0.1 for local use
+```
+
+### 2. Configure Environment
+
+Copy `.env.example` to `.env`:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your parameters:
+- `HOST`: Set to `127.0.0.1` for local runs, or `0.0.0.0` for cloud deployment.
+- `PORT`: Web port (default `8000`).
+- `DATA_DIR`: Path to data directory (e.g. `./data` locally or `/data` for Railway volume mounts).
+- `MASTER_ENC_KEY`: Fernet encryption key used to protect API keys. Generate via:
+  ```bash
+  python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+  ```
+- `DASHBOARD_USERNAME` & `DASHBOARD_PASSWORD`: Initial login credentials for the admin dashboard.
+
+### 3. Launch the Application
+
+```bash
 python run.py
 ```
 
-Open http://localhost:8000 and log in.
+Open your browser and navigate to:
+```
+http://127.0.0.1:8000
+```
 
-## Using the dashboard (owner)
+---
 
-1. **Default Settings** tab: everything starts BLANK. Fill the pair-level settings for Binance and/or OKX, press
-   **Confirm Default Settings**, review the summary, confirm. Also set the alert email here.
-2. **Add Account**: Binance or OKX tab. Keys are encrypted at rest and never shown again.
-   Use a testnet / demo account first.
-3. **Add Pair** (needs the confirmed defaults). A new pair does NOT start: it has no strategy yet.
-4. **Strategy Hub** tab (Layout 2, 2026-10-23): name the strategy and choose the account. The menu on the left lists
-   8 functions: Pair & chart, Indicators (entry / flip-exit ticks and their numbers), Combine & flip plus hold rule
-   (ALL / ANY / At least N), Entry (entry wait with a warning above 0, size: allocation % or a fixed base amount that
-   grows with the last closed total, optional lock-out %, leverage, email alert on margin), Max loss (% of balance,
-   % of entry amount, or fixed $), Stop loss (trailing), Take profit, Shadow mode. The first four are needed by every
-   strategy; pick the others, press Confirm selection, then open each function and fill it in (nothing is
-   pre-filled; each box has a short explanation beside it). **Save** keeps the plan. **Execute** saves it and starts the
-   pair (it asks you to confirm first). The pair must already be added to the account.
-5. **Start / Stop / Freeze** each pair. A pair with no saved plan will not start. **STOP ALL / START ALL** cover both exchanges.
-6. **Log**, **Ledger** (real trades, CSV), **Tracker**, **Analysis**.
-7. **Live trading switch** (Default Settings tab): OFF by default. Turn it on only when you are ready for
-   real-money accounts to trade.
+## 🛠️ Usage Workflow
 
-A plan saved while the pair holds a trade starts after the trade closes. A flip is: the candle close gives the
-signal, CLOSE, FLAT, CHECK FOR CHANGES IN RULES, otherwise OPEN THE OPPOSITE.
+1. **Configure Default Settings:** Navigate to the **Default Settings** tab. Review pair-level risk boundaries, max loss rules, and confirm defaults.
+2. **Add Exchange Account:** In Binance or OKX tabs, submit your API credentials. Keys are encrypted immediately and never logged or exposed. *Start with Testnet/Demo accounts first.*
+3. **Configure Strategy in Strategy Hub:**
+   - Select pair & timeframe.
+   - Configure technical indicator rules, holding requirements, and entry conditions.
+   - Define multi-target Take Profits and dynamic ATR/Swing Trailing stops.
+   - Click **Save** to store or **Execute** to activate for trading.
+4. **Live Trading Toggle:** Live trading is disabled by default. Enable the switch in Default Settings once you're satisfied with your dry-run / testnet tests.
 
-## Safety features
+---
 
-Client-order-id tagging, ambiguous-order recovery, duplicate protection, filled-quantity confirmation,
-unprotected-position recovery with emergency flatten, idempotent close, pending reconciliation,
-exposure cap, leverage-bracket check, stale-feed entry pause, consecutive-failure stop, atomic
-single-instance lock, restart recovery, Telegram + email alerts.
+## ☁️ Deployment (Railway)
 
-## Tests
+1. Connect your repository to [Railway](https://railway.com).
+2. Attach a **Railway Volume** mounted at `/data` to persist trade journals, positions, and keys.
+3. In service variables, set:
+   - `HOST=0.0.0.0`
+   - `DATA_DIR=/data`
+   - `COOKIE_SECURE=true`
+   - `MASTER_ENC_KEY=<generated-key>`
+   - `DASHBOARD_USERNAME` & `DASHBOARD_PASSWORD`
+4. Deploy using the provided [railway.json](file:///E:/21.11.2026_1546_Strategy_Hub_V-21.11.2026.1/strategy_hub_bot/railway.json). The service automatically uses healthchecks on `/healthz`.
+5. For full instructions, refer to `docs/RAILWAY_SETUP.md`.
+
+---
+
+## 🧪 Testing
+
+Run test discovery across all unit tests:
 
 ```bash
 python -m unittest discover -s tests -t .
 ```
 
-The suite uses stand-ins for `fastapi`, `pydantic` and `aiohttp` when the real packages are not installed.
-Run `deploy/smoke_test.sh` in an environment with internet access to run the suite against the real packages.
-The tests use placeholder numbers that are NOT the owner's settings (see `tests/_test_values.py`).
+To run individual test modules (e.g. strategy hub logic):
 
-## Security
+```bash
+python -m unittest tests.test_strategy_hub
+```
 
-- API secrets are encrypted with Fernet (`MASTER_ENC_KEY`, or `data/.master.key` - back it up).
-- The dashboard needs a login (PBKDF2, sessions, lockout, CSRF). Do not expose it without HTTPS.
-- The interactive API docs (`/docs`, `/redoc`) and `/openapi.json` are switched off; they would otherwise be readable by anyone without a login. `/healthz` stays open on purpose (uptime monitors) and shows no account data.
-- Settings the owner enters are stored in `DATA_DIR/default_settings.json` and in the pair records on the
-  server's volume. Anyone who can log in to the dashboard, open a shell on the service, or read the volume
-  can see them. The owner should remove the IT person from the Railway project before entering them.
-- Start every new pair on testnet / demo first.
+---
+
+## 🔒 Security Notice
+
+- Never commit `.env` or sensitive `.key` / `.json` files from `data/` to version control.
+- Ensure HTTPS/TLS termination is enabled in public production environments.
+- API endpoints for interactive OpenAPI (`/docs`, `/redoc`) are disabled by default in production.

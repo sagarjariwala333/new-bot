@@ -74,6 +74,12 @@ class TestPlanValidation(unittest.TestCase):
                            else H.RSI_OBOS if key in ("oversold", "overbought", "n") else H.RSI_LEVEL)
                     p["ind"][b].update(mode=use, oversold=30.0, overbought=70.0, n=1, pivot=5, lookback=60,
                                        ma_type="ALMA", ma_length=9, ma_alma_offset=0.85, ma_alma_sigma=6.0)   # 2026-11-01
+                if b in H.OSC_BLOCKS and key != "modes":     # 2026-11-18: each number is needed only by a condition that uses it
+                    use = next((m for m in H.OSC_MODES[b] if key in H.osc_mode_keys(b, m)), None)
+                    if use is None:
+                        continue                    # (the timeframe box is optional; every other key belongs to some condition)
+                    p["ind"][b].update(modes=[use], oversold=30.0, overbought=70.0, n=1, pivot=5, lookback=60,
+                                       ma_type="ALMA", ma_length=9, ma_alma_offset=0.85, ma_alma_sigma=6.0)
                 if b == "macd":
                     p["ind"][b].update(mode=H.MACD_HIST)
                 del p["ind"][b][key]
@@ -157,7 +163,7 @@ class TestPlanValidation(unittest.TestCase):
         slim["hold"] = {"on": False}
         slim["sizing"] = {"alloc_pct": 10.0, "leverage": 5, "stop_on": False}
         done = H.complete_plan(slim)
-        self.assertEqual(done["ind"]["ma1"], H.upgrade_plan(slim)["ind"]["ma1"])   # used settings untouched
+        self.assertEqual({k: v for k, v in done["ind"]["ma1"].items() if k != "tf"}, H.upgrade_plan(slim)["ind"]["ma1"])   # used settings untouched
         self.assertNotIn("length", slim["ind"]["rsi"])                   # the saved plan itself is not changed
         a = H.compute_hub(df, full)
         b = H.compute_hub(df, slim)

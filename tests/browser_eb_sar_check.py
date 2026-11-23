@@ -140,7 +140,7 @@ def main():
         for blk in ("eb", "sar"):
             check(f"{blk}: row has ENTRY, FLIP and CTREND ticks", all(page.query_selector(f"#hub_{blk}_{t}") is not None for t in ("entry", "flip", "ctrend")))
             check(f"{blk}: nothing ticked and its boxes are hidden", not page.is_checked(f"#hub_{blk}_entry") and not vis(f"{blk}_length" if blk == "eb" else f"{blk}_step"))
-        check("indicator table now has 16 rows", page.evaluate("document.querySelectorAll('.hubx-trow:not(.hubx-thead)').length") == 16)
+        check("indicator table now has 21 rows", page.evaluate("document.querySelectorAll('.hubx-trow:not(.hubx-thead)').length") == 21)
 
         # ---------------- EMA Band
         tick("eb_entry")
