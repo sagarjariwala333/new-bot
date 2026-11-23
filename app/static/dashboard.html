@@ -211,9 +211,6 @@
 
 <div id="login-overlay">
   <div class="box">
-    <div style="font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:12px; text-align:center;">
-      Futures Bot <span style="color:var(--blue); margin-left:4px;">v1.3.3</span>
-    </div>
     <div id="login-view">
       <h2 style="margin-top:0;">Sign in</h2>
       <label>Username</label>
@@ -254,12 +251,6 @@
       </div>
       <div id="reset-msg" class="msg"></div>
     </div>
-    <div style="margin-top:16px; padding-top:12px; border-top:1px solid var(--border); font-size:11px; color:var(--muted); text-align:center;">
-      v1.3.3
-    </div>
-  </div>
-  <div style="position:absolute; bottom:16px; font-size:11px; color:var(--muted); opacity:0.75; text-align:center; left:0; right:0;">
-    Futures Bot v1.3.3
   </div>
 </div>
 
@@ -278,7 +269,7 @@
 
 <div class="topbar">
   <div>
-    <h1>Futures Bot <span style="font-size:11px; font-weight:400; color:var(--muted); opacity:0.8; margin-left:8px;">v1.3.3</span></h1>
+    <h1>Futures Bot</h1>
     <div class="sub">Binance: 7 accounts × 5 pairs · OKX: 7 accounts × 5 pairs · every setting is editable per pair (changes to a pair with an open trade apply once it is flat).</div>
   </div>
   <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
@@ -991,6 +982,8 @@ const HELP = {
   "lib.open": ["Library", "Your saved strategies, and the old versions of every pair's strategy.", "Opens the library. From there you can Load a strategy into the Strategy Hub for the pair you chose (to test it on a different pair), or Delete it.", "", "", "Choose the account and the pair first, then Load."],
   "fn.sr": ["Support / Resistance", "Finds the range from the chart. You tick the entries and exits you want.", "The chart decides the levels, not you: tops and bottoms found from the candles, and a sloping line if you tick it. Price above a level makes it a support, price below it a resistance, and a broken level changes role. Entries and exits are checked at the candle close, on the normal candles. Nothing is ticked or filled in for you.", "Picked = ON. Not picked = OFF.", "", "Optional function. Pick it in the menu to use it. To combine it with other indicators, also tick it in Indicators; or tick \"its own strategy\" here."],
   "ind.sr": ["Support / Resistance", "The range from the chart: a bounce, a breakout or a retest gives LONG or SHORT.", "Ticked in ENTRY and / or FLIP, it works like the other indicators (ALL / ANY / At least N, and it can be the Main). Its numbers are in the Support / Resistance function of the menu.", "", "", "The function must be picked in the menu. Ticking it here picks it for you."],
+  "card.exitwhen": ["EXIT WHEN", "Closes the open trade when your chosen signal says so.", "Pick the signal and what happens after the close.", "", "", ""],
+  "card.exitdiv": ["DIVERGENCE", "Used when the signal is Divergence.", "Tick any of RSI, MFI, CCI, MACD histogram, Stochastic, OBV, CMO. Each has its own timeframe and numbers. Long trade: price makes a higher high but the oscillator a lower high. Short trade: price a lower low but the oscillator a higher low.", "", "", "All OFF by default. Changes nothing until the signal is Divergence."],
   "card.srfind": ["FIND THE RANGE", "Where the chart looks for the levels.", "Tick one or more. The nearest level above the price is the top, the nearest below is the bottom.", "", "", ""],
   "card.srzone": ["ZONE", "A band around each level and the stop outside it.", "Both are a % of the ATR, so they follow the market. Both are optional.", "", "", ""],
   "card.srbounce": ["ENTRY BOUNCE", "Trade the turn at the edge of the range.", "Long: the candle reaches the bottom and closes back up. Short: it reaches the top and closes back down. The bot enters at market on that candle close.", "", "", ""],
@@ -1039,7 +1032,7 @@ const HELP = {
   "sr_exit_all": ["Exits apply to every trade", "The ticked exits close any open trade.", "Any ticked exit, bounce or breakout, closes any trade, whatever opened it.", "Tick it to use it.", "", "Used only when you ticked an exit above. After an exit the bot waits flat for a fresh signal."],
   "chart.sr": ["Support / Resistance", "The levels the bot works out, drawn on the chart.", "Solid lines: the nearest top (red) and bottom (green). Dashed: the next ones. Dotted: the middle. Purple: a broken level locked for the retest. Letters: B = bounce, K = breakout, R = retest signal.", "", "", "Read only. It is drawn from the same calculation the bot trades on, up to the last closed candle."],
   "chart.srtable": ["Levels now", "The levels as the bot sees them now.", "One row per level. Tick the columns you want to see. A diagonal line shows its price now and its slope per candle.", "", "", "Read only."],
-  "fn.exitwhen": ["Exit when", "Closes the open trade when the moving average(s) curve against it.", "At a candle close, if the signal you chose is against the trade (long: the average value is lower than on the candle before, short: higher), the bot closes the trade. Then it waits for a fresh entry signal, or flips to the other side, as you choose. A flip signal on the same candle is done first.", "Picked = ON. Not picked = OFF.", "", "Optional function. Pick it in the menu to use it. It uses the MA 1 and MA 2 numbers in Indicators."],
+  "fn.exitwhen": ["Exit when", "Closes the open trade when the moving average(s) curve against it, or when RSI / MFI / CCI / MACD / Stochastic / OBV / CMO show a divergence.", "At a candle close, if the signal you chose is against the trade (long: the average value is lower than on the candle before, short: higher), the bot closes the trade. Then it waits for a fresh entry signal, or flips to the other side, as you choose. A flip signal on the same candle is done first.", "Picked = ON. Not picked = OFF.", "", "Optional function. Pick it in the menu to use it. The MA signals use the MA 1 and MA 2 numbers in Indicators."],
   "fn.cooldown": ["Cooldown after a loss", "After a losing trade the pair waits a number of candles before it enters again.", "When a trade has closed completely and its result (every part added up, net of fees) is below 0, the next candle closes are skipped: no new entry on them. An entry that a flip would make at the same moment is skipped too. A trade that ends at 0 or in profit starts nothing. It only stops a NEW entry. It never touches a trade that is open. Shadow mode, Analysis and the Pine script do not use it.", "Candles to wait. Optional: Losses in a row before the wait starts (empty = after every loss).", "Wait 3, after every loss: the trade loses, the next 3 candle closes are skipped, then the bot may enter again.", "The wait is counted in the candles of this pair's timeframe."],
   "fn.latesig": ["Ignore late signals", "Do not open a NEW trade on a signal whose candle closed too long ago.", "If the bot was down, restarting or blocked and a signal is found late, the price may have moved far from the signal candle's close. Ticked: a new entry is skipped when more than your number of minutes have passed since that candle closed. Closes (flip, stop, exit) are never skipped. Off = as before.", "Minutes after the candle close. 1 or more.", "30: the 4H candle closed 50 minutes ago, so no entry. The next signal is judged fresh. You get a Telegram message.", "Optional. Off by default."],
   "late_min": ["Latest minutes after the candle close", "The most minutes after the signal candle's close that a new entry may still be opened.", "The bot normally enters within seconds of the close. Keep this above the time a normal entry needs (e.g. 15 or 30).", "A whole number, 1 to 1440.", "30 = enter only within 30 minutes of the candle close.", ""],
@@ -1082,6 +1075,7 @@ const HELP = {
   "be_atr_length": ["ATR length", "How many candles the ATR uses.", "Normal candles, read at the entry candle, fixed for the trade.", "", "14 = a 14-candle ATR.", ""],
   "fn.trail": ["Trailing Stop", "A stop that follows the price and only tightens.", "It replaces the Stop Loss on the exchange once it takes charge (at its first checkpoint, or when its level is tighter than the stop in charge). It never loosens. You choose one type: Step (moves live with the price), Lowest low / highest high, Moving average, Signal candle high / low +/- ATR, or Supertrend line (all four get a new level when a candle closes). The stop always rests on the exchange and triggers on the live price, never waiting for the candle close.", "Picked = ON. Not picked = OFF, and the Stop Loss just stays where it is.", "", "Optional function. Pick it in the menu to use it."],
   "fn.tp": ["Take profit", "Targets that close part of the trade when the price reaches them.", "Up to 3 targets, measured in % of ATR or % of price movement from your entry. Each target closes a share of the position. The next target is placed only after the one before it is hit. What the targets do not close keeps running with the trend until a Stop Loss, Trailing Stop, flip or Max Loss per Trade closes it.", "Picked = ON. Not picked = OFF, and no take profit is used.", "30, 30, 30: the targets close 90% and the other 10% rides the trend.", "Optional function. Pick it in the menu to use it."],
+  "fn.boost": ["Higher leverage on a divergence", "A bigger leverage on an entry that a proven divergence agrees with.", "The entry is decided as always. If a divergence on the SAME side was already proven (bullish for a long, bearish for a short), that entry uses the leverage you key in instead of the normal one. Pick any of RSI, MFI, CCI, MACD histogram, Stochastic, OBV or CMO, each with its own timeframe (it can differ from the pair's timeframe). The amount and Max Loss do not change.", "", "Normal leverage 3, boost 20: a long entry after a proven bullish divergence opens at 20x, any other entry at 3x.", "Not picked: nothing changes. The leverage box starts empty: you key it in."],
   "fn.shadow": ["Shadow mode", "A paper copy of your whole strategy that runs all the time.", "It shadows the real trade all the way: the same entries, flips, hold rule, Stop Loss, Max Loss per Trade, Trailing Stop and Take Profit, on the live price, but it never sends an order. It does NOT pause when real trading pauses (trades off, Stop on the pair, STOP ALL). Trades off: after a real trade closes in profit and your tracker reaches a new high, the next N trades are off (only the shadow takes them); then real trading goes live again.", "Picked = ON. Not picked = OFF (the default).", "", "Its paper equity is the shadow tracker on the Chart tab. Not all strategies use it: trend following does; day trade and scalping don't. Optional function. Pick it in the menu to use it."],
 
   // ---- Strategy Hub: boxes inside a function ----
@@ -1145,6 +1139,8 @@ const HELP = {
   "counter_alloc": ["Allocation % against the trend", "The share of your available balance used for trades AGAINST the trend.", "Same as Allocation %, but only for trades against the trend. 0 = NO counter-trend entries at all (a flip into that side closes and stays flat).", "", "5 = 5% for counter-trend trades. 0 = none.", "Shown only when the size method is Allocation %."],
   "counter_base": ["Base amount against the trend (USDT)", "The base amount, in USDT, for trades AGAINST the trend.", "Its own base for entries against the trend. There is one running total for both. 0 = NO counter-trend entries at all (a flip into that side closes and stays flat).", "", "0 = none.", "Shown only when the size method is Fixed base amount."],
   "counter_lev": ["Leverage against the trend", "The leverage used for trades AGAINST the trend.", "Same as Leverage, but only for trades against the trend.", "", "", ""],
+  "short_enter": ["Enter with what is available", "If the balance is short, still open the trade with what is available.", "When the available balance (minus the part kept free for fees) is less than the margin an entry needs, the bot opens the biggest trade the balance allows instead of sending an order the exchange would refuse. It also sends an email and a Telegram message saying how much was missing. The Max Loss is then measured on the real (smaller) entry amount. The next entry tries the full amount again.", "ON = enter with what is available and send the message. OFF = the full amount is sent (the exchange may refuse it and the trade is missed).", "Entry needs 10,000 and the balance is 8,000, with 2% kept free: the trade opens with 7,840 margin and the message says about 2,160 was missing.", "Needs the alert email in Default Settings and the SMTP settings on the server for the email. The trade does not depend on the email."],
+  "short_buffer": ["Balance kept free for fees (%)", "The part of the balance that is not used when the balance is short.", "Used only when 'Enter with what is available' is ON and the balance is short. This % of the available balance is left free for fees and small price moves.", "Empty = 2%.", "2 = 2% of the available balance is left free. 0 = use all of it (the exchange may then refuse the order).", ""],
   "margin_alert": ["Email alert on margin", "An email warning about margin.", "When an entry needs more margin than the available balance at that moment, the bot sends an email and a Telegram message, once per candle.", "ON = send the alert. OFF = no alert.", "", "It never blocks or changes the entry. Needs the alert email in Default Settings and the SMTP settings on the server."],
 
   // ---- Strategy Hub: Max Loss per Trade, trailing, take profit, shadow ----
@@ -1183,6 +1179,8 @@ const HELP = {
   "tpN_value": ["Distance (%)", "How far from the price chosen in Measured from this target is.", "Long: above that price. Short: below it. % of ATR: 100 = 1 ATR, 200 = 2 ATR, 50 = 0.5 ATR. % of price movement: you key in the % itself, 3 = 3%, 0.5 = 0.5% (not 50).", "", "Long at 100, 3% of price movement: target at 103. % of ATR 200 with ATR 5: 10 away, at 110.", ""],
   "tpN_pct": ["% of the position to close", "The share of the position closed when this target is hit.", "The ticked targets add up to 100 or less. What they do not close keeps running with the trend until a Stop Loss, Trailing Stop, flip or Max Loss per Trade closes it.", "", "Only TP 1 at 80: when it is hit, the other 20% runs. 30, 30, 30: the other 10% runs.", "After each fill, the stop on the exchange is put back for the remaining quantity."],
   "shadow_trades": ["Number of trades off", "How many trades are off after a new high, before real trading goes live again.", "After a real trade closes in profit and your tracker reaches a new high, this many trades are taken only by the shadow (paper). They are counted when the shadow's trades close.", "", "3 = the next 3 trades are off, then real trading goes live again.", "The shadow itself keeps running all the time, before, during and after the trades off."],
+  "shadow_every_win": ["Start after every win", "Pause after every winning trade, not only after a new high.", "Normally the trades-off period starts only when a winning trade makes a new high in your tracker. With this ticked it starts after every real winning trade. A losing trade never starts it.", "ON = every real win is followed by the trades-off period. OFF = only a win that makes a new tracker high.", "Number of trades off = 1: after each win the next trade is paper only, then real trading goes live again.", "Paper trades never start it again. Best used with Number of trades off = 1."],
+  "shadow_resume_now": ["Enter right away when the pause ends", "No waiting candle when the trades-off period ends.", "Normally, when the last paper trade ends on a flip, the first real entry waits one candle (the Pine rule). With this ticked, the real entry happens on that same flip candle.", "ON = enter on the same candle the pause ends. OFF = the first real entry is one candle later.", "Number of trades off = 1: win, paper trade, then the next flip is entered for real on that candle.", ""],
   "shadow_slip": ["Paper slippage (ticks)", "A small price slip added to paper trades to make them more realistic.", "It is applied to the paper entry price.", "", "", "A tick is the smallest price step of the pair."],
   "shadow_start": ["Tracker starting amount (USDT)", "The starting number of your trackers.", "The results tracker follows every real trade and is used to find a new high. The shadow tracker (paper equity on the Chart tab) starts from the same amount. Neither is ever used for a real order.", "", "", ""],
 
@@ -1970,7 +1968,7 @@ function pairDetailHtml(acc, sym, pc, s) {
 function renderPairs() {
   const body = document.getElementById('pairs-body');
   const acc = currentAccount();
-  document.getElementById('btn-add-pair').disabled = !acc || (acc.pairs && Object.keys(acc.pairs).length >= 3);
+  document.getElementById('btn-add-pair').disabled = !acc || (acc.pairs && Object.keys(acc.pairs).length >= 5);
   document.getElementById('pairs-title').textContent = acc ? `Pairs — ${acc.name}` : 'Pairs';
   if (!acc) { body.innerHTML = '<div class="empty">Select or create an account to manage its pairs.</div>'; return; }
   const pairs = acc.pairs || {};
@@ -2806,15 +2804,16 @@ document.getElementById('ds-live').onchange = async (ev) => {
 // ======================================================================
 const HUB_MA_TYPES = ['SMA', 'EMA', 'WMA', 'HMA', 'ALMA'];
 const HUB_SUP_MODES = ['Trend direction', 'Fresh flip within N candles'];
-const HUB_EXIT_SIGNALS = ['Both MA 1 and MA 2 curve against the trade', 'MA 2 only (the slower one) curves against the trade'];
+const HUB_EXIT_DIV = 'Divergence (RSI / MFI / CCI / MACD / Stochastic / OBV / CMO, set below)';
+const HUB_EXIT_SIGNALS = ['Both MA 1 and MA 2 curve against the trade', 'MA 2 only (the slower one) curves against the trade', HUB_EXIT_DIV];
 const HUB_EXIT_AFTERS = ['Close and wait for a fresh signal', 'Close and flip to the other side'];
 const HUB_RSI_MODES = ['Above / below level', 'Overbought / oversold', 'Divergence', 'RSI crosses its own MA'];
 const HUB_MACD_MODES = ['Histogram above / below 0', 'Zero line'];
 // COUNTER TREND decided by (owner 2026-10-25): the EMA length box, or one indicator that gives a side
-const HUB_CT_BLOCKS = ['ma1', 'ma2', 'mx', 'adx', 'rsi', 'macd', 'candle', 'st', 'bb', 'eb', 'sar'];
+const HUB_CT_BLOCKS = ['ma1', 'ma2', 'mx', 'adx', 'rsi', 'mfi', 'cci', 'stoch', 'cmo', 'obv', 'macd', 'candle', 'st', 'bb', 'eb', 'sar'];
 const HUB_CT_OWN_MODES = ['Price above / below MA', 'MA rising / falling'];
 const HUB_CT_OPTS = [['own', 'Its own moving average (below)'], ['EMA', 'EMA length (older plans only)'], ['ma1', 'MA 1'], ['ma2', 'MA 2'], ['mx', 'MA Crossover'], ['adx', 'ADX / DI'],
-                     ['rsi', 'RSI'], ['macd', 'MACD'], ['candle', 'Candle colour'], ['st', 'Structure break'], ['bb', 'Bollinger Bands (the half)'], ['eb', 'EMA Band'], ['sar', 'Parabolic SAR']];
+                     ['rsi', 'RSI'], ['mfi', 'MFI'], ['cci', 'CCI'], ['stoch', 'Stochastic'], ['cmo', 'CMO'], ['obv', 'OBV'], ['macd', 'MACD'], ['candle', 'Candle colour'], ['st', 'Structure break'], ['bb', 'Bollinger Bands (the half)'], ['eb', 'EMA Band'], ['sar', 'Parabolic SAR']];
 const hubHas = (v, x) => Array.isArray(v) && v.includes(x);
 const HUB_MA_MODES = ['Price above / below MA', 'MA rising / falling', 'Price crossed MA within N candles', 'Pullback to MA (bounce)'];
 const HUB_MX_MODES = ['MA 1 above / below MA 2', 'MA 1 crossed MA 2 within N candles'];
@@ -2862,6 +2861,7 @@ const HUB_FUNCS = [
   { id: 'hold', name: 'Hold rule', sw: 'hold_on', on: true, desc: 'Ignore a flip while the trade is in profit and ADX is below your number.' },
   { id: 'wait', name: 'Entry wait', core: true, desc: 'When to enter: candles to wait, first trade on a fresh reversal, mid-trend re-entry.' },
   { id: 'size', name: 'Entry size', core: true, desc: 'How much: the size method, the amount, leverage, counter-trend size, margin alert.' },
+  { id: 'boost', name: 'Higher leverage on a divergence', sw: 'boost_on', desc: 'The entry is decided as always. If a divergence on the same side was already proven, that entry uses a higher leverage. Any divergence indicator, each with its own timeframe.' },
   { id: 'maxloss', name: 'Max Loss per Trade', sw: 'stop_on', desc: 'The last line of defense: the most one trade may lose. You choose what it is measured on.' },
   { id: 'sl', name: 'Stop Loss', sw: 'sl_on', core: true, desc: 'Always in the menu. No SL set: the trade still opens and you get an email to set it manually. Optional time stop.' },
   { id: 'be', name: 'Break-Even', sw: 'be_on', desc: 'The Stop Loss moves to the entry price: After TP 1 / 2 / 3, and / or After ATR (100 = 1x ATR).' },
@@ -2871,7 +2871,7 @@ const HUB_FUNCS = [
   { id: 'latesig', name: 'Ignore late signals', sw: 'late_on', desc: 'No new entry when the signal candle closed more than N minutes ago (bot was down or blocked).' },
   { id: 'cooldown', name: 'Cooldown after a loss', sw: 'cooldown_on', desc: 'After a losing trade the pair waits N candles before it enters again.' },
   { id: 'losslimit', name: 'Loss limit', sw: 'loss_on', desc: 'No new entry once the closed loss of the day / week of this pair reaches your amount. Open trades are not touched.' },
-  { id: 'exitwhen', name: 'Exit when', sw: 'exit_on', desc: 'Close the trade when the moving average(s) curve against it. Then wait for a fresh signal, or flip to the other side.' },
+  { id: 'exitwhen', name: 'Exit when', sw: 'exit_on', desc: 'Close the trade when the moving average(s) curve against it, or when RSI / MFI / CCI / MACD / Stochastic / OBV / CMO show a divergence (exhaustion). Then wait for a fresh signal, or flip to the other side.' },
   { id: 'sr', name: 'Support / Resistance', sw: 'sr_on', desc: 'The range from the chart: trade the bounce, the breakout and the retest, with your own exits. Nothing is ticked for you.' },
 ];
 
@@ -2884,6 +2884,39 @@ function hubMaParams(b) {
     { k: 'alma_offset', l: 'ALMA offset', t: 'num', h: 'Used only when the type is ALMA. A higher offset follows recent price closer.', when: [`${b}_type`, v => v === 'ALMA'] },
     { k: 'alma_sigma', l: 'ALMA sigma', t: 'num', h: 'Used only when the type is ALMA. Controls how smooth the line is.', when: [`${b}_type`, v => v === 'ALMA'] },
   ];
+}
+// TIMEFRAME BOX on every indicator (owner 2026-11-18): Chart = the pair's own candles (as always), or any exchange candle size.
+const HUB_TFS = ['Chart', '1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '2d', '3d', '5d', '1w', '1M'];
+// MFI / CCI / Stochastic / CMO / OBV as normal Entry / Flip indicators (owner 2026-11-18).
+const HUB_OSC_MODES4 = k => ['Above / below level', 'Overbought / oversold', 'Divergence', k + ' crosses its own MA'];
+const HUB_OBV_MODES = ['OBV above / below its own MA', 'OBV rising / falling', 'Divergence'];
+const HUB_OSC_DEFS = [
+  { k: 'mfi',   n: 'MFI',        len: [['length', 'Length', 2, 'Candles MFI looks back (e.g. 14).']], lv: ['Level', '50'], ob: ['80', '20'], d: 'Money Flow Index (volume-weighted RSI, 0 to 100): above / below a level, overbought / oversold (back inside), divergence, or MFI crossing its own moving average.' },
+  { k: 'cci',   n: 'CCI',        len: [['length', 'Length', 2, 'Candles CCI looks back (e.g. 20).']], lv: ['Level', '0'], ob: ['100', '-100'], d: 'Commodity Channel Index: above / below a level (0), overbought / oversold (back inside, e.g. 100 / -100), divergence, or CCI crossing its own moving average.' },
+  { k: 'stoch', n: 'Stochastic', len: [['length', '%K length', 1, 'Candles the high / low range is taken over (e.g. 14).'], ['smooth', '%K smoothing', 1, 'How smooth the %K line is, in candles (e.g. 3).']], lv: ['Level', '50'], ob: ['80', '20'], d: 'Stochastic %K (0 to 100): above / below a level, overbought / oversold (back inside), divergence, or %K crossing its own moving average.' },
+  { k: 'cmo',   n: 'CMO',        len: [['length', 'Length', 2, 'Candles CMO looks back (e.g. 9).']], lv: ['Level', '0'], ob: ['50', '-50'], d: 'Chande Momentum Oscillator (-100 to +100): above / below a level (0), overbought / oversold (back inside), divergence, or CMO crossing its own moving average.' },
+  { k: 'obv',   n: 'OBV',        len: [], obv: true, d: 'On-Balance Volume (running volume total): above / below its own moving average, rising / falling, or divergence. OBV has no fixed band, so no overbought / oversold.' },
+];
+function hubOscBlock(o) {
+  const k = o.k;
+  const modes = o.obv ? HUB_OBV_MODES : HUB_OSC_MODES4(o.n);
+  const iD = o.obv ? 2 : 2, iMA = o.obv ? 0 : 3;
+  const p = [{ k: 'modes', l: 'Conditions (tick 1 or more)', t: 'multi', o: modes, dflt: [modes[0]], h: modes.join(', ') + '. Tick more than one: all ticked must agree.' }];
+  for (const n of o.len) p.push({ k: n[0], l: n[1], t: 'int', min: n[2], h: n[3] });
+  if (!o.obv) {
+    p.push({ k: 'level', l: 'Level', t: 'num', h: 'Long when ' + o.n + ' is above this level, short when below.', when: [k + '_modes', v => hubHas(v, modes[0])] });
+    p.push({ k: 'oversold', l: 'Oversold', t: 'num', h: 'Long when ' + o.n + ' crosses back UP above this (e.g. ' + o.ob[1] + ').', when: [k + '_modes', v => hubHas(v, modes[1])] });
+    p.push({ k: 'overbought', l: 'Overbought', t: 'num', h: 'Short when ' + o.n + ' crosses back DOWN below this (e.g. ' + o.ob[0] + ').', when: [k + '_modes', v => hubHas(v, modes[1])] });
+  }
+  p.push({ k: 'pivot', l: 'Pivot candles', t: 'int', min: 1, h: 'Candles left and right that confirm a low / high of ' + o.n + ' (e.g. 5). The signal comes this many candles after it.', when: [k + '_modes', v => hubHas(v, 'Divergence')] });
+  p.push({ k: 'lookback', l: 'Max look-back (candles)', t: 'int', min: 2, h: 'The two lows / highs compared may be at most this far apart (e.g. 60).', when: [k + '_modes', v => hubHas(v, 'Divergence')] });
+  p.push({ k: 'ma_type', l: o.n + ' average: Type', t: 'sel', o: HUB_MA_TYPES, h: 'The moving average of the ' + o.n + ' line. ' + HUB_MA_TYPE_HINT, when: [k + '_modes', v => hubHas(v, modes[o.obv ? 0 : 3])] });
+  p.push({ k: 'ma_length', l: o.n + ' average: Length', t: 'int', min: 1, h: 'How many candles the average of ' + o.n + ' uses.', when: [k + '_modes', v => hubHas(v, modes[o.obv ? 0 : 3])] });
+  p.push({ k: 'ma_alma_offset', l: o.n + ' average: ALMA offset', t: 'num', h: 'Used only when the average type is ALMA.', when: [k + '_ma_type', v => v === 'ALMA'] });
+  p.push({ k: 'ma_alma_sigma', l: o.n + ' average: ALMA sigma', t: 'num', h: 'Used only when the average type is ALMA.', when: [k + '_ma_type', v => v === 'ALMA'] });
+  if (o.obv) p.push({ k: 'n', l: 'N candles (signal stays on)', t: 'int', min: 0, h: 'The divergence signal stays on for that candle and N more. 0 = that candle only.', when: [k + '_modes', v => hubHas(v, 'Divergence')] });
+  else p.push({ k: 'n', l: 'N candles (signal stays on)', t: 'int', min: 0, h: 'The signal stays on for that candle and N more. 0 = that candle only.', when: [k + '_modes', v => hubHas(v, modes[1]) || hubHas(v, modes[2]) || hubHas(v, modes[3])] });
+  return { k, t: o.n, d: o.d, p };
 }
 const HUB_BLOCKS = [
   { k: 'candle', t: 'Candle colour (Heikin Ashi / Renko only)', d: 'Up candle (close above open) = long, down candle = short. Works only with Heikin Ashi or Renko.', p: [
@@ -2954,7 +2987,24 @@ const HUB_BLOCKS = [
     { k: 'limit', l: 'Maximum', t: 'num', min: 0.0001, h: 'The acceleration never goes above this. It must be the same as or larger than the step.' }] },
   { k: 'sr', t: 'Support / Resistance', d: 'A range found from the chart: a bounce at its edge, a breakout, or a retest of the broken level. Its tick boxes and numbers are in the Support / Resistance function of the menu.', p: [] },
 ];
+// the five new indicators go after RSI; every indicator (except MA Crossover, which follows MA 1 / MA 2, and Support / Resistance) gets the Timeframe box
+HUB_BLOCKS.splice(HUB_BLOCKS.findIndex(b => b.k === 'rsi') + 1, 0, ...HUB_OSC_DEFS.map(hubOscBlock));
+for (const b of HUB_BLOCKS) {
+  if (b.k === 'mx' || b.k === 'sr') continue;
+  b.p.unshift({ k: 'tf', l: 'Timeframe', t: 'sel', o: HUB_TFS, dflt: 'Chart', h: 'Chart = the pair\'s own candles. Or any other candle size: this indicator is then worked out on those candles (closed ones only).' });
+}
 
+function hubExitText(ew) {
+  if (ew.signal !== HUB_EXIT_DIV) return `${ew.signal} - ${ew.after}`;
+  const dv = ew.div || {};
+  const parts = HUB_DIV_OSC.filter(o => (dv[o.k] || {}).on).map(o => {
+    const d = dv[o.k];
+    const nums = o.nums.map(n => `${n[0]} ${d[n[0]]}`).join(', ');
+    return `${o.n} on ${d.tf || 'Chart'} candles (` + (nums ? nums + ', ' : '') + `pivot ${d.pivot}, look-back ${d.lookback}` + (d.zone ? `, earlier peak beyond ${d.ob} / ${d.os}` : '') + ')';
+  });
+  const extra = [dv.turn ? 'wait for the indicator to turn back inside its band' : null, dv.price ? 'wait for the price to break the swing between the two pivots' : null].filter(Boolean);
+  return `Divergence against the trade: ${parts.join(' ' + String(dv.combine || 'ANY').toLowerCase() + ' ')}; valid ${dv.keep} candle(s)` + (extra.length ? '; ' + extra.join(', ') : '') + ` - ${ew.after}`;
+}
 function hubTpLevel(i) {
   const n = i + 1;
   return { id: `tp${n}`, t: `TP ${n}`, d: '', f: [
@@ -2966,6 +3016,110 @@ function hubTpLevel(i) {
 
 // Boxes of each function. path = where the value lives in the plan; pair:true = a pair setting saved with the pair;
 // auto:true = the hidden on/off box of an optional function (it follows whether the function is picked).
+// EXIT WHEN -> DIVERGENCE (2026-11-17): RSI, MFI, CCI, MACD histogram, Stochastic, OBV and CMO, each with its own on/off, its own
+// timeframe (the chart's own or any candle size) and its own numbers. lv = has an upper / lower line (MACD histogram and OBV have none).
+const HUB_DIV_TFS = HUB_TFS;
+const HUB_DIV_OSC = [
+  { k: 'rsi',   n: 'RSI',            nums: [['length', 'Length', 2, 'e.g. 14']], lv: true, obEx: '70', osEx: '30' },
+  { k: 'mfi',   n: 'MFI',            nums: [['length', 'Length', 2, 'e.g. 14']], lv: true, obEx: '80', osEx: '20' },
+  { k: 'cci',   n: 'CCI',            nums: [['length', 'Length', 2, 'e.g. 20']], lv: true, obEx: '100', osEx: '-100' },
+  { k: 'macd',  n: 'MACD histogram', nums: [['fast', 'Fast length', 1, 'e.g. 12'], ['slow', 'Slow length', 1, 'e.g. 26'], ['signal', 'Signal length', 1, 'e.g. 9']], lv: false },
+  { k: 'stoch', n: 'Stochastic',     nums: [['length', '%K length', 1, 'e.g. 14'], ['smooth', '%K smoothing', 1, 'e.g. 3']], lv: true, obEx: '80', osEx: '20' },
+  { k: 'obv',   n: 'OBV',            nums: [], lv: false },
+  { k: 'cmo',   n: 'CMO',            nums: [['length', 'Length', 2, 'e.g. 9']], lv: true, obEx: '50', osEx: '-50' },
+];
+// HIGHER LEVERAGE ON A PROVEN DIVERGENCE (owner 2026-11-19): the entry is decided as always; if a divergence on the same side was already
+// proven, that entry uses this leverage instead. The amount and Max Loss stay the same.
+function hubBoostFields() {
+  const on = ['boost_on', v => v === true];
+  return [
+    { id: 'boost_on', l: 'Higher leverage on a proven divergence', t: 'bool', path: ['sizing', 'boost', 'on'], auto: true, h: 'Ticked: when an entry happens and a divergence on the same side has already been proven, that entry uses the higher leverage below. The entry itself is decided as always. The amount stays the same.' },
+    { id: 'boost_leverage', l: 'Leverage on such an entry', t: 'int', min: 1, path: ['sizing', 'boost', 'leverage'], when: on, h: 'Used instead of the normal leverage. Position = amount x leverage. Max Loss is still taken from the entry amount, so the stop sits closer to the price.' },
+    ...hubDivFields({ pre: 'bzdiv', base: ['sizing', 'boost', 'div'], sigOn: on, boost: true }),
+  ];
+}
+function hubExDivFields() { return hubDivFields({ pre: 'exdiv', base: ['exit_when', 'div'], sigOn: ['exit_signal', v => v === HUB_EXIT_DIV], boost: false }); }
+// The divergence boxes: used by Exit when (boost false) and by Higher leverage on a divergence (boost true).
+function hubDivFields(P) {
+  const sigOn = P.sigOn;
+  const out = [
+    { id: P.pre + '_combine', l: 'Ticked ones combine', t: 'sel', o: ['ANY', 'ALL'], path: [...P.base, 'combine'], when: sigOn, h: 'ANY: one ticked oscillator with a divergence is enough. ALL: every ticked one must show it.' },
+    { id: P.pre + '_keep', l: 'A divergence stays valid (chart candles)', t: 'int', min: 0, path: [...P.base, 'keep'], when: sigOn, h: P.boost ? 'A proven divergence on the same side as the entry counts when it was found this many chart candles before the entry candle (or on it). 0 = only on the entry candle. A bigger number lets older divergences count.' : 'The divergence is found a few candles after its second peak. It stays valid for that candle and this many more chart candles, so the confirmations below have time to happen. 0 = that candle only.' },
+    { id: P.pre + '_turn', l: 'Wait for the indicator to turn back inside its band', t: 'bool', path: [...P.base, 'turn'], when: sigOn, h: P.boost ? 'Long entry: only when the oscillator is back above its lower level. Short entry: back below its upper level. Does not apply to MACD histogram and OBV (no band).' : 'Long trade: exit only when the oscillator is back below its upper level. Short trade: back above its lower level. Does not apply to MACD histogram and OBV (no band).' },
+    { id: P.pre + '_price', l: 'Wait for the price to break the swing between the two pivots', t: 'bool', path: [...P.base, 'price'], when: sigOn, h: P.boost ? 'Long entry: only when a chart candle has closed above the highest high between the two lows. Short entry: closed below the lowest low between the two peaks.' : 'Long trade: exit only when a chart candle closes below the lowest low between the two peaks. Short trade: closes above the highest high between the two lows.' },
+  ];
+  for (const o of HUB_DIV_OSC) {
+    const on = P.pre + '_' + o.k + '_on', own = [on, v => v === true];
+    const id = f => P.pre + '_' + o.k + '_' + f;
+    const needLv = () => !!(hubEl(id('zone')) && hubEl(id('zone')).checked) || !!(hubEl(P.pre + '_turn') && hubEl(P.pre + '_turn').checked);
+    out.push({ id: on, l: o.n + ' divergence', t: 'bool', path: [...P.base, o.k, 'on'], when: sigOn, h: P.boost ? 'Use ' + o.n + ' to look for a proven divergence on the same side as the entry.' : 'Watch ' + o.n + ' for a divergence against the trade.' });
+    out.push({ id: id('tf'), l: o.n + ': timeframe', t: 'sel', o: HUB_DIV_TFS, path: [...P.base, o.k, 'tf'], when: own, h: 'The candle size ' + o.n + ' is read on. Chart = the pair\'s own timeframe. Anything else is that exchange candle size (it can be higher or lower than the chart).' });
+    for (const n of o.nums) out.push({ id: id(n[0]), l: o.n + ': ' + n[1].toLowerCase(), t: 'int', min: n[2], path: [...P.base, o.k, n[0]], when: own, h: n[1] + ' of ' + o.n + ' (' + n[3] + ').' });
+    out.push(
+      { id: id('pivot'), l: o.n + ': pivot candles', t: 'int', min: 1, path: [...P.base, o.k, 'pivot'], when: own, h: 'Candles on each side that confirm a peak or a low (e.g. 5). Counted in candles of the timeframe above.' },
+      { id: id('lookback'), l: o.n + ': max look-back (candles)', t: 'int', min: 2, path: [...P.base, o.k, 'lookback'], when: own, h: 'The two peaks (lows) may be this far apart at most, in candles of the timeframe above. Must be bigger than the pivot candles (e.g. 60).' },
+    );
+    if (o.lv) out.push(
+      { id: id('zone'), l: o.n + ': the earlier peak must be stretched', t: 'bool', path: [...P.base, o.k, 'zone'], when: own, h: P.boost ? 'Long entry: the first low must be at or below the lower level. Short entry: the first peak at or above the upper level.' : 'Long trade: the first peak must be at or above the upper level. Short trade: the first low at or below the lower level.' },
+      { id: id('ob'), l: o.n + ': upper level (e.g. ' + o.obEx + ')', t: 'num', path: [...P.base, o.k, 'ob'], when: own, cond: needLv, h: 'The upper line. Used by the stretched-peak tick and by the turn-back tick.' },
+      { id: id('os'), l: o.n + ': lower level (e.g. ' + o.osEx + ')', t: 'num', path: [...P.base, o.k, 'os'], when: own, cond: needLv, h: 'The lower line. Must be below the upper line.' },
+    );
+  }
+  return out;
+}
+// HELP for the Higher leverage on a divergence boxes
+(function () {
+  HELP['card.boost'] = ['HIGHER LEVERAGE ON A DIVERGENCE', 'A bigger leverage on an entry that a proven divergence agrees with.',
+    'The entry is decided as always (e.g. Supertrend colour change). If a divergence on the SAME side was already proven (bullish for a long, bearish for a short), that entry uses the leverage below instead of the normal one. Tick the oscillators you trust, each with its own timeframe.',
+    'Not ticked: nothing changes.', 'Normal leverage 3, boost 5: a long entry after a proven bullish divergence opens at 5x, any other entry at 3x.',
+    'The amount stays the same. Max Loss stays the same (taken from the entry amount), so at a higher leverage the stop sits closer to the price. A counter-trend sized entry is never boosted. Higher leverage also moves the liquidation price closer.'];
+  for (const f of hubBoostFields()) {
+    if (HELP[f.id]) continue;
+    HELP[f.id] = [f.l, f.h || '', f.id === 'boost_on' ? 'Tick to use it. Everything below is then yours to set.' : '', '', '', ''];
+  }
+})();
+(function () {
+  const H = {
+    exdiv_combine: ["Ticked ones combine", "How the ticked oscillators work together.", "ANY: one ticked oscillator showing a divergence is enough. ALL: every ticked oscillator must show one.", "ANY or ALL.", "RSI and CCI ticked, ANY: an RSI divergence alone closes the trade. ALL: RSI and CCI must both show one.", "Used only when the signal is Divergence."],
+    exdiv_keep: ["A divergence stays valid (chart candles)", "How long a divergence can wait for its confirmations.", "A divergence is found some candles after its second peak. It stays valid for that candle and this many more chart candles, so the turn-back and price confirmations have time to happen. 0 = that candle only.", "0 or more.", "3 = valid on the candle it is found and the 3 after.", "A divergence found on or before the trade's own entry candle never counts."],
+    exdiv_turn: ["Wait for the indicator to turn back inside its band", "Do not exit on the divergence alone.", "Long trade: exit only when the oscillator is back BELOW its upper level. Short trade: back ABOVE its lower level. Each oscillator uses its own two levels.", "On or off.", "RSI upper level 70: the divergence shows with RSI at 74. The exit waits until RSI is below 70.", "Does not apply to MACD histogram and OBV: they have no band. Needs the levels of the other ticked ones."],
+    exdiv_price: ["Wait for the price to break the swing between the two pivots", "Make the price confirm the turn.", "Long trade: exit only when a chart candle closes BELOW the lowest low between the two peaks. Short trade: closes ABOVE the highest high between the two lows.", "On or off.", "Peaks at 100 and 105, lowest low between them 96: the exit waits for a close below 96.", "Checked on the chart candles."],
+  };
+  for (const o of HUB_DIV_OSC) {
+    const id = f => 'exdiv_' + o.k + '_' + f;
+    H[id('on')] = [o.n + ' divergence', 'Watch ' + o.n + ' for an exhaustion divergence against the trade.', 'Long trade: the price makes a HIGHER high but ' + o.n + ' makes a LOWER high. Short trade: the price makes a LOWER low but ' + o.n + ' makes a HIGHER low. It is known only after the pivot candles to the right have closed (same as TradingView), so the signal comes that many candles after the real peak.', 'On or off. Each oscillator is on its own.', 'Price 100 then 105, ' + o.n + ' lower the second time = divergence against a long.', 'A divergence found on or before the trade\'s own entry candle never counts.' + (o.k === 'mfi' || o.k === 'obv' ? ' ' + o.n + ' uses the candle volume.' : '')];
+    H[id('tf')] = [o.n + ': timeframe', 'The candle size ' + o.n + ' is read on.', 'Chart = the pair\'s own timeframe. Or pick any exchange candle size, higher (1d, 3d, 1w) or lower (1m, 5m ...) than the chart. The signal is read at the close of each chart candle, using only candles of that size that have already closed. The pivot candles and the look-back below count in candles of THIS size.', 'Chart, 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, 2d, 3d, 5d, 1w, 1M.', 'Chart 8h, timeframe 3d: a 3-day divergence checked on every 8h close.', 'Candles are the exchange\'s own: a 3d or 1w candle can start on a different day than in TradingView. If your exchange does not have that candle size (for example 8h or 2d on one of them) it will say so.'];
+    for (const n of o.nums) H[id(n[0])] = [o.n + ': ' + n[1].toLowerCase(), n[1] + ' of ' + o.n + '.', 'A bigger number is slower and smoother.', '', n[3], ''];
+    H[id('pivot')] = [o.n + ': pivot candles', 'How many candles on each side confirm a peak or a low of ' + o.n + '.', 'A peak counts when the candles before and after it are lower (a low: higher). Bigger = fewer, stronger peaks. Counted in candles of the timeframe above.', '', "5 (TradingView's default).", 'The signal comes this many candles after the real peak.'];
+    H[id('lookback')] = [o.n + ': max look-back (candles)', 'How far apart the two peaks (lows) may be.', 'The divergence compares this peak with the one before it. If they are further apart than this, it does not count. Counted in candles of the timeframe above.', '', "60 (TradingView's default).", 'Must be bigger than the pivot candles.'];
+    if (o.lv) {
+      H[id('zone')] = [o.n + ': the earlier peak must be stretched', 'Only count a divergence that started in the stretched zone.', 'Long trade: the FIRST ' + o.n + ' peak must be at or above the upper level. Short trade: the first low must be at or below the lower level. This skips weak divergences in the middle of the range.', 'On or off.', o.n + ' upper level ' + o.obEx + ': peaks below it do not count.', 'Needs the upper and lower level.'];
+      H[id('ob')] = [o.n + ': upper level', 'The top line of the ' + o.n + ' band.', 'Used by "the earlier peak must be stretched" (long trades) and by "wait for the indicator to turn back" (long trades: back below it).', '', o.obEx, 'Must be above the lower level.'];
+      H[id('os')] = [o.n + ': lower level', 'The bottom line of the ' + o.n + ' band.', 'Used by "the earlier low must be stretched" (short trades) and by "wait for the indicator to turn back" (short trades: back above it).', '', o.osEx, 'Must be below the upper level.'];
+    }
+  }
+  Object.assign(HELP, H);
+})();
+
+// HELP for the five new indicators and the Timeframe box of every indicator (owner 2026-11-18).
+(function () {
+  for (const b of HUB_BLOCKS) {
+    if (!HELP['ind.' + b.k]) HELP['ind.' + b.k] = [b.t, b.d, 'Tick ENTRY and / or FLIP to use it. Its numbers then show below. How many ticked indicators must agree is set in Indicator Combination.', '', '', 'Every number can be changed. Timeframe: Chart = the pair\'s own candles, or any other candle size (closed candles only).'];
+    for (const f of b.p) {
+      const id = helpKey(b.k + '_' + f.k);
+      if (f.k === 'tf') {
+        HELP[id] = [(b.k === 'ma1' || b.k === 'ma2' ? 'MA' : b.t) + ': timeframe', 'The candle size ' + (b.k === 'ma1' || b.k === 'ma2' ? 'this moving average' : b.t) + ' is worked out on.',
+          'Chart = the pair\'s own timeframe (as always). Or pick any exchange candle size, higher (1d, 3d, 1w ...) as a filter / trend, or lower (1m, 5m ...) for scalping. The indicator is worked out on candles of that size and read at every chart candle close from the last candle of that size that has CLOSED. Nothing from the future is used.',
+          'Higher timeframe: the signal changes only when a candle of that size closes. Lower timeframe: it can change many times inside one chart candle, only the state at the chart candle close counts.',
+          'Chart candles 8h, Timeframe 1d: the 1d value seen at the 8h close is yesterday\'s closed 1d candle until today\'s 1d candle closes.',
+          'Candles are the exchange\'s own, so a 3d / 1w candle can start on a different day than TradingView. Candle colour on another timeframe uses that timeframe\'s candles of your chart type.'];
+      } else if (!HELP[id]) {
+        HELP[id] = [f.l, f.h || '', '', '', '', ''];
+      }
+    }
+  }
+})();
+
 const HUB_FN_CARDS = {
   pair: [
     { id: 'pair', t: 'Pair', f: [
@@ -2984,6 +3138,9 @@ const HUB_FN_CARDS = {
       { id: 'entry_min', l: 'ENTRY: how many must agree (N)', t: 'int', min: 1, path: ['entry_min'], when: ['combine_entry', v => v === 'At least N'], h: 'Example: 4 indicators ticked and N = 3 means any 3 of the 4 must give the same side.' },
       { id: 'combine_flip', l: 'Indicator Combination for FLIP', t: 'sel', o: HUB_COMBINES, path: ['combine_flip'], when: ['flip_same_entry', v => v === false], h: 'The same choice for the indicators that close the trade.' },
       { id: 'flip_min', l: 'FLIP: how many must agree (N)', t: 'int', min: 1, path: ['flip_min'], when: ['combine_flip', v => v === 'At least N'], h: 'How many of the FLIP indicators must give the same side.' }] },
+  ],
+  boost: [
+    { id: 'boost', t: 'Higher leverage on a divergence', f: hubBoostFields() },
   ],
   flipact: [
     { id: 'flipact', t: 'On a flip signal', f: [
@@ -3030,7 +3187,9 @@ const HUB_FN_CARDS = {
       { id: 'counter_total', l: 'Counter-trend running total', t: 'sel', o: [['separate', 'Separate: counter-trend trades grow on their own total'], ['shared', 'One total shared with trend trades']], dflt: 'shared', init: 'separate', path: ['sizing', 'counter', 'total'], when: ['counter_on', v => v === true], and: ['size_method', v => v === HUB_SIZE_FIXED], h: 'Fixed base only. Separate (default for a new plan): trend and counter-trend each grow on their own last total. Shared: one total for both.' },
       { id: 'counter_lev', l: 'Leverage against the trend', t: 'int', min: 1, path: ['sizing', 'counter', 'leverage'], when: ['counter_on', v => v === true], h: 'Leverage for trades against the trend.' }] },
     { id: 'marginalert', t: 'Margin alert', f: [
-      { id: 'margin_alert', l: 'Email alert on margin', t: 'bool', path: ['sizing', 'margin_alert'], h: 'Email me when an entry needs more margin than the available balance (other pairs on the account have already taken part of it).' }] },
+      { id: 'margin_alert', l: 'Email alert on margin', t: 'bool', path: ['sizing', 'margin_alert'], h: 'Email me when an entry needs more margin than the available balance (other pairs on the account have already taken part of it).' },
+      { id: 'short_enter', l: 'Enter with what is available (if the balance is short)', t: 'bool', path: ['sizing', 'short_enter'], h: 'If the available balance cannot cover the entry, open the biggest trade it allows and email me how much was missing. OFF = the full amount is sent.' },
+      { id: 'short_buffer', l: 'Balance kept free for fees (%)', t: 'num', min: 0, path: ['sizing', 'short_buffer'], when: ['short_enter', v => v === true], h: 'Empty = 2%. This share of the available balance is not used when the balance is short.' }] },
   ],
   maxloss: [
     { id: 'maxloss', t: 'Max Loss per Trade', f: [
@@ -3094,14 +3253,17 @@ const HUB_FN_CARDS = {
     { id: 'shadow', t: 'Shadow mode', f: [
       { id: 'shadow_on', l: 'Use shadow mode', t: 'bool', path: ['shadow', 'on'], auto: true },
       { id: 'shadow_trades', l: 'Number of trades off', t: 'int', min: 1, path: ['shadow', 'trades'], when: ['shadow_on', v => v === true], h: 'After a new high, this many trades are off (shadow only), then real trading goes live again.' },
+      { id: 'shadow_every_win', l: 'Start after every win (not only a new high)', t: 'bool', path: ['shadow', 'every_win'], when: ['shadow_on', v => v === true], h: 'OFF = only a win that makes a new tracker high starts the trades-off period. ON = every real win does.' },
+      { id: 'shadow_resume_now', l: 'Enter right away when the pause ends', t: 'bool', path: ['shadow', 'resume_now'], when: ['shadow_on', v => v === true], h: 'OFF = the first real entry waits one candle after the pause ends. ON = it enters on that same candle.' },
       { id: 'shadow_slip', l: 'Paper slippage (ticks)', t: 'int', min: 0, path: ['shadow', 'slippage_ticks'], when: ['shadow_on', v => v === true], h: 'Applied to the paper entry price.' },
       { id: 'shadow_start', l: 'Tracker starting amount (USDT)', t: 'num', min: 0.01, path: ['shadow', 'tracker_start'], when: ['shadow_on', v => v === true], h: 'Only for the high-watermark of your results. Never used for a real order.' }] },
   ],
   exitwhen: [
     { id: 'exitwhen', t: 'Exit when', f: [
       { id: 'exit_on', l: 'Use Exit when', t: 'bool', path: ['exit_when', 'on'], auto: true },
-      { id: 'exit_signal', l: 'Signal', t: 'sel', o: HUB_EXIT_SIGNALS, path: ['exit_when', 'signal'], when: ['exit_on', v => v === true], h: 'Both: MA 1 and MA 2 must both curve against the trade. MA 2 only: the slower one alone. Curving against = the value after the candle close is lower than the one before (long) or higher (short). It uses the MA 1 and MA 2 numbers in Indicators.' },
+      { id: 'exit_signal', l: 'Signal', t: 'sel', o: HUB_EXIT_SIGNALS, path: ['exit_when', 'signal'], when: ['exit_on', v => v === true], h: 'Both: MA 1 and MA 2 must both curve against the trade. MA 2 only: the slower one alone. Divergence: RSI / MFI / CCI / MACD / Stochastic / OBV / CMO show an exhaustion divergence (set below). Curving against = the value after the candle close is lower than the one before (long) or higher (short). The MA signals use the MA 1 and MA 2 numbers in Indicators.' },
       { id: 'exit_after', l: 'After the close', t: 'sel', o: HUB_EXIT_AFTERS, path: ['exit_when', 'after'], when: ['exit_on', v => v === true], h: 'Wait: the bot stays flat until a fresh entry signal (the same side waits until its signal has ended). Flip: the bot also opens the other side.' }] },
+    { id: 'exitdiv', t: 'Divergence (when the signal is Divergence)', f: hubExDivFields() },
   ],
   latesig: [
     { id: 'latesig', t: 'Ignore late signals', f: [
@@ -3460,8 +3622,10 @@ function hubBlockNeeded(k) {
   if (k === 'sup' && hubEl('trail_on').checked && hubValue(hubField('trail_type')) === HUB_TRAIL_SUP) return true;
   // Exit when uses the MA numbers (MA 2 always, MA 1 unless "MA 2 only")
   if (hubEl('exit_on') && hubEl('exit_on').checked) {
+    const xs = hubValue(hubField('exit_signal'));
+    if (xs === HUB_EXIT_DIV) return false;     // the divergence signal does not read the MA numbers
     if (k === 'ma2') return true;
-    if (k === 'ma1' && hubValue(hubField('exit_signal')) !== HUB_EXIT_SIGNALS[1]) return true;
+    if (k === 'ma1' && xs !== HUB_EXIT_SIGNALS[1]) return true;
   }
   return false;
 }
@@ -3798,9 +3962,13 @@ function hubSrSummary(plan) {
 // One ticked indicator in the review, with its numbers and ticked conditions (owner 2026-11-09: "that should be in the
 // summary page too"). Same wording as the server's block_text (strategy_hub.py). Any problem = just the name.
 const HUB_BLOCK_SHORT = { candle: 'Candle colour', ma1: 'MA 1', ma2: 'MA 2', mx: 'MA Crossover', adx: 'ADX / DI',
-  ci: 'Choppiness (CI)', rsi: 'RSI', macd: 'MACD', vol: 'Volume', atr: 'ATR', st: 'Structure break', bb: 'Bollinger Bands',
+  ci: 'Choppiness (CI)', rsi: 'RSI', mfi: 'MFI', cci: 'CCI', stoch: 'Stochastic', cmo: 'CMO', obv: 'OBV', macd: 'MACD', vol: 'Volume', atr: 'ATR', st: 'Structure break', bb: 'Bollinger Bands',
   sup: 'Supertrend', sr: 'Support / Resistance', eb: 'EMA Band', sar: 'Parabolic SAR' };
 function hubBlockText(plan, b) {
+  const tf = plan.ind && plan.ind[b] && plan.ind[b].tf;
+  return hubBlockTextCore(plan, b) + (tf && tf !== 'Chart' && b !== 'mx' && b !== 'sr' ? ` [on ${tf} candles]` : '');
+}
+function hubBlockTextCore(plan, b) {
   const t = HUB_BLOCK_SHORT[b] || b;
   try {
     const p = (plan.ind && plan.ind[b]) || {};
@@ -3817,6 +3985,12 @@ function hubBlockText(plan, b) {
       const parts = (p.modes || []).map(m => m === 'Above / below level' ? `above / below ${n(p.level)}`
         : m === 'Overbought / oversold' ? `oversold ${n(p.oversold)} / overbought ${n(p.overbought)}` : String(m));
       return `${t} ${n(p.length)}: ` + parts.join('; ');
+    }
+    if (['mfi', 'cci', 'stoch', 'cmo', 'obv'].includes(b)) {
+      const parts = (p.modes || []).map(m => m === 'Above / below level' ? `above / below ${n(p.level)}`
+        : m === 'Overbought / oversold' ? `oversold ${n(p.oversold)} / overbought ${n(p.overbought)}` : String(m));
+      const nums = (b === 'stoch' ? [p.length, p.smooth] : b === 'obv' ? [] : [p.length]).map(n).join(' / ');
+      return `${t}${nums ? ' ' + nums : ''}: ` + parts.join('; ');
     }
     if (b === 'macd') return join([`${t} ${n(p.fast)} / ${n(p.slow)} / ${n(p.signal)}`, modes, p.rising ? 'rising' : '']);
     if (b === 'vol') return `${t} ${n(p.length)}, x${n(p.mult)}`;
@@ -3855,7 +4029,14 @@ function hubSummaryLines(plan) {
     + (c.on ? ` · AGAINST the trend (${c.by === 'own' ? 'its own ' + c.ma_type + ' ' + c.ma_length + ': ' + (c.ma_modes || []).join(' + ') : (!c.by || c.by === 'EMA') ? 'chart close vs EMA ' + c.ema_length : (c.by === 'bb' ? 'decided by the Bollinger half' : 'decided by ' + (nm[c.by] || c.by))}): `
       + (Number(fixed ? c.base_amount : c.alloc_pct) === 0 ? 'NO counter-trend entries (size 0)' : `${sz2} at ${c.leverage}x`)
       + (fixed ? (c.total === 'separate' ? ' · own running total' : ' · one running total shared with the trend') : '') : ''));
+  if (s.boost && s.boost.on) {
+    const bd = s.boost.div || {};
+    const bo = HUB_DIV_OSC.filter(o => (bd[o.k] || {}).on).map(o => o.n + ((bd[o.k].tf && bd[o.k].tf !== 'Chart') ? ' on ' + bd[o.k].tf : '')).join(', ');
+    L.push(`Higher leverage on divergence: ${s.boost.leverage}x on an entry when a proven divergence on the same side (${bo}; ${bd.combine}) showed in the last ${bd.keep} chart candles`
+      + (bd.turn ? ' · indicator turned back inside its band' : '') + (bd.price ? ' · price broke the swing between the two pivots' : '') + ' · amount and Max Loss unchanged');
+  }
   L.push(`Email alert on margin: ${s.margin_alert ? 'ON' : 'OFF'}`);
+  L.push(`Enter with what is available if the balance is short: ${s.short_enter ? 'ON (keeps ' + (s.short_buffer === undefined || s.short_buffer === null ? 2 : s.short_buffer) + '% of the balance free)' : 'OFF'}`);
   const basis = s.stop_basis || HUB_STOP_BAL;
   L.push(`Max Loss per Trade (last line of defense): ${s.stop_on ? (basis === HUB_STOP_USD ? s.stop_usd + ' USDT' : s.stop_pct + ' ' + basis) : 'OFF'}`);
   const slp = plan.sl || {};
@@ -3882,7 +4063,7 @@ function hubSummaryLines(plan) {
   const sh = plan.shadow || {};
   L.push(sh.on ? `Shadow mode: runs all the time; ${sh.trades} trade(s) off after a new tracker high (slippage ${sh.slippage_ticks} ticks, tracker start ${sh.tracker_start})` : 'Shadow mode: OFF');
   const ew = plan.exit_when || {};
-  L.push(ew.on ? `Exit when: ${ew.signal} - ${ew.after}` : 'Exit when: OFF');
+  L.push(ew.on ? `Exit when: ${hubExitText(ew)}` : 'Exit when: OFF');
   L.push(...hubSrSummary(plan));
   L.push(plan.late_skip && plan.late_skip.on ? `Ignore late signals: no new entry if the signal candle closed more than ${plan.late_skip.minutes} minute(s) ago` : 'Ignore late signals: OFF');
   const cd = plan.cooldown || {};
@@ -4482,6 +4663,42 @@ const HUB_PRESETS = hubDeepFreeze([
     plan: {
       ind: { mx: { entry: true, modes: ['MA 1 above / below MA 2'] } },
     } },
+  { id: 'ultimate_supertrend', name: 'Ultimate Super Trend',
+    about: 'Rule choices AND the numbers. Only the timeframe is left for you.',
+    lines: [
+      'Chart type: Candles. Timeframe: left as the pair has it (you key it in, 8H).',
+      'Indicator: Supertrend only, ATR length 14, Factor 5.25, condition "Trend direction", used in ENTRY and in FLIP. It is the Main for ENTRY and for FLIP. Indicator Combination: ALL.',
+      'On a flip signal: Reverse, all three Yes (same as entry, same as hold rule, same as entry wait).',
+      'Fresh Reversal on First Trade: ticked. No Mid-Trend Re-entry: ticked.',
+      'Entry size: Fixed base amount 10,000, leverage 3, "% of last profit" empty. Candles Wait 0. Counter-trend size: not ticked.',
+      'Max Loss per Trade: picked, 15 % of entry amount.',
+      'Enter with what is available (if the balance is short): ticked.',
+      'Shadow mode: OFF (nobody can know if the next trade is a profit or a loss; the divergence exit is the better exit). You can still tick it.',
+      'Not picked: Hold rule, Trailing Stop, Break-Even, Take profit, Exit when, Cooldown after a loss, Loss limit. Stop Loss: stays in the menu as always, "Measured on" left empty = no Stop Loss (Max Loss is the stop).',
+      'Numbers: all keyed in as above. Only the timeframe is yours to key in.',
+    ],
+    plan: {
+      chart_type: 'Candles',
+      ind: { sup: { entry: true, flip: true, modes: ['Trend direction'], atr_length: 14, factor: 5.25 } },
+      entry_wait: 0,
+      main_entry: 'sup',
+      main_flip: 'sup',
+      combine_entry: 'ALL',
+      flip_rules: { same_entry: true, same_hold: true, same_wait: true },
+      wait_first_reversal: true,
+      allow_reentry: false,
+      hold: { on: false },
+      sizing: { method: 'Fixed base amount (grows with the last closed total)', base_amount: 10000, leverage: 3, counter: { on: false },
+                stop_on: true, stop_basis: '% of entry amount', stop_pct: 15, short_enter: true },
+      sl: { on: false },
+      trail: { on: false },
+      be: { on: false },
+      tp: { on: false },
+      exit_when: { on: false },
+      cooldown: { on: false },
+      loss_limit: { on: false },
+      shadow: { on: false },
+    } },
 ]);
 // PRESETS-END
 
@@ -4515,7 +4732,7 @@ function hubApplyPreset(pr) {
   }
   document.getElementById('hub_name').value = pr.name;
   hubCtSync();
-  hubMainOptions({ main_entry: '', main_flip: '' });
+  hubMainOptions({ main_entry: pr.plan.main_entry || '', main_flip: pr.plan.main_flip || '' });
   hubFreshUi();
   for (const fn of HUB_FUNCS) if (fn.sw) hubUi.picked[fn.id] = fn.core ? true : hubEl(fn.sw).checked === true;
   hubUi.stage = 'fill';

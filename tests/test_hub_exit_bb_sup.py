@@ -65,6 +65,8 @@ class TestValidation(unittest.TestCase):
 
     def test_exit_when_every_choice_is_accepted(self):
         for sg in H.EXIT_SIGNALS:
+            if sg == H.EXIT_DIV:      # the divergence signal needs its own numbers: tests/test_hub_exit_div.py
+                continue
             for af in H.EXIT_AFTERS:
                 H.validate_plan(make_plan(ind_ma1={"entry": True}, exit_when=exit_cfg(sg, af)))
 

@@ -13,6 +13,7 @@ the open real trade's Stop Loss, Trailing Stop, Max loss and take-profit levels 
 
 from __future__ import annotations
 
+import copy
 import math
 
 from app import hub_state, ledger
@@ -215,7 +216,11 @@ async def chart_data(platform: str, account_id: str, symbol: str, limit: int = 3
             for col in ["open", "high", "low", "close", "volume"]:
                 df[col] = df[col].astype(float)
             df["open_time"] = df["open_time"].astype("int64")
-            frame = hub.compute_hub(df.iloc[:-1].reset_index(drop=True), plan_for_sr)   # closed candles only
+            plan_sr = copy.deepcopy(plan_for_sr)         # S/R reads only the normal candles: no other timeframe needed here
+            for blk_ in (plan_sr.get("ind") or {}).values():
+                if isinstance(blk_, dict) and "tf" in blk_:
+                    blk_["tf"] = "Chart"
+            frame = hub.compute_hub(df.iloc[:-1].reset_index(drop=True), plan_sr)   # closed candles only
             sr_out = sr_payload(frame, hub.complete_plan(plan_for_sr), [c["t"] for c in candles])
         except Exception as e:           # a half-saved plan must not break the chart
             sr_out = {"on": True, "error": str(e)}

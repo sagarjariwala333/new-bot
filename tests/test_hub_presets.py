@@ -57,13 +57,16 @@ class TestPresets(unittest.TestCase):
     def setUpClass(cls):
         cls.presets = load_presets()
         cls.by_name = {p["name"]: p for p in cls.presets}
+        # "Ultimate Super Trend" (2026-11-16) holds the owner's NUMBERS too (checked in test_hub_ultimate_supertrend_preset.py);
+        # every other preset is rule choices only.
+        cls.rule_only = [p for p in cls.presets if p["id"] != "ultimate_supertrend"]
 
     def test_the_presets_are_there(self):
-        self.assertEqual([p["name"] for p in self.presets], ["HMA Flip", "MACD Cross", "V3", "RSI MA Cross", "EMA Cross", "MA 1 over MA 2"])
-        self.assertEqual(len({p["id"] for p in self.presets}), 6)
+        self.assertEqual([p["name"] for p in self.presets], ["HMA Flip", "MACD Cross", "V3", "RSI MA Cross", "EMA Cross", "MA 1 over MA 2", "Ultimate Super Trend"])
+        self.assertEqual(len({p["id"] for p in self.presets}), 7)
 
     def test_no_numbers_in_any_plan(self):
-        for p in self.presets:
+        for p in self.rule_only:
             for path, v in walk(p["plan"]):
                 self.assertNotIsInstance(v, (int, float)) if not isinstance(v, bool) else None
                 if isinstance(v, str):
@@ -76,7 +79,7 @@ class TestPresets(unittest.TestCase):
             self.assertFalse(keys & bad, (p["name"], keys & bad))
 
     def test_no_digits_in_the_text_lines_except_the_names_the_hub_uses(self):
-        for p in self.presets:
+        for p in self.rule_only:
             for line in p["lines"] + [p["about"], p["name"]]:
                 text = re.sub(r"MA [12]", "MA", line).replace("below 0", "below").replace("V3", "V")   # "V3" is the strategy's name   # "MA 1" / "MA 2" / the Hub's own label "Histogram above / below 0"
                 self.assertIsNone(re.search(r"\d", text), (p["name"], line))
@@ -88,7 +91,7 @@ class TestPresets(unittest.TestCase):
                   "ma1", H.RSI_MODES[3],   # RSI MA Cross (2026-11-02)
                   H.MX_MODES[1],   # EMA Cross (2026-11-03)
                   H.MX_MODES[0]}   # MA 1 over MA 2 (2026-11-03)
-        for p in self.presets:
+        for p in self.rule_only:
             for path, v in walk(p["plan"]):
                 self.assertTrue(isinstance(v, (bool, str)), (p["name"], path, v))
                 if isinstance(v, str):

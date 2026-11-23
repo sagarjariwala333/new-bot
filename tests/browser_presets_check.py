@@ -131,9 +131,9 @@ def main():
         # ---- the list; Load before a pair is chosen
         page.click("#hub-preset-open-btn"); wait(250)
         txt = page.inner_text("#preset-list")
-        check("the list shows all six presets", all(x in txt for x in ("HMA Flip", "MACD Cross", "V3", "RSI MA Cross", "EMA Cross", "MA 1 over MA 2")), txt[:200])
+        check("the list shows all seven presets", all(x in txt for x in ("HMA Flip", "MACD Cross", "V3", "RSI MA Cross", "EMA Cross", "MA 1 over MA 2", "Ultimate Super Trend")), txt[:200])
         check("each has Details and a Load button, nothing to delete or edit",
-              page.locator("#dlg-presets .preset-load").count() == 6 and page.locator("#dlg-presets details").count() == 6
+              page.locator("#dlg-presets .preset-load").count() == 7 and page.locator("#dlg-presets details").count() == 7
               and page.locator("#dlg-presets .lib-del").count() == 0 and page.locator("#dlg-presets input").count() == 0)
         page.click('#dlg-presets .lib-row[data-id="hma_flip"] .preset-load'); wait(200)
         check("Load before a pair is chosen is refused with a message",
@@ -432,12 +432,34 @@ def main():
               and sp["ind"]["ma1"]["type"] == "EMA" and sp["ind"]["ma2"]["type"] == "SMA"
               and sp["ind"]["ma1"]["length"] == 9 and sp["ind"]["ma2"]["length"] == 21 and sp["ind"]["ma1"]["entry"] is False, str(sp)[:300])
 
+        # ---- Ultimate Super Trend (owner 2026-11-16): rule choices AND numbers, only the timeframe is left; nothing left over from MA 1 over MA 2
+        load_preset("ultimate_supertrend")
+        check("Ultimate Super Trend: loaded, name set, this pair's timeframe untouched", "Ultimate Super Trend" in page.inner_text("#hub-msg")
+              and page.input_value("#hub_name") == "Ultimate Super Trend" and val("timeframe") == "1h", page.inner_text("#hub-msg"))
+        check("Ultimate Super Trend: Supertrend only, ENTRY and FLIP, Trend direction, 14 / 5.25",
+              on("sup_entry") and on("sup_flip") and ticks("sup_modes") == ["Trend direction"] and val("sup_atr_length") == "14"
+              and val("sup_factor") == "5.25" and not any(on(b + "_entry") or on(b + "_flip") for b in ("ma1", "ma2", "mx", "adx", "rsi", "macd", "candle", "ci")))
+        check("Ultimate Super Trend: Main for ENTRY and FLIP = Supertrend, Combination ALL, chart type Candles",
+              val("main_entry") == "sup" and val("main_flip") == "sup" and val("combine_entry") == "ALL" and val("chart_type") == "Candles")
+        check("Ultimate Super Trend: Fixed base 10000, leverage 3, '% of last profit' empty, Candles Wait 0, counter-trend off",
+              page.evaluate("[...document.querySelectorAll('#hub_size_method input:checked')].map(x => x.value)") == [FIXED]
+              and val("base_amount") == "10000" and val("leverage") == "3" and val("lock_pct") == "" and val("entry_wait") == "0" and not on("counter_on"))
+        check("Ultimate Super Trend: Max Loss ON, % of entry amount, 15; Enter with what is available ticked, buffer empty",
+              on("stop_on") and val("stop_basis") == "% of entry amount" and val("stop_pct") == "15" and on("short_enter") and val("short_buffer") == "")
+        check("Ultimate Super Trend: Fresh Reversal ticked, No Mid-Trend Re-entry ticked, flip boxes Yes",
+              on("wfr") and on("reentry") and on("flip_same_entry") and on("flip_same_hold") and on("flip_same_wait"))
+        check("Ultimate Super Trend: Hold rule, Trailing, BE, TP, Exit when, Cooldown, Loss limit all off; Stop Loss 'Measured on' empty (no SL)",
+              not any(on(x) for x in ("hold_on", "trail_on", "be_on", "tp_on", "exit_on", "cooldown_on", "loss_on")) and val("sl_basis") == "",
+              str([x for x in ("hold_on", "trail_on", "be_on", "tp_on", "exit_on", "cooldown_on", "loss_on") if on(x)]))
+        check("Ultimate Super Trend: Shadow is OFF (owner 2026-11-19)", not on("shadow_on"))
+        check("Ultimate Super Trend: nothing left over from MA 1 over MA 2", not on("mx_entry") and val("ma1_type") == "" and val("ma2_type") == "")
+
         # ---- a preset cannot be changed
         page.evaluate("try { HUB_PRESETS[0].plan.chart_type = 'Renko'; HUB_PRESETS.push({}); } catch (e) {}")
         check("a preset is read only (frozen) and loading did not change it",
               page.evaluate("Object.isFrozen(HUB_PRESETS) && Object.isFrozen(HUB_PRESETS[0].plan)") and page.evaluate("JSON.stringify(HUB_PRESETS)") == before)
         nums = page.evaluate("""() => { const out = []; const walk = (o, p) => { if (o && typeof o === 'object') Object.entries(o).forEach(([k, v]) => walk(v, p + '.' + k)); else if (typeof o === 'number') out.push(p); };
-                                  walk(HUB_PRESETS.map(x => x.plan), 'plan'); return out; }""")
+                                  walk(HUB_PRESETS.filter(x => x.id !== 'ultimate_supertrend').map(x => x.plan), 'plan'); return out; }""")
         check("the live preset data has no number anywhere", nums == [], str(nums))
         check("no page errors", not errors, str(errors[:3]))
         check("no 'No help text' warning", not warns, str(warns[:3]))

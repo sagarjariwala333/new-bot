@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import copy
 import math
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 
 import numpy as np
 import pandas as pd
@@ -136,7 +136,7 @@ TRAIL_MAS = ("MA 1", "MA 2")
 # How many CLOSED candles the live bot loads for the hub (indicators are fully warmed up).
 HUB_HISTORY_CANDLES = 1000
 
-BLOCKS = ("candle", "ma1", "ma2", "mx", "adx", "ci", "rsi", "macd", "vol", "atr", "st", "bb", "sup", "eb", "sar", "sr")
+BLOCKS = ("candle", "ma1", "ma2", "mx", "adx", "ci", "rsi", "mfi", "cci", "stoch", "cmo", "obv", "macd", "vol", "atr", "st", "bb", "sup", "eb", "sar", "sr")
 
 BLOCK_TITLES = {
     "candle": "Candle colour",
@@ -146,6 +146,11 @@ BLOCK_TITLES = {
     "adx": "ADX / DI",
     "ci": "Choppiness (CI)",
     "rsi": "RSI",
+    "mfi": "MFI",                  # 2026-11-18
+    "cci": "CCI",
+    "stoch": "Stochastic",
+    "cmo": "CMO",
+    "obv": "OBV",
     "macd": "MACD",
     "vol": "Volume",
     "atr": "ATR",
@@ -172,10 +177,37 @@ RSI_KEYS = {RSI_LEVEL: ("length", "level"), RSI_OBOS: ("length", "oversold", "ov
 MACD_HIST = "Histogram above / below 0"
 MACD_ZERO = "Zero line"
 MACD_MODES = (MACD_HIST, MACD_ZERO)
+# MFI / CCI / STOCHASTIC / CMO / OBV as normal Entry / Flip indicators (owner 2026-11-18). MFI, CCI, Stochastic and CMO get the same
+# four conditions as the RSI; OBV (no fixed band) gets three. Every one is OFF until ticked.
+OSC_BLOCKS = ("mfi", "cci", "stoch", "cmo", "obv")
+OSC_MACROSS = {"mfi": "MFI crosses its own MA", "cci": "CCI crosses its own MA", "stoch": "Stochastic crosses its own MA",
+               "cmo": "CMO crosses its own MA"}
+OBV_ABOVE = "OBV above / below its own MA"
+OBV_RISING = "OBV rising / falling"
+OSC_MODES = {b: (RSI_LEVEL, RSI_OBOS, RSI_DIV, OSC_MACROSS[b]) for b in OSC_MACROSS}
+OSC_MODES["obv"] = (OBV_ABOVE, OBV_RISING, RSI_DIV)
+OSC_LEN_KEYS = {"mfi": ("length",), "cci": ("length",), "stoch": ("length", "smooth"), "cmo": ("length",), "obv": ()}
+_MA_OWN_KEYS = ("ma_type", "ma_length", "ma_alma_offset", "ma_alma_sigma")
+
+
+def osc_mode_keys(b: str, mode: str) -> tuple:
+    """The number boxes a condition of MFI / CCI / Stochastic / CMO / OBV uses."""
+    base = OSC_LEN_KEYS[b]
+    if mode == RSI_LEVEL:
+        return base + ("level",)
+    if mode == RSI_OBOS:
+        return base + ("oversold", "overbought", "n")
+    if mode == RSI_DIV:
+        return base + ("pivot", "lookback", "n")
+    if mode == OBV_ABOVE:
+        return base + _MA_OWN_KEYS
+    if mode == OBV_RISING:
+        return base
+    return base + _MA_OWN_KEYS + ("n",)
 
 # CONDITION TICKS (owner 2026-10-25: "all options must be an option for me to check their boxes"): MA 1, MA 2,
 # MA Crossover, RSI and MACD take one or more conditions (plan key "modes", a list); ALL ticked must agree.
-MODE_CHOICES = {"ma1": None, "ma2": None, "mx": None, "rsi": RSI_MODES, "macd": MACD_MODES}   # MA ones set below
+MODE_CHOICES = {"ma1": None, "ma2": None, "mx": None, "rsi": RSI_MODES, "macd": MACD_MODES, **OSC_MODES}   # MA ones set below
 # COUNTER TREND decided by (owner 2026-10-25): the EMA length box (as before) or any indicator that gives a side.
 # BOLLINGER (owner 2026-11-04): long when the chart candle's LOW touches the bottom limit (short: the HIGH touches the top
 # limit) on the signal candle or within the last N candles. The middle line is a simple moving average of the chart close.
@@ -190,18 +222,41 @@ SUP_MODES = (SUP_TREND, SUP_FLIP)
 # average(s) curve against it (long: the value after the candle close is LOWER than the one before, short: HIGHER).
 EXIT_BOTH = "Both MA 1 and MA 2 curve against the trade"
 EXIT_MA2 = "MA 2 only (the slower one) curves against the trade"
-EXIT_SIGNALS = (EXIT_BOTH, EXIT_MA2)
+EXIT_DIV = "Divergence (RSI / MFI / CCI / MACD / Stochastic / OBV / CMO, set below)"          # 2026-11-17: exhaustion exit
+EXIT_SIGNALS = (EXIT_BOTH, EXIT_MA2, EXIT_DIV)
+DIV_INDS = ("rsi", "mfi", "cci", "macd", "stoch", "obv", "cmo")   # the oscillators Exit when can watch for a divergence
+DIV_NAMES = {"rsi": "RSI", "mfi": "MFI", "cci": "CCI", "macd": "MACD histogram", "stoch": "Stochastic", "obv": "OBV", "cmo": "CMO"}
+# Each oscillator's own number boxes: (key, minimum, example). "levels": has an upper / lower line (RSI 70/30 ...). MACD histogram and OBV
+# have no fixed band, so for them "the earlier peak must be stretched" and "turn back inside the band" do not apply.
+DIV_SPEC = {
+    "rsi":   {"nums": (("length", 2),), "levels": True},
+    "mfi":   {"nums": (("length", 2),), "levels": True},
+    "cci":   {"nums": (("length", 2),), "levels": True},
+    "macd":  {"nums": (("fast", 1), ("slow", 1), ("signal", 1)), "levels": False},
+    "stoch": {"nums": (("length", 1), ("smooth", 1)), "levels": True},
+    "obv":   {"nums": (), "levels": False},
+    "cmo":   {"nums": (("length", 2),), "levels": True},
+}
+# The timeframe each oscillator is read on: "Chart" = the pair's own timeframe, or any exchange candle size (the name IS the exchange interval).
+DIV_TF_MS = {"1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000, "1h": 3_600_000, "2h": 7_200_000,
+             "4h": 14_400_000, "6h": 21_600_000, "8h": 28_800_000, "12h": 43_200_000, "1d": 86_400_000, "2d": 172_800_000,
+             "3d": 259_200_000, "5d": 432_000_000, "1w": 604_800_000, "1M": 2_592_000_000}   # 1M: 30 days is only a size guess (see div_tf_close)
+DIV_TFS = ("Chart",) + tuple(DIV_TF_MS)
+DIV_COMBINES = ("ANY", "ALL")
 EXIT_WAIT = "Close and wait for a fresh signal"
 EXIT_FLIP = "Close and flip to the other side"
 EXIT_AFTERS = (EXIT_WAIT, EXIT_FLIP)
 CT_EMA = "EMA"
-CT_BLOCKS = ("ma1", "ma2", "mx", "adx", "rsi", "macd", "candle", "st", "bb", "eb", "sar")
+CT_BLOCKS = ("ma1", "ma2", "mx", "adx", "rsi", "mfi", "cci", "stoch", "cmo", "obv", "macd", "candle", "st", "bb", "eb", "sar")
 CT_OWN = "own"        # its own moving average (any type / length / simple condition), not tied to a ticked indicator
 CT_OWN_MODES = ("Price above / below MA", "MA rising / falling")
 CT_SOURCES = (CT_EMA, CT_OWN) + CT_BLOCKS
 
 _MA = {"type": ("s", MA_TYPES), "length": ("i", 1), "modes": ("m", MA_MODES), "n": ("i", 0),
        "alma_offset": ("f", None), "alma_sigma": ("f", 0.0001)}
+_OSC_COMMON = {"level": ("f", None), "oversold": ("f", None), "overbought": ("f", None), "n": ("i", 0), "pivot": ("i", 1),
+               "lookback": ("i", 2), "ma_type": ("s", MA_TYPES), "ma_length": ("i", 1), "ma_alma_offset": ("f", None),
+               "ma_alma_sigma": ("f", 0.0001)}
 SCHEMA: dict[str, dict] = {
     "candle": {"strong": ("b", None), "prev_opposite": ("b", None)},
     "ma1": dict(_MA),
@@ -214,6 +269,11 @@ SCHEMA: dict[str, dict] = {
             "overbought": ("f", 0.0), "n": ("i", 0), "pivot": ("i", 1), "lookback": ("i", 2),
             "ma_type": ("s", MA_TYPES), "ma_length": ("i", 1), "ma_alma_offset": ("f", None),
             "ma_alma_sigma": ("f", 0.0001)},
+    "mfi": {"modes": ("m", OSC_MODES["mfi"]), "length": ("i", 2), **_OSC_COMMON},
+    "cci": {"modes": ("m", OSC_MODES["cci"]), "length": ("i", 2), **_OSC_COMMON},
+    "stoch": {"modes": ("m", OSC_MODES["stoch"]), "length": ("i", 1), "smooth": ("i", 1), **_OSC_COMMON},
+    "cmo": {"modes": ("m", OSC_MODES["cmo"]), "length": ("i", 2), **_OSC_COMMON},
+    "obv": {"modes": ("m", OSC_MODES["obv"]), **_OSC_COMMON},
     "macd": {"modes": ("m", MACD_MODES), "fast": ("i", 1), "slow": ("i", 2), "signal": ("i", 1), "rising": ("b", None)},
     "vol": {"length": ("i", 1), "mult": ("f", 0.1), "exclude_current": ("b", None)},
     "atr": {"length": ("i", 1), "avg_length": ("i", 1), "mult": ("f", 0.1), "rising": ("b", None)},
@@ -231,10 +291,15 @@ SCHEMA: dict[str, dict] = {
     "sar": {"step": ("f", 0.0001), "limit": ("f", 0.0001)},
     "sr": {},     # no numbers here: the Support / Resistance settings live in plan["sr"] (see SR_FIELDS)
 }
+# TIMEFRAME BOX on every indicator (owner 2026-11-18): "Chart" = the pair's own candles (as always); or any exchange candle size,
+# then the indicator is worked out on those candles (closed ones only). MA Crossover follows MA 1 and MA 2; Support / Resistance has its own settings.
+TF_BLOCKS = tuple(b for b in BLOCKS if b not in ("mx", "sr"))
+for _b in TF_BLOCKS:
+    SCHEMA[_b]["tf"] = ("s", DIV_TFS)
 
 
 # Option ticks added 2026-10-25: an older plan does not have them, they are then OFF (as before).
-OPTIONAL_KEYS = {("candle", "strong"), ("candle", "prev_opposite"), ("adx", "rising"), ("atr", "rising"),
+OPTIONAL_KEYS = {*((b_, "tf") for b_ in TF_BLOCKS), ("candle", "strong"), ("candle", "prev_opposite"), ("adx", "rising"), ("atr", "rising"),
                  ("vol", "exclude_current"), ("eb", "long_low"), ("eb", "long_high"), ("eb", "short_high"),
                  ("eb", "short_low")}
 SL_MISSING_MSG = "No SL was set for this trade. Set it manually."          # owner 2026-10-26: the trade still opens
@@ -282,6 +347,32 @@ class PlanError(ValueError):
     """The strategy plan is incomplete or invalid. The pair cannot start."""
 
 
+def _exit_when_text(ew: dict) -> str:
+    """One review line for Exit when."""
+    if ew.get("signal") != EXIT_DIV:
+        return f"{ew.get('signal')}. {ew.get('after')}"
+    dv = ew.get("div") or {}
+    parts = []
+    for name in DIV_INDS:
+        d = dv.get(name) or {}
+        if d.get("on"):
+            nums = ", ".join(f"{k} {_num(d.get(k))}" for k, _m in DIV_SPEC[name]["nums"])
+            t = f"{DIV_NAMES[name]} on {d.get('tf') or 'Chart'} candles (" + (nums + ", " if nums else "") + f"pivot {_num(d.get('pivot'))}, look-back {_num(d.get('lookback'))}"
+            if d.get("zone"):
+                t += f", peak must be beyond {_num(d.get('ob'))} / {_num(d.get('os'))}"
+            parts.append(t + ")")
+    extra = []
+    if dv.get("turn"):
+        extra.append("wait for the indicator to turn back inside its band")
+    if dv.get("price"):
+        extra.append("wait for the price to break the swing between the two pivots")
+    txt = "Divergence against the trade: " + (" " + str(dv.get("combine", "ANY")).lower() + " ").join(parts)
+    txt += f"; a divergence stays valid {_num(dv.get('keep'))} candle(s)"
+    if extra:
+        txt += "; " + ", ".join(extra)
+    return f"{txt}. {ew.get('after')}"
+
+
 def _need(d: dict, key: str, where: str):
     if not isinstance(d, dict) or key not in d or d[key] is None:
         raise PlanError(f"{where}: '{key}' is not set")
@@ -327,7 +418,7 @@ def upgrade_plan(plan: dict) -> dict:
         p["flip_rules"] = {"same_entry": False, "same_hold": True, "same_wait": True}   # an older plan
     ind = p.get("ind")
     if isinstance(ind, dict):
-        for nb in ("bb", "sup", "eb", "sar", "sr"):    # 2026-11-04/05: Bollinger, Supertrend, Support / Resistance; a plan saved before has them OFF
+        for nb in ("bb", "sup", "eb", "sar", "sr", *OSC_BLOCKS):    # 2026-11-04/05: Bollinger, Supertrend, Support / Resistance; a plan saved before has them OFF
             if nb not in ind:
                 ind[nb] = {"entry": False, "flip": False}
     if isinstance(ind, dict):     # 2026-10-25: RSI / MACD got a Condition; an older plan keeps what it did
@@ -428,11 +519,59 @@ def _needed_blocks(plan: dict) -> set:
     if tr.get("on") and tr.get("type") == TRAIL_SUP:
         need.add("sup")                            # the Supertrend line the Trailing Stop follows
     ew = exit_cfg(plan)
-    if ew:
+    if ew and ew.get("signal") != EXIT_DIV:
         need.add("ma2")                            # Exit when reads the MA numbers
         if ew.get("signal") != EXIT_MA2:
             need.add("ma1")
     return need
+
+
+def _validate_exit_div(ew: dict) -> None:
+    """Exit when -> Divergence: at least one oscillator ticked; every ticked one needs its own numbers."""
+    _validate_div_cfg(ew.get("div"), "Exit when")
+
+
+def _validate_div_cfg(dv, lab: str) -> None:
+    """The divergence settings shared by Exit when and the higher-leverage-on-divergence box (lab = the name used in messages)."""
+    if not isinstance(dv, dict):
+        raise PlanError(f"{lab} (divergence): wrong format")
+    _check(_need(dv, "combine", f"{lab.lower()} (divergence)"), "s", DIV_COMBINES, f"{lab} (divergence): how the ticked ones combine")
+    _check(_need(dv, "keep", f"{lab.lower()} (divergence)"), "i", 0, f"{lab} (divergence): candles a divergence stays valid")
+    for k in ("turn", "price"):
+        if k in dv and dv[k] is not None:
+            _check(dv[k], "b", None, f"{lab} (divergence): {k}")
+    ticked = []
+    for name in DIV_INDS:
+        if name not in dv and name not in ("rsi", "mfi", "cci"):
+            continue                                  # a plan saved before this oscillator existed: it is off
+        d = dv.get(name)
+        if not isinstance(d, dict):
+            raise PlanError(f"{lab} (divergence): {DIV_NAMES[name]} has the wrong format")
+        _check(_need(d, "on", f"{lab.lower()} ({DIV_NAMES[name]})"), "b", None, f"{lab}: {DIV_NAMES[name]} switch")
+        if not d["on"]:
+            continue
+        ticked.append(name)
+        w = f"{lab}: {DIV_NAMES[name]} divergence"
+        spec = DIV_SPEC[name]
+        for key, mn in spec["nums"]:
+            _check(_need(d, key, w), "i", mn, f"{w}: {key}")
+        if name == "macd" and d["fast"] >= d["slow"]:
+            raise PlanError(f"{w}: the fast length must be smaller than the slow length")
+        _check(_need(d, "pivot", w), "i", 1, f"{w}: pivot candles")
+        _check(_need(d, "lookback", w), "i", 2, f"{w}: max look-back")
+        if d["lookback"] <= d["pivot"]:
+            raise PlanError(f"{w}: Max look-back must be bigger than Pivot candles")
+        if d.get("tf") is not None:
+            _check(d["tf"], "s", DIV_TFS, f"{w}: timeframe")
+        if d.get("zone") is not None:
+            _check(d["zone"], "b", None, f"{w}: peak in the zone")
+        if spec["levels"] and (d.get("zone") or dv.get("turn")):
+            _check(_need(d, "ob", w), "f", None, f"{w}: upper level")
+            _check(_need(d, "os", w), "f", None, f"{w}: lower level")
+            if d["ob"] <= d["os"]:
+                raise PlanError(f"{w}: the upper level must be above the lower level")
+    if not ticked:
+        raise PlanError(f"{lab} (divergence): tick at least one oscillator")
 
 
 def _validate_sr(plan: dict, ind: dict) -> None:
@@ -604,13 +743,15 @@ def validate_plan(plan: dict) -> dict:
             if b == "sup" and key == "n" and not (gives_signal and SUP_FLIP in modes):
                 continue
             # the RSI average's ALMA numbers only matter when that average is an ALMA
-            if b == "rsi" and key in ("ma_alma_offset", "ma_alma_sigma") and blk.get("ma_type") != "ALMA":
+            if b in ("rsi", *OSC_BLOCKS) and key in ("ma_alma_offset", "ma_alma_sigma") and blk.get("ma_type") != "ALMA":
                 continue
             if (b, key) in OPTIONAL_KEYS and blk.get(key) is None:
                 continue
             if kind == "m" and not blk.get(key):
                 raise PlanError(f"{title}: tick at least one condition")
-            if b == "rsi" and key != "modes" and not any(key in RSI_KEYS.get(m, ()) for m in modes):
+            if b == "rsi" and key not in ("modes", "tf") and not any(key in RSI_KEYS.get(m, ()) for m in modes):
+                continue
+            if b in OSC_BLOCKS and key not in ("modes", "tf") and not any(key in osc_mode_keys(b, m) for m in modes):
                 continue
             _check(_need(blk, key, title), kind, arg, f"{title} / {key}")
     if "eb" in needed and not any(ind["eb"].get(k) for k in ("long_low", "long_high", "short_high", "short_low")):
@@ -625,6 +766,14 @@ def validate_plan(plan: dict) -> dict:
             raise PlanError("RSI overbought / oversold: needs 0 < Oversold < Overbought < 100 (e.g. 30 and 70)")
     if "rsi" in needed and RSI_DIV in ind["rsi"]["modes"] and ind["rsi"]["lookback"] <= ind["rsi"]["pivot"]:
         raise PlanError("RSI divergence: Max look-back must be bigger than Pivot candles")
+    for ob_ in OSC_BLOCKS:
+        if ob_ not in needed:
+            continue
+        o_, t_ = ind[ob_], BLOCK_TITLES[ob_]
+        if RSI_OBOS in o_["modes"] and not o_["oversold"] < o_["overbought"]:
+            raise PlanError(f"{t_} overbought / oversold: Oversold must be lower than Overbought")
+        if RSI_DIV in o_["modes"] and o_["lookback"] <= o_["pivot"]:
+            raise PlanError(f"{t_} divergence: Max look-back must be bigger than Pivot candles")
 
     sz = _need(plan, "sizing", "plan")
     method = sz.get("method", SIZE_ALLOC)
@@ -648,6 +797,14 @@ def validate_plan(plan: dict) -> dict:
             raise PlanError("sizing: % of last profit added to the next entry must be 100 or less")
     if sz.get("margin_alert") is not None:
         _check(sz["margin_alert"], "b", None, "email alert on margin")
+    # Enter with what is available (owner 2026-11-16, optional, OFF when absent): when the available balance is less than the
+    # margin an entry needs, open the biggest trade the balance allows (minus a small part kept free for fees) and email the shortfall.
+    if sz.get("short_enter") is not None:
+        _check(sz["short_enter"], "b", None, "enter with what is available when the balance is short")
+    if sz.get("short_buffer") is not None:
+        _check(sz["short_buffer"], "f", 0.0, "balance kept free for fees (%)")
+        if sz["short_buffer"] > 50:
+            raise PlanError("sizing: the balance kept free for fees must be 50% or less")
     _check(_need(sz, "stop_on", "sizing"), "b", None, "max loss switch")
     if sz["stop_on"]:
         basis = sz.get("stop_basis", STOP_BAL)
@@ -698,6 +855,19 @@ def validate_plan(plan: dict) -> dict:
             if ct["leverage"] > 125:
                 raise PlanError("counter-trend sizing: leverage must be 125 or less")
 
+    # Higher leverage on a proven divergence (owner 2026-11-19; optional box, absent = OFF): the entry is decided as always; when a
+    # divergence on the same side has already been proven, this entry uses this leverage instead.
+    bz = sz.get("boost")
+    if bz is not None:
+        if not isinstance(bz, dict):
+            raise PlanError("higher leverage on divergence: wrong format")
+        _check(_need(bz, "on", "higher leverage on divergence"), "b", None, "higher leverage on divergence switch")
+        if bz["on"]:
+            _check(_need(bz, "leverage", "higher leverage on divergence"), "i", 1, "higher leverage on divergence: leverage")
+            if bz["leverage"] > 125:
+                raise PlanError("higher leverage on divergence: leverage must be 125 or less")
+            _validate_div_cfg(bz.get("div"), "Higher leverage")
+
     # Shadow mode (optional box; absent = OFF): paper trades after a new tracker high.
     sh = plan.get("shadow")
     if sh is not None:
@@ -708,6 +878,13 @@ def validate_plan(plan: dict) -> dict:
                 raise PlanError("shadow mode: number of paper trades must be 100 or less")
             _check(_need(sh, "slippage_ticks", "shadow mode"), "i", 0, "shadow mode paper slippage ticks")
             _check(_need(sh, "tracker_start", "shadow mode"), "f", 0.000001, "shadow mode tracker starting amount")
+            # Optional (owner 2026-11-16): start the trades-off period after EVERY real winning trade, not only a win that makes a new tracker high.
+            if sh.get("every_win") is not None:
+                _check(sh["every_win"], "b", None, "shadow mode: start after every win")
+            # Optional (owner 2026-11-16): when the trades-off period ends on a flip, enter for real on that SAME candle
+            # (normally the first real entry waits one candle - Pine resumeBlockBar).
+            if sh.get("resume_now") is not None:
+                _check(sh["resume_now"], "b", None, "shadow mode: enter right away when the pause ends")
 
     tp = _need(plan, "tp", "plan")
     _check(_need(tp, "on", "take profit"), "b", None, "take profit switch")
@@ -826,6 +1003,8 @@ def validate_plan(plan: dict) -> dict:
         if ew["on"]:
             _check(_need(ew, "signal", "exit when"), "s", EXIT_SIGNALS, "Exit when: signal")
             _check(_need(ew, "after", "exit when"), "s", EXIT_AFTERS, "Exit when: after the close")
+            if ew["signal"] == EXIT_DIV:
+                _validate_exit_div(ew)
 
     # LATE SIGNAL (optional, 2026-11-11): do not enter on a signal whose candle closed more than N minutes ago
     # (the bot was down / blocked). A plan without the key = OFF. Only NEW entries; closes are never skipped.
@@ -890,6 +1069,7 @@ _INERT_BLOCK = {
     "ma_type": "SMA", "ma_length": 14, "ma_alma_offset": 0.85, "ma_alma_sigma": 6.0,
     "prev_opposite": False, "atr_length": 10, "factor": 3.0,
     "long_low": False, "long_high": False, "short_high": False, "short_low": False, "step": 0.02, "limit": 0.2,
+    "smooth": 3, "tf": "Chart",
 }
 
 
@@ -919,8 +1099,17 @@ def complete_plan(plan: dict) -> dict:
     out["sizing"].setdefault("stop_basis", STOP_BAL)
     out["sizing"].setdefault("stop_usd", 1.0)           # inert unless the basis is the fixed $ amount
     out["sizing"].setdefault("counter", {"on": False})
+    out["sizing"].setdefault("boost", {"on": False})        # higher leverage on a proven divergence (2026-11-19)
+    bzd = out["sizing"]["boost"].setdefault("div", {}) if isinstance(out["sizing"]["boost"], dict) else {}
+    out["sizing"]["boost"].setdefault("leverage", None)    # inert while OFF; no default number, the owner keys it in (2026-11-21)
+    bzd.setdefault("combine", "ANY")
+    bzd.setdefault("keep", 0)
+    for nm_ in DIV_INDS:
+        bzd.setdefault(nm_, {"on": False})
     out["sizing"].setdefault("lock_pct", None)          # None = lock-out OFF (the whole total is carried)
     out["sizing"].setdefault("margin_alert", False)
+    out["sizing"].setdefault("short_enter", False)      # OFF = an entry the balance cannot cover is sent in full (the exchange may refuse it)
+    out["sizing"].setdefault("short_buffer", None)      # None = the default SHORT_BUFFER_DEFAULT; inert unless short_enter is ON
     out.setdefault("entry_min", 1)                      # inert unless the combine is "At least N"
     out.setdefault("combine_flip", COMBINE_ALL)        # inert when the flip is Same as entry
     out.setdefault("flip_min", 1)
@@ -941,10 +1130,23 @@ def complete_plan(plan: dict) -> dict:
     out.setdefault("exit_when", {"on": False})
     out["exit_when"].setdefault("signal", EXIT_BOTH)         # inert while Exit when is off
     out["exit_when"].setdefault("after", EXIT_WAIT)
+    dv = out["exit_when"].setdefault("div", {})              # inert unless the signal is the divergence one
+    dv.setdefault("combine", "ANY")
+    dv.setdefault("turn", False)
+    dv.setdefault("price", False)
+    for name in DIV_INDS:
+        di = dv.setdefault(name, {"on": False})
+        if isinstance(di, dict):
+            di.setdefault("on", False)
+            if di["on"]:
+                di.setdefault("zone", False)
+                di.setdefault("tf", "Chart")
     out.setdefault("shadow", {"on": False})
     out["shadow"].setdefault("trades", 3)
     out["shadow"].setdefault("slippage_ticks", 0)
     out["shadow"].setdefault("tracker_start", 1.0)
+    out["shadow"].setdefault("resume_now", False)      # OFF = the first real entry waits one candle after the pause ends on a flip
+    out["shadow"].setdefault("every_win", False)       # OFF = only a win that makes a new tracker high starts the trades-off period
     tp = out["tp"]
     tp.setdefault("basis", BASIS_ATR)
     tp.setdefault("atr_length", 14)
@@ -1016,6 +1218,15 @@ def _modes(p: dict) -> str:
 
 
 def block_text(plan: dict, b: str) -> str:
+    """One ticked indicator in short words, with its numbers and ticked conditions; ' on <size> candles' when it has its own timeframe."""
+    txt = _block_text_core(plan, b)
+    tf = ((plan.get("ind") or {}).get(b) or {}).get("tf")
+    if tf and tf != "Chart" and b in TF_BLOCKS:
+        txt += f" [on {tf} candles]"
+    return txt
+
+
+def _block_text_core(plan: dict, b: str) -> str:
     """One ticked indicator in short words, with its numbers and ticked conditions (the owner's own words)."""
     p = (plan.get("ind") or {}).get(b) or {}
     t = BLOCK_TITLES.get(b, b)
@@ -1032,6 +1243,17 @@ def block_text(plan: dict, b: str) -> str:
                     + (", DI must agree" if g("di_required") else "") + (", rising" if g("rising") else ""))
         if b == "ci":
             return f"{t} {_num(g('length'))}, below {_num(g('max'))}"
+        if b in OSC_BLOCKS:
+            parts = []
+            for m in (p.get("modes") or []):
+                if m == RSI_LEVEL:
+                    parts.append(f"above / below {_num(g('level'))}")
+                elif m == RSI_OBOS:
+                    parts.append(f"oversold {_num(g('oversold'))} / overbought {_num(g('overbought'))}")
+                else:
+                    parts.append(str(m))
+            nums = " / ".join(_num(g(k)) for k in OSC_LEN_KEYS[b])
+            return f"{t}{(' ' + nums) if nums else ''}: " + "; ".join(parts)
         if b == "rsi":
             parts = []
             for m in (p.get("modes") or []):
@@ -1113,6 +1335,9 @@ def plan_lines(plan: dict) -> list:
     else:
         txt = f"{_num(sz.get('alloc_pct'))}% of balance"
     out.append(["Size", f"{txt}, leverage {_num(sz.get('leverage'))}" + (", margin alert on" if sz.get("margin_alert") else "")])
+    if sz.get("short_enter"):
+        _sb = SHORT_BUFFER_DEFAULT if sz.get("short_buffer") is None else sz.get("short_buffer")
+        out.append(["Balance short", f"enter with what is available (keeps {_num(_sb)}% of the balance free for fees) and email the shortfall"])
     ct = sz.get("counter") or {}
     if ct.get("on"):
         if ct.get("by") == CT_OWN:
@@ -1128,6 +1353,16 @@ def plan_lines(plan: dict) -> list:
                         else ", one running total shared with trend trades") if sz.get("method") == SIZE_FIXED else "")])
     else:
         off.append("Counter-trend")
+    bz = sz.get("boost") or {}
+    if bz.get("on"):
+        bdv = bz.get("div") or {}
+        osc_ = ", ".join(DIV_NAMES[nm] + (f" on {bdv[nm]['tf']}" if (bdv.get(nm) or {}).get("tf") not in (None, "Chart") else "")
+                         for nm in DIV_INDS if (bdv.get(nm) or {}).get("on"))
+        out.append(["Higher leverage on divergence",
+                    f"leverage {_num(bz.get('leverage'))} on an entry when a proven divergence on the same side ({osc_}; {bdv.get('combine')}) "
+                    f"showed in the last {_num(bdv.get('keep'))} chart candles"
+                    + (", indicator turned back inside its band" if bdv.get("turn") else "")
+                    + (", price broke the swing between the two pivots" if bdv.get("price") else "")])
     if sz.get("stop_on"):
         if sz.get("stop_basis") == STOP_USD:
             out.append(["Max Loss", f"{_num(sz.get('stop_usd'))} USDT per trade"])
@@ -1200,12 +1435,13 @@ def plan_lines(plan: dict) -> list:
         off.append("Hold rule")
     ew = plan.get("exit_when") or {}
     if ew.get("on"):
-        out.append(["Exit when", f"{ew.get('signal')}. {ew.get('after')}"])
+        out.append(["Exit when", _exit_when_text(ew)])
     else:
         off.append("Exit when")
     sh = plan.get("shadow") or {}
     if sh.get("on"):
-        out.append(["Shadow", f"{_num(sh.get('trades'))} paper trades after a new tracker high"])
+        out.append(["Shadow", f"{_num(sh.get('trades'))} paper trades after " + ("every winning trade" if sh.get("every_win") else "a new tracker high")
+                    + ("; enters right away when the pause ends" if sh.get("resume_now") else "")])
     else:
         off.append("Shadow")
     cd = plan.get("cooldown") or {}
@@ -1556,6 +1792,231 @@ def rsi_divergence(low, high, rsi, k: int, lookback: int):
     return bull, bear
 
 
+def pine_mfi(h, l, c, vol, length: int) -> np.ndarray:
+    """Money Flow Index, the way Pine's ta.mfi works (source hlc3): 100 - 100 / (1 + upper / lower) where upper / lower
+    are the sums over `length` candles of volume x source on the candles the source went up / down. (Pine quirk kept:
+    where the change is na, the first candle, the source counts on both sides.) NaN until a full window."""
+    h, l, c, v = _to_np(h), _to_np(l), _to_np(c), _to_np(vol)
+    src = (h + l + c) / 3.0
+    ch = src - _shift(src)
+    up_t = v * np.where(ch <= 0.0, 0.0, src)
+    dn_t = v * np.where(ch >= 0.0, 0.0, src)
+    upper = pd.Series(up_t).rolling(int(length)).sum().to_numpy(dtype=float)
+    lower = pd.Series(dn_t).rolling(int(length)).sum().to_numpy(dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out = 100.0 - 100.0 / (1.0 + upper / lower)
+    out = np.where(np.isnan(upper) | np.isnan(lower), np.nan, out)
+    out = np.where((lower == 0) & (upper > 0), 100.0, out)      # nothing went down: 100
+    return out
+
+
+def pine_cci(h, l, c, length: int) -> np.ndarray:
+    """Commodity Channel Index, the way Pine's ta.cci works (source hlc3): (src - sma) / (0.015 x dev) where dev is the
+    mean absolute deviation of the window around its own mean. NaN until a full window; 0 when the window is flat."""
+    h, l, c = _to_np(h), _to_np(l), _to_np(c)
+    src = (h + l + c) / 3.0
+    n, ln = len(src), int(length)
+    out = np.full(n, np.nan)
+    for i in range(ln - 1, n):
+        w = src[i - ln + 1:i + 1]
+        if np.isnan(w).any():
+            continue
+        m = w.mean()
+        dev = np.abs(w - m).mean()
+        out[i] = 0.0 if dev == 0 else (src[i] - m) / (0.015 * dev)
+    return out
+
+
+def pine_stoch(h, l, c, length: int, smooth: int) -> np.ndarray:
+    """Stochastic %K, smoothed: 100 x (close - lowest low) / (highest high - lowest low) over `length` candles, then the simple
+    average of the last `smooth` values (TradingView's Stochastic: %K length, %K smoothing). NaN until a full window;
+    NaN where the high and low of the window are equal."""
+    h, l, c = _to_np(h), _to_np(l), _to_np(c)
+    hh = rolling_highest(h, int(length))
+    ll = rolling_lowest(l, int(length))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        raw = 100.0 * (c - ll) / (hh - ll)
+    raw = np.where(np.isfinite(raw), raw, np.nan)
+    if int(smooth) <= 1:
+        return raw
+    return pd.Series(raw).rolling(int(smooth)).mean().to_numpy(dtype=float)
+
+
+def pine_obv(c, vol) -> np.ndarray:
+    """On Balance Volume (Pine ta.obv): running total of volume x sign of the close change (the first candle adds 0)."""
+    c, v = _to_np(c), _to_np(vol)
+    ch = c - _shift(c)
+    sg = np.where(np.isnan(ch), 0.0, np.sign(ch))
+    return np.cumsum(sg * v)
+
+
+def pine_cmo(src, length: int) -> np.ndarray:
+    """Chande Momentum Oscillator (Pine ta.cmo): 100 x (sum of the up moves - sum of the down moves) / (sum of both) over `length`
+    changes. Range -100 to +100. NaN until a full window (the first candle has no change)."""
+    s_ = _to_np(src)
+    ch = s_ - _shift(s_)
+    up = np.where(np.isnan(ch), np.nan, np.maximum(ch, 0.0))
+    dn = np.where(np.isnan(ch), np.nan, np.maximum(-ch, 0.0))
+    su = pd.Series(up).rolling(int(length)).sum().to_numpy(dtype=float)
+    sd = pd.Series(dn).rolling(int(length)).sum().to_numpy(dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out = 100.0 * (su - sd) / (su + sd)
+    return np.where(np.isfinite(out), out, np.nan)
+
+
+def div_oscillator(name: str, d: dict, h, l, c, vol) -> np.ndarray:
+    """The oscillator series for one Exit-when divergence block, worked out on the candles given."""
+    if name == "rsi":
+        return pine_rsi(c, int(d["length"]))
+    if name == "mfi":
+        return pine_mfi(h, l, c, vol, int(d["length"]))
+    if name == "cci":
+        return pine_cci(h, l, c, int(d["length"]))
+    if name == "macd":
+        return pine_macd(c, int(d["fast"]), int(d["slow"]), int(d["signal"]))[2]
+    if name == "stoch":
+        return pine_stoch(h, l, c, int(d["length"]), int(d["smooth"]))
+    if name == "obv":
+        return pine_obv(c, vol)
+    return pine_cmo(c, int(d["length"]))
+
+
+class HtfMissing(ValueError):
+    """A divergence oscillator reads another timeframe but those candles were not given."""
+
+
+def div_tf_close(tf: str, open_times) -> np.ndarray:
+    """When each candle of this size closes. A month (1M) is a real calendar month; every other size has a fixed length."""
+    o = np.asarray(open_times, dtype="int64")
+    if tf == "1M":
+        idx = pd.to_datetime(o, unit="ms") + pd.DateOffset(months=1)          # naive = UTC
+        return idx.to_numpy().astype("datetime64[ms]").astype("int64")
+    return o + int(DIV_TF_MS[tf])
+
+
+def div_tfs_needed(plan: dict) -> list:
+    """The candle sizes (other than the chart's own) the ticked Exit-when divergence oscillators read."""
+    out = []
+    if plan and isinstance(plan.get("ind"), dict):           # indicators that sit on another timeframe (owner 2026-11-18)
+        try:
+            up_ = upgrade_plan(plan)
+            used_ = _needed_blocks(up_)
+        except Exception:
+            used_ = set()
+        for b_ in TF_BLOCKS:
+            tf = (up_["ind"].get(b_) or {}).get("tf") if used_ else None
+            if b_ in used_ and tf and tf != "Chart" and tf in DIV_TF_MS and tf not in out:
+                out.append(tf)
+    bz_ = ((plan or {}).get("sizing") or {}).get("boost") or {}
+    if bz_.get("on"):                                         # the leverage boost reads its own oscillators' timeframes
+        for nm_ in DIV_INDS:
+            d_ = (bz_.get("div") or {}).get(nm_) or {}
+            tf = d_.get("tf") or "Chart"
+            if d_.get("on") and tf != "Chart" and tf in DIV_TF_MS and tf not in out:
+                out.append(tf)
+    ew = exit_cfg(plan) if plan else None
+    if not ew or ew.get("signal") != EXIT_DIV:
+        return out
+    dv = ew.get("div") or {}
+    for name in DIV_INDS:
+        d = dv.get(name) or {}
+        tf = d.get("tf") or "Chart"
+        if d.get("on") and tf != "Chart" and tf not in out:
+            out.append(tf)
+    return out
+
+
+def htf_to_chart(sig, lvl, osc, htf_times, tf_ms: int, chart_times, chart_ms: int, close_times=None):
+    """Bring a signal worked out on ANOTHER timeframe's candles onto the chart candles. At the close of chart candle i the other
+    timeframe's candles that have CLOSED by then are known. A signal on one of them counts ONCE, on the first chart candle that
+    can see it (when several came in one step, the latest one). Returns (sig_c, lvl_c, osc_c): the signal, the swing level of the
+    divergence and the oscillator value on the last closed candle, per chart candle (NaN / False before that timeframe's history starts)."""
+    htf_times = np.asarray(htf_times, dtype="int64")
+    chart_times = np.asarray(chart_times, dtype="int64")
+    n = len(chart_times)
+    sig_c = np.zeros(n, dtype=bool)
+    lvl_c = np.full(n, np.nan)
+    osc_c = np.full(n, np.nan)
+    if len(htf_times) == 0 or n == 0:
+        return sig_c, lvl_c, osc_c
+    closes = np.asarray(close_times, dtype="int64") if close_times is not None else htf_times + int(tf_ms)
+    idx = np.searchsorted(closes, chart_times + int(chart_ms), side="right") - 1
+    sig = np.asarray(sig, dtype=bool)
+    lvl = np.asarray(lvl, dtype=float)
+    osc = np.asarray(osc, dtype=float)
+    prev = int(idx[0])
+    for i in range(n):
+        j = int(idx[i])
+        if j >= 0:
+            osc_c[i] = osc[j]
+        if j > prev:
+            hit = np.flatnonzero(sig[prev + 1:j + 1])
+            if len(hit):
+                sig_c[i] = True
+                lvl_c[i] = lvl[prev + 1 + int(hit[-1])]
+            prev = j
+    return sig_c, lvl_c, osc_c
+
+
+def osc_divergence(low, high, osc, k: int, lookback: int, ob=None, os_=None, zone: bool = False):
+    """Regular divergence on ANY oscillator (RSI, MFI, CCI), the same rule as rsi_divergence. Pivots are found on the
+    oscillator (k candles left / right, the two pivots k to `lookback` candles apart); the signal is on the candle the
+    later pivot is confirmed (k candles after it), never earlier.
+      bull: later osc low is HIGHER than the earlier one while the price low is LOWER  (a SHORT trade's exhaustion)
+      bear: later osc high is LOWER than the earlier one while the price high is HIGHER (a LONG trade's exhaustion)
+    zone=True: the EARLIER pivot must have been in the zone (bear: osc >= ob, bull: osc <= os_), i.e. the move was stretched.
+    Also returns, at the signal candle, the price swing between the two pivots: bull_level = the highest high from the
+    earlier to the later pivot, bear_level = the lowest low (the levels a break of confirms the turn).
+    Returns (bull, bear, bull_level, bear_level)."""
+    low, high, osc = _to_np(low), _to_np(high), _to_np(osc)
+    m = len(osc)
+    bull = np.zeros(m, dtype=bool)
+    bear = np.zeros(m, dtype=bool)
+    bull_lv = np.full(m, np.nan)
+    bear_lv = np.full(m, np.nan)
+    for is_low in (True, False):
+        piv = np.flatnonzero(_pivots(osc, k, is_low))
+        for a, b in zip(piv[:-1], piv[1:]):
+            if not (k <= b - a <= lookback) or b + k >= m:
+                continue
+            if is_low and osc[b] > osc[a] and low[b] < low[a]:
+                if zone and not (osc[a] <= os_):
+                    continue
+                bull[b + k] = True
+                bull_lv[b + k] = np.nanmax(high[a:b + 1])
+            if (not is_low) and osc[b] < osc[a] and high[b] > high[a]:
+                if zone and not (osc[a] >= ob):
+                    continue
+                bear[b + k] = True
+                bear_lv[b + k] = np.nanmin(low[a:b + 1])
+    return bull, bear, bull_lv, bear_lv
+
+
+def div_exit_arrays(osc, sig, level, close, times, keep: int, long_exit: bool, ob, os_, turn: bool, price: bool):
+    """Per candle t: is a divergence exit for the trade on? A divergence found at candle d is valid for candles d ... d+keep.
+    At t it counts when the ticked confirmations hold at t: turn (long exit: osc back BELOW ob; short exit: back ABOVE os_)
+    and price (long exit: close BELOW the swing low between the two pivots; short exit: close ABOVE the swing high).
+    Returns (ok, when): ok[t] bool and when[t] = open_time of the candle the divergence was found on (the latest valid
+    one; NaN where not ok). The caller ignores a divergence found on or before the trade's own entry candle."""
+    osc, level, close = _to_np(osc), _to_np(level), _to_np(close)
+    n = len(osc)
+    ok = np.zeros(n, dtype=bool)
+    when = np.full(n, np.nan)
+    det = np.flatnonzero(sig)
+    for t in range(n):
+        for d in det[(det <= t) & (det >= t - keep)][::-1]:          # the latest first
+            good = True
+            if turn and ob is not None and os_ is not None:       # no band (MACD histogram, OBV): this tick does not apply
+                good = bool(osc[t] < ob) if long_exit else bool(osc[t] > os_)
+            if good and price:
+                good = bool(close[t] < level[d]) if long_exit else bool(close[t] > level[d])
+            if good:
+                ok[t] = True
+                when[t] = float(times[d])
+                break
+    return ok, when
+
+
 def pine_stdev(src, length: int) -> np.ndarray:
     """ta.stdev: the POPULATION standard deviation (divide by N) of the last `length` values; na until a full window."""
     s_ = _to_np(src)
@@ -1697,11 +2158,268 @@ def _ma_cond(mode: str, src, ma, n: int, low=None, high=None):
 # ==========================================================================
 # THE HUB FRAME
 # ==========================================================================
-def compute_hub(df: pd.DataFrame, plan: dict) -> pd.DataFrame:
+def _run_blocks(out, ind, cO, cH, cL, cC, h, l, c, vol, names, longs, shorts):
+    """The indicator blocks in `names`, worked out on the candles given (out = the frame they write their values to).
+    Fills longs / shorts and adds each block's value columns to `out`. Used for the chart's own candles and, with the
+    candles of another size, for every indicator that has its own timeframe (see compute_hub)."""
+    n = len(cC)
+    if "candle" in names:
+        with np.errstate(invalid="ignore"):
+            longs["candle"], shorts["candle"] = cC > cO, cC < cO
+            if ind["candle"].get("strong"):
+                # strong candle only: an up candle with no lower wick, a down candle with no upper wick
+                tol = 1e-9 * np.maximum(np.abs(cO), 1.0)
+                longs["candle"] = longs["candle"] & (cL >= cO - tol)
+                shorts["candle"] = shorts["candle"] & (cH <= cO + tol)
+            if ind["candle"].get("prev_opposite"):
+                # the candle before the signal candle was the OPPOSITE colour (long: it was a down candle, short: an up one)
+                pO, pC = _shift(cO), _shift(cC)
+                longs["candle"] = longs["candle"] & (pC < pO)
+                shorts["candle"] = shorts["candle"] & (pC > pO)
+
+    for name in ("ma1", "ma2"):
+        if name not in names:
+            continue
+        p = ind[name]
+        ma = _ma(p["type"], cC, p["length"], p["alma_offset"], p["alma_sigma"])
+        out[name] = ma
+        lg, sh = np.ones(n, dtype=bool), np.ones(n, dtype=bool)
+        for m in p["modes"]:                   # every ticked condition must agree
+            a, b_ = _ma_cond(m, cC, ma, p["n"], cL, cH)
+            lg, sh = lg & a, sh & b_
+        longs[name], shorts[name] = lg, sh
+
+    if "adx" in names:
+        p = ind["adx"]
+        di_plus, di_minus, adx = pine_dmi(out, p["di_length"], p["smoothing"])
+        out["di_plus"], out["di_minus"], out["adx"] = di_plus, di_minus, adx
+        with np.errstate(invalid="ignore"):
+            ok = adx >= p["level"]
+            if p.get("rising"):
+                ok = ok & (adx > _shift(adx))       # ADX must be rising (the trend is getting stronger)
+            longs["adx"] = ok & ((not p["di_required"]) | (di_plus > di_minus))
+            shorts["adx"] = ok & ((not p["di_required"]) | (di_minus > di_plus))
+
+    if "ci" in names:
+        p = ind["ci"]
+        tr_real = _true_range(h, l, c)          # ta.atr(1) = ta.tr(true)
+        sum_tr = np.full(n, np.nan)
+        L = p["length"]
+        for i in range(L - 1, n):
+            w = tr_real[i - L + 1:i + 1]
+            if not np.isnan(w).any():
+                sum_tr[i] = w.sum()
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ci = 100.0 * np.log10(sum_tr / (rolling_highest(h, L) - rolling_lowest(l, L))) / math.log10(L)
+        out["ci"] = ci
+        with np.errstate(invalid="ignore"):
+            ci_ok = ci < p["max"]
+        longs["ci"], shorts["ci"] = ci_ok, ci_ok
+
+    if "rsi" in names:
+        p = ind["rsi"]
+        rsi = pine_rsi(cC, p["length"])
+        out["rsi"] = rsi
+        lg, sh = np.ones(n, dtype=bool), np.ones(n, dtype=bool)
+        with np.errstate(invalid="ignore"):
+            for mode in p["modes"]:             # every ticked condition must agree
+                if mode == RSI_OBOS:
+                    # back inside: long when RSI crosses back UP through Oversold, short when it crosses back DOWN
+                    # through Overbought (the signal stays on for that candle and N more)
+                    up = _cross_up(rsi, np.full(n, float(p["oversold"])))
+                    dn = _cross_down(rsi, np.full(n, float(p["overbought"])))
+                    a, b_ = _within(up, int(p["n"])), _within(dn, int(p["n"]))
+                elif mode == RSI_DIV:
+                    bull, bear = rsi_divergence(cL, cH, rsi, int(p["pivot"]), int(p["lookback"]))
+                    a, b_ = _within(bull, int(p["n"])), _within(bear, int(p["n"]))
+                elif mode == RSI_MACROSS:
+                    # RSI against its OWN moving average (the average is taken of the RSI line, not of the price):
+                    # long when the RSI crosses UP through it, short when it crosses DOWN (stays on for N more candles)
+                    rsi_ma = _ma(p["ma_type"], rsi, int(p["ma_length"]), p["ma_alma_offset"], p["ma_alma_sigma"])
+                    out["rsi_ma"] = rsi_ma
+                    a, b_ = _within(_cross_up(rsi, rsi_ma), int(p["n"])), _within(_cross_down(rsi, rsi_ma), int(p["n"]))
+                else:
+                    a, b_ = rsi > p["level"], rsi < p["level"]
+                lg, sh = lg & a, sh & b_
+        longs["rsi"], shorts["rsi"] = lg, sh
+
+    for ob_ in OSC_BLOCKS:
+        if ob_ not in names:
+            continue
+        p = ind[ob_]
+        if ob_ == "mfi":
+            osc = pine_mfi(h, l, c, vol, int(p["length"]))
+        elif ob_ == "cci":
+            osc = pine_cci(h, l, c, int(p["length"]))
+        elif ob_ == "stoch":
+            osc = pine_stoch(h, l, c, int(p["length"]), int(p["smooth"]))
+        elif ob_ == "cmo":
+            osc = pine_cmo(cC, int(p["length"]))
+        else:
+            osc = pine_obv(c, vol)
+        out[ob_] = osc
+        lg, sh = np.ones(n, dtype=bool), np.ones(n, dtype=bool)
+        with np.errstate(invalid="ignore"):
+            for mode in p["modes"]:             # every ticked condition must agree
+                if mode == RSI_OBOS:
+                    up = _cross_up(osc, np.full(n, float(p["oversold"])))
+                    dn = _cross_down(osc, np.full(n, float(p["overbought"])))
+                    a, b_ = _within(up, int(p["n"])), _within(dn, int(p["n"]))
+                elif mode == RSI_DIV:
+                    bull, bear = rsi_divergence(cL, cH, osc, int(p["pivot"]), int(p["lookback"]))
+                    a, b_ = _within(bull, int(p["n"])), _within(bear, int(p["n"]))
+                elif mode == OBV_RISING:
+                    prev_ = _shift(osc)
+                    a, b_ = osc > prev_, osc < prev_
+                elif mode == OBV_ABOVE:
+                    o_ma = _ma(p["ma_type"], osc, int(p["ma_length"]), p["ma_alma_offset"], p["ma_alma_sigma"])
+                    out[ob_ + "_ma"] = o_ma
+                    a, b_ = osc > o_ma, osc < o_ma
+                elif mode == RSI_LEVEL:
+                    a, b_ = osc > p["level"], osc < p["level"]
+                else:                            # crosses its own moving average (stays on for N more candles)
+                    o_ma = _ma(p["ma_type"], osc, int(p["ma_length"]), p["ma_alma_offset"], p["ma_alma_sigma"])
+                    out[ob_ + "_ma"] = o_ma
+                    a, b_ = _within(_cross_up(osc, o_ma), int(p["n"])), _within(_cross_down(osc, o_ma), int(p["n"]))
+                lg, sh = lg & a, sh & b_
+        longs[ob_], shorts[ob_] = lg, sh
+
+    if "macd" in names:
+        p = ind["macd"]
+        line, _sig, hist = pine_macd(cC, p["fast"], p["slow"], p["signal"])
+        out["macd_hist"] = hist
+        out["macd_line"] = line
+        prev_hist = _shift(hist)
+        lg, sh = np.ones(n, dtype=bool), np.ones(n, dtype=bool)
+        with np.errstate(invalid="ignore"):
+            for mode in p["modes"]:             # every ticked condition must agree
+                src = line if mode == MACD_ZERO else hist
+                lg, sh = lg & (src > 0), sh & (src < 0)
+            longs["macd"] = lg & ((not p["rising"]) | (hist > prev_hist))
+            shorts["macd"] = sh & ((not p["rising"]) | (hist < prev_hist))
+
+    if "vol" in names:
+        p = ind["vol"]
+        with np.errstate(invalid="ignore"):
+            avg = pine_sma(vol, p["length"])
+            if p.get("exclude_current"):
+                avg = _shift(avg)        # the average of the previous N candles, without the signal candle itself
+            v_ok = vol >= avg * p["mult"]
+        longs["vol"], shorts["vol"] = v_ok, v_ok
+
+    if "atr" in names:
+        p = ind["atr"]
+        c_tr = _true_range_na(cH, cL, cC)
+        c_atr = pine_rma(c_tr, p["length"])
+        out["atr_chart"] = c_atr
+        with np.errstate(invalid="ignore"):
+            a_ok = c_atr >= pine_sma(c_atr, p["avg_length"]) * p["mult"]
+            if p.get("rising"):
+                a_ok = a_ok & (c_atr > _shift(c_atr))      # ATR must be rising (expanding)
+        longs["atr"], shorts["atr"] = a_ok, a_ok
+
+    if "st" in names:
+        p = ind["st"]
+        hh = _shift(rolling_highest(cH, p["length"]))
+        ll = _shift(rolling_lowest(cL, p["length"]))
+        with np.errstate(invalid="ignore"):
+            longs["st"], shorts["st"] = cC > hh, cC < ll
+
+    if "bb" in names:
+        p = ind["bb"]
+        bb_basis = pine_sma(cC, p["length"])
+        bb_dev = float(p["mult"]) * pine_stdev(cC, p["length"])
+        bb_upper, bb_lower = bb_basis + bb_dev, bb_basis - bb_dev
+        out["bb_basis"], out["bb_upper"], out["bb_lower"] = bb_basis, bb_upper, bb_lower
+        with np.errstate(invalid="ignore"):
+            longs["bb"] = _within(cL <= bb_lower, int(p["n"]))       # the low touched the bottom limit
+            shorts["bb"] = _within(cH >= bb_upper, int(p["n"]))      # the high touched the top limit
+
+    if "eb" in names:
+        p = ind["eb"]
+        eb_len = int(p["length"])
+        eb_top, eb_mid, eb_bot = pine_ema(cH, eb_len), pine_ema(cC, eb_len), pine_ema(cL, eb_len)
+        out["eb_top"], out["eb_mid"], out["eb_bot"] = eb_top, eb_mid, eb_bot
+        eb_back = max(int(p["n"]) - 1, 0)           # N candles ending with the candle BEFORE the signal candle
+
+        def _eb_up(line):         # the close is above the line and was below it within the last N candles
+            with np.errstate(invalid="ignore"):
+                was = _within(np.r_[False, (cC < line)[:-1]], eb_back)
+                return (cC > line) & was
+
+        def _eb_down(line):       # the close is below the line and was above it within the last N candles
+            with np.errstate(invalid="ignore"):
+                was = _within(np.r_[False, (cC > line)[:-1]], eb_back)
+                return (cC < line) & was
+        lg_eb, sh_eb = np.zeros(n, dtype=bool), np.zeros(n, dtype=bool)
+        if p.get("long_low"):
+            lg_eb = lg_eb | _eb_up(eb_bot)
+        if p.get("long_high"):
+            lg_eb = lg_eb | _eb_up(eb_top)
+        if p.get("short_high"):
+            sh_eb = sh_eb | _eb_down(eb_top)
+        if p.get("short_low"):
+            sh_eb = sh_eb | _eb_down(eb_bot)
+        longs["eb"], shorts["eb"] = lg_eb, sh_eb
+
+    if "sar" in names:
+        p = ind["sar"]
+        sar_v = pine_sar(cH, cL, cC, float(p["step"]), float(p["step"]), float(p["limit"]))
+        out["sar_dots"] = sar_v
+        with np.errstate(invalid="ignore"):
+            longs["sar"], shorts["sar"] = cC > sar_v, cC < sar_v
+
+    if "sup" in names:
+        p = ind["sup"]
+        sup_line, sup_up, sup_valid = pine_supertrend(cH, cL, cC, p["atr_length"], p["factor"])
+        out["sup_line"] = sup_line
+        out["sup_up"] = sup_up
+        sup_down = sup_valid & ~sup_up
+        prev_up, prev_down = _shift_bool(sup_up), _shift_bool(sup_down)
+        lg, sh = np.ones(n, dtype=bool), np.ones(n, dtype=bool)
+        for m in p["modes"]:                       # every ticked condition must agree
+            if m == SUP_FLIP:
+                a = _within(sup_up & prev_down, int(p["n"]))
+                b_ = _within(sup_down & prev_up, int(p["n"]))
+            else:
+                a, b_ = sup_up, sup_down
+            lg, sh = lg & a, sh & b_
+        longs["sup"], shorts["sup"] = lg, sh
+
+
+def _div_signals(name: str, d: dict, cH, cL, cC, vol, times, htf, dv: dict = None):
+    """One oscillator's divergence signals on the chart candles (timeframe Chart) or on candles of another size mapped onto the
+    chart candles. Returns (osc, bull, bull_level, bear, bear_level, ob, os) - used by Exit when and by the leverage boost."""
+    ob_, os__ = d.get("ob"), d.get("os")
+    if not DIV_SPEC[name]["levels"]:
+        ob_ = os__ = None
+    tf = d.get("tf") or "Chart"
+    zone = bool(d.get("zone")) and DIV_SPEC[name]["levels"]
+    if tf == "Chart":
+        osc = div_oscillator(name, d, cH, cL, cC, vol)
+        bull, bear, bull_lv, bear_lv = osc_divergence(cL, cH, osc, int(d["pivot"]), int(d["lookback"]), ob_, os__, zone)
+    else:
+        src = (htf or {}).get(tf)
+        if src is None or not len(src):
+            raise HtfMissing(f"the {tf} candles that {DIV_NAMES[name]} reads are missing")
+        hh_, hl_, hc_, hv_ = (src[k].to_numpy(dtype=float) for k in ("high", "low", "close", "volume"))
+        osc_h = div_oscillator(name, d, hh_, hl_, hc_, hv_)
+        bu_h, be_h, bul_h, bel_h = osc_divergence(hl_, hh_, osc_h, int(d["pivot"]), int(d["lookback"]), ob_, os__, zone)
+        chart_ms = int(np.median(np.diff(times))) if len(times) > 1 else 0
+        ht = src["open_time"].to_numpy(dtype="int64")
+        cl_ = div_tf_close(tf, ht)
+        bull, bull_lv, osc = htf_to_chart(bu_h, bul_h, osc_h, ht, DIV_TF_MS[tf], times, chart_ms, cl_)
+        bear, bear_lv, _ = htf_to_chart(be_h, bel_h, osc_h, ht, DIV_TF_MS[tf], times, chart_ms, cl_)
+    return osc, bull, bull_lv, bear, bear_lv, ob_, os__
+
+
+def compute_hub(df: pd.DataFrame, plan: dict, htf: dict = None) -> pd.DataFrame:
     """df: NORMAL closed candles, oldest -> newest, columns open_time/open/high/low/close/volume.
     Returns a copy with: the chart-type candle (c_open/c_high/c_low/c_close), every indicator value that was
     computed, <block>_long / <block>_short for every block, entry_long/entry_short/dir_e,
-    flip_long/flip_short/dir_f, adx, tp_atr and the trailing-stop extremes."""
+    flip_long/flip_short/dir_f, adx, tp_atr and the trailing-stop extremes.
+    htf: {candle size: closed candles of that size (same columns)} - only needed when an Exit-when divergence oscillator reads a
+    timeframe other than the chart's (see div_tfs_needed)."""
     plan = complete_plan(plan)
     out = df.copy().reset_index(drop=True)
     ind = plan["ind"]
@@ -1713,29 +2431,57 @@ def compute_hub(df: pd.DataFrame, plan: dict) -> pd.DataFrame:
 
     longs: dict[str, np.ndarray] = {}
     shorts: dict[str, np.ndarray] = {}
-    with np.errstate(invalid="ignore"):
-        longs["candle"], shorts["candle"] = cC > cO, cC < cO
-        if ind["candle"].get("strong"):
-            # strong candle only: an up candle with no lower wick, a down candle with no upper wick
-            tol = 1e-9 * np.maximum(np.abs(cO), 1.0)
-            longs["candle"] = longs["candle"] & (cL >= cO - tol)
-            shorts["candle"] = shorts["candle"] & (cH <= cO + tol)
-        if ind["candle"].get("prev_opposite"):
-            # the candle before the signal candle was the OPPOSITE colour (long: it was a down candle, short: an up one)
-            pO, pC = _shift(cO), _shift(cC)
-            longs["candle"] = longs["candle"] & (pC < pO)
-            shorts["candle"] = shorts["candle"] & (pC > pO)
-
-    for name in ("ma1", "ma2"):
-        p = ind[name]
-        ma = _ma(p["type"], cC, p["length"], p["alma_offset"], p["alma_sigma"])
-        out[name] = ma
-        lg, sh = np.ones(n, dtype=bool), np.ones(n, dtype=bool)
-        for m in p["modes"]:                   # every ticked condition must agree
-            a, b_ = _ma_cond(m, cC, ma, p["n"], cL, cH)
-            lg, sh = lg & a, sh & b_
-        longs[name], shorts[name] = lg, sh
-
+    # EACH INDICATOR ON ITS OWN TIMEFRAME (owner 2026-11-18): "Chart" (default) = the pair's own candles. Any other candle size:
+    # the indicator is worked out on candles of that size and each of its values / signals is read, at the close of every chart
+    # candle, from the last candle of that size that has CLOSED by then (nothing from the future).
+    groups: dict[str, list] = {}
+    for b_ in BLOCKS:
+        if b_ in ("mx", "sr"):
+            continue
+        groups.setdefault(ind[b_].get("tf") or "Chart", []).append(b_)
+    _run_blocks(out, ind, cO, cH, cL, cC, h, l, c, vol, set(groups.get("Chart", [])), longs, shorts)
+    chart_ms_ = int(np.median(np.diff(out["open_time"].to_numpy(dtype="int64")))) if n > 1 else 0
+    for tf_, names_ in groups.items():
+        if tf_ == "Chart":
+            continue
+        used_ = [b_ for b_ in names_ if b_ in _needed_blocks(plan)]
+        if not used_:
+            continue
+        src_ = (htf or {}).get(tf_)
+        if src_ is None or not len(src_):
+            raise HtfMissing(f"the {tf_} candles that {', '.join(BLOCK_TITLES[b_] for b_ in used_)} read are missing")
+        sub_ = src_.copy().reset_index(drop=True)
+        sO, sH, sL, sC = chart_candles(sub_, plan)
+        sub_["c_open"], sub_["c_high"], sub_["c_low"], sub_["c_close"] = sO, sH, sL, sC
+        before_ = set(sub_.columns)
+        sl_, ss_ = {}, {}
+        _run_blocks(sub_, ind, sO, sH, sL, sC, _to_np(sub_["high"]), _to_np(sub_["low"]), _to_np(sub_["close"]), _to_np(sub_["volume"]),
+                    set(used_), sl_, ss_)
+        close_t_ = div_tf_close(tf_, sub_["open_time"].to_numpy(dtype="int64"))
+        idx_ = np.searchsorted(close_t_, out["open_time"].to_numpy(dtype="int64") + chart_ms_, side="right") - 1
+        ok_ = idx_ >= 0
+        def _map(arr_):
+            arr_ = np.asarray(arr_)
+            if arr_.dtype == bool:
+                res_ = np.zeros(n, dtype=bool)
+            else:
+                res_ = np.full(n, np.nan)
+                arr_ = arr_.astype(float)
+            res_[ok_] = arr_[idx_[ok_]]
+            return res_
+        for k_, v_ in sl_.items():
+            longs[k_] = _map(v_)
+        for k_, v_ in ss_.items():
+            shorts[k_] = _map(v_)
+        for col_ in sub_.columns:
+            if col_ not in before_:
+                out[col_] = _map(sub_[col_].to_numpy())
+    for b_ in ("ma1", "ma2", "adx", "sup_line"):
+        if b_ not in out.columns:            # not read by anything (it sits on another timeframe and nothing uses it)
+            out[b_] = np.nan
+    for b_ in BLOCKS:
+        if b_ not in ("mx", "sr") and b_ not in longs:
+            longs[b_], shorts[b_] = np.zeros(n, dtype=bool), np.zeros(n, dtype=bool)
     p = ind["mx"]
     ma1, ma2 = out["ma1"].values, out["ma2"].values
     lg, sh = np.ones(n, dtype=bool), np.ones(n, dtype=bool)
@@ -1747,151 +2493,6 @@ def compute_hub(df: pd.DataFrame, plan: dict) -> pd.DataFrame:
                 a, b_ = _within(_cross_up(ma1, ma2), p["n"]), _within(_cross_down(ma1, ma2), p["n"])
             lg, sh = lg & a, sh & b_
     longs["mx"], shorts["mx"] = lg, sh
-
-    p = ind["adx"]
-    di_plus, di_minus, adx = pine_dmi(out, p["di_length"], p["smoothing"])
-    out["di_plus"], out["di_minus"], out["adx"] = di_plus, di_minus, adx
-    with np.errstate(invalid="ignore"):
-        ok = adx >= p["level"]
-        if p.get("rising"):
-            ok = ok & (adx > _shift(adx))       # ADX must be rising (the trend is getting stronger)
-        longs["adx"] = ok & ((not p["di_required"]) | (di_plus > di_minus))
-        shorts["adx"] = ok & ((not p["di_required"]) | (di_minus > di_plus))
-
-    p = ind["ci"]
-    tr_real = _true_range(h, l, c)          # ta.atr(1) = ta.tr(true)
-    sum_tr = np.full(n, np.nan)
-    L = p["length"]
-    for i in range(L - 1, n):
-        w = tr_real[i - L + 1:i + 1]
-        if not np.isnan(w).any():
-            sum_tr[i] = w.sum()
-    with np.errstate(divide="ignore", invalid="ignore"):
-        ci = 100.0 * np.log10(sum_tr / (rolling_highest(h, L) - rolling_lowest(l, L))) / math.log10(L)
-    out["ci"] = ci
-    with np.errstate(invalid="ignore"):
-        ci_ok = ci < p["max"]
-    longs["ci"], shorts["ci"] = ci_ok, ci_ok
-
-    p = ind["rsi"]
-    rsi = pine_rsi(cC, p["length"])
-    out["rsi"] = rsi
-    lg, sh = np.ones(n, dtype=bool), np.ones(n, dtype=bool)
-    with np.errstate(invalid="ignore"):
-        for mode in p["modes"]:             # every ticked condition must agree
-            if mode == RSI_OBOS:
-                # back inside: long when RSI crosses back UP through Oversold, short when it crosses back DOWN
-                # through Overbought (the signal stays on for that candle and N more)
-                up = _cross_up(rsi, np.full(n, float(p["oversold"])))
-                dn = _cross_down(rsi, np.full(n, float(p["overbought"])))
-                a, b_ = _within(up, int(p["n"])), _within(dn, int(p["n"]))
-            elif mode == RSI_DIV:
-                bull, bear = rsi_divergence(cL, cH, rsi, int(p["pivot"]), int(p["lookback"]))
-                a, b_ = _within(bull, int(p["n"])), _within(bear, int(p["n"]))
-            elif mode == RSI_MACROSS:
-                # RSI against its OWN moving average (the average is taken of the RSI line, not of the price):
-                # long when the RSI crosses UP through it, short when it crosses DOWN (stays on for N more candles)
-                rsi_ma = _ma(p["ma_type"], rsi, int(p["ma_length"]), p["ma_alma_offset"], p["ma_alma_sigma"])
-                out["rsi_ma"] = rsi_ma
-                a, b_ = _within(_cross_up(rsi, rsi_ma), int(p["n"])), _within(_cross_down(rsi, rsi_ma), int(p["n"]))
-            else:
-                a, b_ = rsi > p["level"], rsi < p["level"]
-            lg, sh = lg & a, sh & b_
-    longs["rsi"], shorts["rsi"] = lg, sh
-
-    p = ind["macd"]
-    line, _sig, hist = pine_macd(cC, p["fast"], p["slow"], p["signal"])
-    out["macd_hist"] = hist
-    out["macd_line"] = line
-    prev_hist = _shift(hist)
-    lg, sh = np.ones(n, dtype=bool), np.ones(n, dtype=bool)
-    with np.errstate(invalid="ignore"):
-        for mode in p["modes"]:             # every ticked condition must agree
-            src = line if mode == MACD_ZERO else hist
-            lg, sh = lg & (src > 0), sh & (src < 0)
-        longs["macd"] = lg & ((not p["rising"]) | (hist > prev_hist))
-        shorts["macd"] = sh & ((not p["rising"]) | (hist < prev_hist))
-
-    p = ind["vol"]
-    with np.errstate(invalid="ignore"):
-        avg = pine_sma(vol, p["length"])
-        if p.get("exclude_current"):
-            avg = _shift(avg)        # the average of the previous N candles, without the signal candle itself
-        v_ok = vol >= avg * p["mult"]
-    longs["vol"], shorts["vol"] = v_ok, v_ok
-
-    p = ind["atr"]
-    c_tr = _true_range_na(cH, cL, cC)
-    c_atr = pine_rma(c_tr, p["length"])
-    out["atr_chart"] = c_atr
-    with np.errstate(invalid="ignore"):
-        a_ok = c_atr >= pine_sma(c_atr, p["avg_length"]) * p["mult"]
-        if p.get("rising"):
-            a_ok = a_ok & (c_atr > _shift(c_atr))      # ATR must be rising (expanding)
-    longs["atr"], shorts["atr"] = a_ok, a_ok
-
-    p = ind["st"]
-    hh = _shift(rolling_highest(cH, p["length"]))
-    ll = _shift(rolling_lowest(cL, p["length"]))
-    with np.errstate(invalid="ignore"):
-        longs["st"], shorts["st"] = cC > hh, cC < ll
-
-    p = ind["bb"]
-    bb_basis = pine_sma(cC, p["length"])
-    bb_dev = float(p["mult"]) * pine_stdev(cC, p["length"])
-    bb_upper, bb_lower = bb_basis + bb_dev, bb_basis - bb_dev
-    out["bb_basis"], out["bb_upper"], out["bb_lower"] = bb_basis, bb_upper, bb_lower
-    with np.errstate(invalid="ignore"):
-        longs["bb"] = _within(cL <= bb_lower, int(p["n"]))       # the low touched the bottom limit
-        shorts["bb"] = _within(cH >= bb_upper, int(p["n"]))      # the high touched the top limit
-
-    p = ind["eb"]
-    eb_len = int(p["length"])
-    eb_top, eb_mid, eb_bot = pine_ema(cH, eb_len), pine_ema(cC, eb_len), pine_ema(cL, eb_len)
-    out["eb_top"], out["eb_mid"], out["eb_bot"] = eb_top, eb_mid, eb_bot
-    eb_back = max(int(p["n"]) - 1, 0)           # N candles ending with the candle BEFORE the signal candle
-
-    def _eb_up(line):         # the close is above the line and was below it within the last N candles
-        with np.errstate(invalid="ignore"):
-            was = _within(np.r_[False, (cC < line)[:-1]], eb_back)
-            return (cC > line) & was
-
-    def _eb_down(line):       # the close is below the line and was above it within the last N candles
-        with np.errstate(invalid="ignore"):
-            was = _within(np.r_[False, (cC > line)[:-1]], eb_back)
-            return (cC < line) & was
-    lg_eb, sh_eb = np.zeros(n, dtype=bool), np.zeros(n, dtype=bool)
-    if p.get("long_low"):
-        lg_eb = lg_eb | _eb_up(eb_bot)
-    if p.get("long_high"):
-        lg_eb = lg_eb | _eb_up(eb_top)
-    if p.get("short_high"):
-        sh_eb = sh_eb | _eb_down(eb_top)
-    if p.get("short_low"):
-        sh_eb = sh_eb | _eb_down(eb_bot)
-    longs["eb"], shorts["eb"] = lg_eb, sh_eb
-
-    p = ind["sar"]
-    sar_v = pine_sar(cH, cL, cC, float(p["step"]), float(p["step"]), float(p["limit"]))
-    out["sar_dots"] = sar_v
-    with np.errstate(invalid="ignore"):
-        longs["sar"], shorts["sar"] = cC > sar_v, cC < sar_v
-
-    p = ind["sup"]
-    sup_line, sup_up, sup_valid = pine_supertrend(cH, cL, cC, p["atr_length"], p["factor"])
-    out["sup_line"] = sup_line
-    out["sup_up"] = sup_up
-    sup_down = sup_valid & ~sup_up
-    prev_up, prev_down = _shift_bool(sup_up), _shift_bool(sup_down)
-    lg, sh = np.ones(n, dtype=bool), np.ones(n, dtype=bool)
-    for m in p["modes"]:                       # every ticked condition must agree
-        if m == SUP_FLIP:
-            a = _within(sup_up & prev_down, int(p["n"]))
-            b_ = _within(sup_down & prev_up, int(p["n"]))
-        else:
-            a, b_ = sup_up, sup_down
-        lg, sh = lg & a, sh & b_
-    longs["sup"], shorts["sup"] = lg, sh
 
     # SUPPORT / RESISTANCE (2026-11-05): worked out on the NORMAL candles (see app/sr_engine.py). Off = all False.
     srp = sr_cfg(plan)
@@ -1970,7 +2571,8 @@ def compute_hub(df: pd.DataFrame, plan: dict) -> pd.DataFrame:
         out["ct_long"], out["ct_short"] = lg, sh
     elif by == "bb":          # Bollinger half: LONG with the trend in the lower half of the band, SHORT in the upper half
         with np.errstate(invalid="ignore"):
-            out["ct_long"], out["ct_short"] = cC < bb_basis, cC > bb_basis
+            bbm_ = out["bb_basis"].to_numpy(dtype=float)
+            out["ct_long"], out["ct_short"] = cC < bbm_, cC > bbm_
     elif by in CT_BLOCKS:   # counter trend decided by an indicator: the side it says on this candle
         out["ct_long"], out["ct_short"] = longs[by], shorts[by]
     else:
@@ -1978,7 +2580,7 @@ def compute_hub(df: pd.DataFrame, plan: dict) -> pd.DataFrame:
     # EXIT WHEN: the MA value after the candle close is against the trade (long: lower than the one before, short: higher)
     ew = exit_cfg(plan)
     ex_long, ex_short = np.zeros(n, dtype=bool), np.zeros(n, dtype=bool)
-    if ew:
+    if ew and ew.get("signal") != EXIT_DIV:
         with np.errstate(invalid="ignore"):
             m1, m2 = out["ma1"].values, out["ma2"].values
             f1, r1, f2, r2 = m1 < _shift(m1), m1 > _shift(m1), m2 < _shift(m2), m2 > _shift(m2)
@@ -1987,6 +2589,41 @@ def compute_hub(df: pd.DataFrame, plan: dict) -> pd.DataFrame:
         else:
             ex_long, ex_short = f1 & f2, r1 & r2
     out["exit_long"], out["exit_short"] = ex_long, ex_short
+    times = out["open_time"].to_numpy()
+    if ew and ew.get("signal") == EXIT_DIV:
+        # EXIT WHEN, divergence: for each ticked oscillator, the per-candle "exit is on" flags and the candle the divergence was found on
+        dv = ew["div"]
+        for name in DIV_INDS:
+            d = dv.get(name) or {}
+            if not d.get("on"):
+                continue
+            osc, bull, bull_lv, bear, bear_lv, ob_, os__ = _div_signals(name, d, cH, cL, cC, vol, times, htf)
+            keep = int(dv["keep"])
+            out[f"xd_{name}_osc"] = osc
+            okL, whL = div_exit_arrays(osc, bear, bear_lv, cC, times, keep, True, ob_, os__, bool(dv.get("turn")), bool(dv.get("price")))
+            okS, whS = div_exit_arrays(osc, bull, bull_lv, cC, times, keep, False, ob_, os__, bool(dv.get("turn")), bool(dv.get("price")))
+            out[f"xd_{name}_ok_l"], out[f"xd_{name}_t_l"] = okL, whL
+            out[f"xd_{name}_ok_s"], out[f"xd_{name}_t_s"] = okS, whS
+    # HIGHER LEVERAGE ON A PROVEN DIVERGENCE (owner 2026-11-19): a LONG entry is boosted when a BULLISH divergence (price lower low,
+    # oscillator higher low) was found in the last `keep` chart candles (and, if ticked, the indicator is back inside its band / the
+    # price has broken the swing between the two pivots); a SHORT entry by a BEARISH one. Ticked oscillators combine ANY / ALL.
+    bz = (plan["sizing"].get("boost") or {})
+    bz_long, bz_short = np.zeros(n, dtype=bool), np.zeros(n, dtype=bool)
+    if bz.get("on"):
+        bdv = bz["div"]
+        votes_l, votes_s = [], []
+        for name in DIV_INDS:
+            d = bdv.get(name) or {}
+            if not d.get("on"):
+                continue
+            osc, bull, bull_lv, bear, bear_lv, ob_, os__ = _div_signals(name, d, cH, cL, cC, vol, times, htf, bdv)
+            keep = int(bdv["keep"])
+            votes_l.append(div_exit_arrays(osc, bull, bull_lv, cC, times, keep, False, ob_, os__, bool(bdv.get("turn")), bool(bdv.get("price")))[0])
+            votes_s.append(div_exit_arrays(osc, bear, bear_lv, cC, times, keep, True, ob_, os__, bool(bdv.get("turn")), bool(bdv.get("price")))[0])
+        if votes_l:
+            red = np.logical_and.reduce if bdv.get("combine") == "ALL" else np.logical_or.reduce
+            bz_long, bz_short = red(votes_l), red(votes_s)
+    out["boost_long"], out["boost_short"] = bz_long, bz_short
     tp = plan["tp"]
     tr_n = _true_range_na(h, l, c)
     out["tp_atr"] = pine_rma(tr_n, tp["atr_length"])
@@ -2032,11 +2669,14 @@ class HubSnapshot:
     sl_high: float = float("nan")
     sl_piv_low: float = float("nan")     # Stop Loss Structure "Real swing point": latest confirmed swing low below the close
     sl_piv_high: float = float("nan")    # ... latest confirmed swing high above the close
+    boost_long: bool = False     # a proven bullish / bearish divergence is on for the leverage boost (2026-11-19)
+    boost_short: bool = False
     ct_long: bool = False        # counter trend decided by an indicator: it says LONG / SHORT on this candle
     ct_short: bool = False
     sup_line: float = float("nan")   # Trailing Stop "Supertrend line": the line of this candle
     exit_long: bool = False      # Exit when: the MA(s) curve against a LONG / a SHORT on this candle close
     exit_short: bool = False
+    xdiv: dict = field(default_factory=dict)   # Exit when (divergence): {"rsi": {"L": (ok, found_on_candle), "S": (...)}, "mfi": ..., "cci": ...}
     sr_origin: int = 0           # Support / Resistance: 0 none, 1 bounce, 2 breakout, 3 retest (the entry signal of this candle)
     sr_stop_long: float = float("nan")    # the stop outside the zone for a LONG / SHORT entered on this candle
     sr_stop_short: float = float("nan")
@@ -2082,6 +2722,10 @@ def hub_snapshot_at(frame: pd.DataFrame, i: int) -> HubSnapshot:
         sup_line=_f(r["sup_line"]) if "sup_line" in r.index else float("nan"),
         exit_long=bool(r["exit_long"]) if "exit_long" in r.index else False,
         exit_short=bool(r["exit_short"]) if "exit_short" in r.index else False,
+        boost_long=bool(r["boost_long"]) if "boost_long" in r.index else False,
+        boost_short=bool(r["boost_short"]) if "boost_short" in r.index else False,
+        xdiv={nm: {"L": (bool(r[f"xd_{nm}_ok_l"]), _f(r[f"xd_{nm}_t_l"])), "S": (bool(r[f"xd_{nm}_ok_s"]), _f(r[f"xd_{nm}_t_s"]))}
+              for nm in DIV_INDS if f"xd_{nm}_ok_l" in r.index},
         sr_origin=int(r["sr_origin"]) if "sr_origin" in r.index else 0,
         sr_stop_long=_f(r["sr_stop_long"]) if "sr_stop_long" in r.index else float("nan"),
         sr_stop_short=_f(r["sr_stop_short"]) if "sr_stop_short" in r.index else float("nan"),
@@ -2116,11 +2760,40 @@ def flip_decision(direction: str, snap: HubSnapshot, entry_price: float, plan: d
     return "FLIP"
 
 
-def exit_decision(direction: str, snap: HubSnapshot, plan: dict) -> str:
+def div_exit_hit(direction: str, snap: HubSnapshot, dv: dict, entry_time=None) -> bool:
+    """Exit when -> Divergence on this candle close: every ticked oscillator says whether its divergence (with the ticked
+    confirmations) is against the trade; they are combined ANY / ALL. A divergence found on or before the trade's own entry
+    candle (entry_time = that candle's open time) is ignored, so a divergence from before the entry never closes the new trade."""
+    side = "L" if direction == "LONG" else "S"
+    votes = []
+    for name in DIV_INDS:
+        if not (dv.get(name) or {}).get("on"):
+            continue
+        ok, found = ((snap.xdiv or {}).get(name) or {}).get(side, (False, float("nan")))
+        good = bool(ok)
+        if good and entry_time is not None:
+            good = math.isfinite(found) and found > float(entry_time)
+        votes.append(good)
+    if not votes:
+        return False
+    return all(votes) if dv.get("combine") == "ALL" else any(votes)
+
+
+def exit_reason_text(plan: dict) -> str:
+    """Short words for the logs: what made Exit when close the trade."""
+    ew = exit_cfg(plan) or {}
+    return "a divergence shows" if ew.get("signal") == EXIT_DIV else "the MA(s) curve"
+
+
+def exit_decision(direction: str, snap: HubSnapshot, plan: dict, entry_time=None) -> str:
     """In a position: "EXIT" when Exit when is ON and its signal is against the open trade on this candle close, else
-    "STAY". (Whether it then waits or flips is exit_after.)"""
-    if not exit_cfg(plan):
+    "STAY". (Whether it then waits or flips is exit_after.) entry_time = open time of the trade's entry candle (used by
+    the divergence signal only)."""
+    ew = exit_cfg(plan)
+    if not ew:
         return "STAY"
+    if ew.get("signal") == EXIT_DIV:
+        return "EXIT" if div_exit_hit(direction, snap, ew.get("div") or {}, entry_time) else "STAY"
     hit = bool(getattr(snap, "exit_long", False)) if direction == "LONG" else bool(getattr(snap, "exit_short", False))
     return "EXIT" if hit else "STAY"
 
@@ -2162,6 +2835,20 @@ def entry_size(direction: str, snap: HubSnapshot, plan: dict) -> tuple[float, fl
     """(allocation %, leverage, kind) of an entry. kind is "single" (counter-trend sizing is OFF), "trend" or
     "counter". With counter-trend sizing ON: LONG is with the trend when the chart close is ABOVE the EMA, SHORT
     when BELOW; anything else (including an EMA that is not computed) is counter-trend (the smaller, safer size)."""
+    alloc, lev, kind = _entry_size_base(direction, snap, plan)
+    bz = plan["sizing"].get("boost") or {}
+    if bz.get("on") and kind != "counter" and bool(getattr(snap, "boost_long" if direction == "LONG" else "boost_short", False)):
+        lev = float(bz["leverage"])          # a proven divergence on the same side: the higher leverage (the amount stays the same)
+    return alloc, lev, kind
+
+
+def entry_size_normal_leverage(plan: dict, kind: str) -> float:
+    """The leverage of this entry type without the divergence boost (used to tell whether the boost was applied)."""
+    sz = plan["sizing"]
+    return float((sz.get("counter") or {}).get("leverage")) if kind == "counter" else float(sz["leverage"])
+
+
+def _entry_size_base(direction: str, snap: HubSnapshot, plan: dict) -> tuple[float, float, str]:
     sz = plan["sizing"]
     ct = sz.get("counter") or {"on": False}
     if not ct.get("on"):
@@ -2237,6 +2924,24 @@ def carry_total(amount, pnl, lock_pct) -> float:
     if lock_pct is None or pnl <= 0:
         return amount + pnl
     return amount + pnl * float(lock_pct) / 100.0
+
+
+SHORT_BUFFER_DEFAULT = 2.0     # % of the available balance kept free for fees when "enter with what is available" is ON
+
+
+def short_balance_fit(sz: dict, margin_needed: float, available: float):
+    """Optional box "Enter with what is available" (owner 2026-11-16). Returns (margin_to_use, shortfall).
+    OFF (or the balance covers the entry): (margin_needed, 0.0) - nothing changes.
+    ON and the usable balance (available minus the fee buffer) is less than the margin the entry needs: the entry margin
+    becomes the usable balance and the shortfall is what is missing (margin_needed - usable)."""
+    if not sz.get("short_enter"):
+        return margin_needed, 0.0
+    buf = sz.get("short_buffer")
+    buf = SHORT_BUFFER_DEFAULT if buf is None else float(buf)
+    usable = max(0.0, float(available)) * (1.0 - buf / 100.0)
+    if margin_needed <= usable:
+        return margin_needed, 0.0
+    return usable, margin_needed - usable
 
 
 def max_loss_usd(plan: dict, available_balance: float, margin: float) -> float:

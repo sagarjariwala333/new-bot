@@ -2434,13 +2434,15 @@ class BotInstance(HubMixin):
             # Strategy Hub: the Shadow box of the plan decides (OFF = the tracker still follows the results).
             use_shadow = bool(self._plan["shadow"]["on"])
             shadow_trades = self._plan["shadow"]["trades"]
+            every_win = bool(self._plan["shadow"].get("every_win"))
         else:
             p = _params_from_pair(self.pc)
             use_shadow, shadow_trades = p.use_shadow, p.shadow_trades
+            every_win = False
         started = tracker_mod.apply_real_close(
             self.tracker, result_pct=result_pct, pnl=bot_pnl, direction=direction,
             entry_price=self.state.entry_price, exit_price=exit_price, reason=reason,
-            balance_at_entry=basis, use_shadow=use_shadow, approximated=approximated)
+            balance_at_entry=basis, use_shadow=use_shadow, approximated=approximated, every_win=every_win)
         tracker_mod.save(self.tracker)
         self._log(f"Tracker: {result_pct:+.3f}% -> {self.tracker.balance:,.2f} "
                   f"(high {self.tracker.peak:,.2f}){' [approximated basis]' if approximated else ''}.")
@@ -2448,7 +2450,7 @@ class BotInstance(HubMixin):
             if self._is_hub():
                 self.hub.shadow_wait = {"pend_dir": 0, "pend_bars": 0, "pend_from_flip": False}
                 hub_state.save(self.hub)
-            msg = (f"New tracker high after a winning trade - SHADOW MODE ON: the next "
+            msg = (f"{'Winning trade' if every_win else 'New tracker high after a winning trade'} - SHADOW MODE ON: the next "
                    f"{shadow_trades} trades are paper only (no real orders).")
             self._log(msg)
             await self._notify(tg.notify_info(self.account_name, self.symbol, msg,

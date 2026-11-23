@@ -139,7 +139,7 @@ def main():
         page.click("#hub-confirm-btn"); wait(200)
         page.select_option("#hub-pair-select", "AAAUSDT"); wait(500)
         names = page.eval_on_selector_all("#hub-menu button", "bs => bs.map(b => b.querySelector('.hubx-iname').firstChild.textContent)")
-        check("menu: the two functions are still where they were (Exit when comes after them)", names[-4:-1] == ["Cooldown after a loss", "Loss limit", "Exit when"] and len(names) == 19, str(names))
+        check("menu: the two functions are still where they were (Exit when comes after them)", names[-4:-1] == ["Cooldown after a loss", "Loss limit", "Exit when"] and len(names) == 20, str(names))
         check("an older plan loads with both NOT picked", not picked("cooldown") and not picked("losslimit"))
         # pick both
         page.click("#hub-edit-btn"); wait(100)

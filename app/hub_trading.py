@@ -33,6 +33,7 @@ import pandas as pd
 
 from app import base_v3_tracker as tracker_mod
 from app.candle_cache import cached_klines
+from app import hub_htf
 from app import hub_state
 from app import ledger
 from app import loss_limits
@@ -149,7 +150,7 @@ class HubMixin:
         closed = df.iloc[:-1].reset_index(drop=True)   # the last row is the still-forming candle
         if len(closed) < HUB_MIN_BARS:
             return None, None
-        frame = hub.compute_hub(closed, plan)
+        frame = hub.compute_hub(closed, plan, await hub_htf.fetch_htf(self.client, self.symbol, plan, closed))
         snap = hub.last_hub_snapshot(frame)
         self.state.last_candle_time = snap.open_time
         self.state.last_indicators = snap.to_display_dict()
@@ -312,15 +313,16 @@ class HubMixin:
                 self.state.last_decision = f"IN {direction} - no flip signal"
             # EXIT WHEN (optional): the MA(s) curve against the trade at this candle close. A flip that fires on the
             # same candle is done first (it already closes the trade).
-            if decision != "FLIP" and hub.exit_decision(direction, snap, plan) == "EXIT":
+            if decision != "FLIP" and hub.exit_decision(direction, snap, plan, self.state.entry_candle_time) == "EXIT":
+                why = hub.exit_reason_text(plan)
                 if hub.exit_after(plan) == hub.EXIT_FLIP:
                     flipped_to = -1 if direction == "LONG" else 1
                     self.state.last_decision = f"EXIT WHEN {direction} - closing now, then the other side"
-                    self._log(f"Exit when: the MA(s) curve against the {direction} on the candle close - CLOSE, then "
+                    self._log(f"Exit when: {why} against the {direction} on the candle close - CLOSE, then "
                               f"FLAT, then check the rules, then open the opposite.")
                 else:
                     self.state.last_decision = f"EXIT WHEN {direction} - closing now, then flat until a fresh signal"
-                    self._log(f"Exit when: the MA(s) curve against the {direction} on the candle close - CLOSE and stay "
+                    self._log(f"Exit when: {why} against the {direction} on the candle close - CLOSE and stay "
                               f"flat until a fresh entry signal.")
                     await self._close_position(reason="exit_when")
                     return
@@ -607,6 +609,8 @@ class HubMixin:
         # READ THE BALANCE now (after the close): this one number sizes the trade and the max-loss stop.
         available_balance = await self.client.get_available_balance()
         alloc, lev, size_kind = hub.entry_size(direction, snap, self._plan)
+        if lev != hub.entry_size_normal_leverage(self._plan, size_kind):
+            self._log(f"Higher leverage on divergence: a proven divergence on the {direction} side is on, so this entry uses {lev:g}x.")
         if hub.counter_entry_off(size_kind, self._plan):
             # owner 2026-10-25: counter-trend size 0 = no counter-trend entry at all (a flip closes and stays flat)
             self._log(f"Not opening {direction}: it is a COUNTER-TREND entry and the counter-trend size is 0 "
@@ -636,6 +640,9 @@ class HubMixin:
                 self._log(f"Entry size: {size_kind.upper()} trade ({why}) -> {alloc}% at {lev:g}x.")
             raw_qty = strat.position_qty(available_balance, alloc, lev, snap.close)
         qty = await self.client.round_qty(self.symbol, raw_qty)
+        qty, fit_amount = await self._hub_fit_short_balance(qty, snap.close, lev, available_balance, snap.open_time)
+        if fixed and fit_amount is not None:
+            entry_amount = fit_amount      # the real margin of this trade (its total, later, is built on this)
         if qty <= 0:
             self._log(f"Computed qty rounded to 0 (available balance {available_balance}, allocation "
                       f"{alloc}%, close {snap.close}) - skipping entry.")
@@ -891,6 +898,42 @@ class HubMixin:
         self.state.last_decision = f"TIME STOP - {d} closed (open {bars} candles, not in profit)"
         await self._close_position(reason="time_stop")
         return True
+
+    async def _hub_fit_short_balance(self, qty: float, price: float, lev, available_balance: float, candle_time):
+        """Optional box "Enter with what is available" (sizing.short_enter, OFF unless ticked). When the available balance
+        (minus the fee buffer) is less than the margin this entry needs, the entry is made smaller to fit the balance, and an
+        email + Telegram message says how much was missing. Returns (qty, new_margin or None). It never raises: any error
+        here leaves the entry exactly as it was."""
+        try:
+            sz = self._plan["sizing"]
+            if not sz.get("short_enter") or qty <= 0 or price <= 0:
+                return qty, None
+            lv = float(lev or 1)
+            margin = qty * price / lv
+            use, short = hub.short_balance_fit(sz, margin, available_balance)
+            if short <= 0:
+                return qty, None
+            new_qty = await self.client.round_qty(self.symbol, use * lv / price)
+            new_margin = new_qty * price / lv
+            msg = (f"Balance short: this entry needs {margin:,.2f} USDT margin ({qty * price:,.2f} USDT position at {lv:g}x) "
+                   f"but the available balance is {float(available_balance):,.2f} USDT. Entering with what is available: "
+                   f"{new_margin:,.2f} USDT margin ({new_qty * price:,.2f} USDT position). About {short:,.2f} USDT is missing; "
+                   f"add it before the next entry.")
+            self._log(msg)
+            if getattr(self, "_short_balance_candle", None) != candle_time:
+                self._short_balance_candle = candle_time
+                try:
+                    await self._notify(tg.notify_info(self.account_name, self.symbol, msg, self.pc.telegram_enabled,
+                                                      email_kind="Balance Short"))
+                    await email_notifier.send(
+                        "Trade-Bot - Balance Short",
+                        f"Account: {self.account_name}\nSymbol: {self.symbol}\n{msg}")
+                except Exception as e:
+                    self._log(f"Balance-short message could not be sent ({e}) - the smaller entry goes ahead.")
+            return new_qty, new_margin
+        except Exception as e:
+            self._log(f"Enter with what is available could not be worked out ({e}) - the entry stays as it was.")
+            return qty, None
 
     async def _hub_margin_alert(self, qty: float, price: float, lev, available_balance: float, candle_time) -> None:
         """Box "Email alert on margin" (sizing.margin_alert). When the margin this entry needs is more than the
@@ -1653,7 +1696,7 @@ class HubMixin:
         closed = df.iloc[:-1].reset_index(drop=True)
         if len(closed) < HUB_MIN_BARS:
             return None
-        frame = hub.compute_hub(closed, plan)
+        frame = hub.compute_hub(closed, plan, await hub_htf.fetch_htf(self.client, self.symbol, plan, closed))
         idx = frame.index[frame["open_time"] == int(t0)]
         if not len(idx):
             return None
@@ -2080,7 +2123,9 @@ class HubMixin:
                 if sh.count >= n_wanted:
                     sh.active = False
                     by_flip = "FLIP" in str(rec.get("exit_reason") or "")
-                    sh.resume_block_time = candle_time if (by_flip and candle_time is not None) else None
+                    # resume_now (optional, owner 2026-11-16): no block - the real entry may happen on this same candle
+                    sh.resume_block_time = (candle_time if (by_flip and candle_time is not None
+                                                            and not self._plan["shadow"].get("resume_now")) else None)
                     sh.last_end_reason = f"{n_wanted} trade(s) off done"
                     ended = True
         cur = (self.hub.shadow_book or {}).get("current")

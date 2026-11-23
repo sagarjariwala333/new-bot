@@ -128,18 +128,18 @@ def main():
         page.goto(base); wait(600)
         open_hub()
         orig_names, orig_descs = names(), descs()
-        check("original menu: 19 functions, Pair first", len(orig_names) == 19 and orig_names[0] == "Pair", str(orig_names[:3]))
+        check("original menu: 20 functions, Pair first", len(orig_names) == 20 and orig_names[0] == "Pair", str(orig_names[:3]))
         page.click("#hub-menu-edit-btn"); wait(300)
         rows = rowvals()
-        check("edit window lists every function in menu order with positions 1..19",
-              len(rows) == 19 and [r[3] for r in rows] == [str(i) for i in range(1, 20)] and rows[0][0] == "pair", str(rows[:2]))
+        check("edit window lists every function in menu order with positions 1..20",
+              len(rows) == 20 and [r[3] for r in rows] == [str(i) for i in range(1, 21)] and rows[0][0] == "pair", str(rows[:2]))
         # rename + new text + move Entry size (8th) to position 2 by typing the number
         page.fill('#hub-menu-rows .hubm-row[data-id="size"] .hubm-name', "Sizing"); 
         page.fill('#hub-menu-rows .hubm-row[data-id="size"] .hubm-desc', "How big I go")
         page.fill('#hub-menu-rows .hubm-row[data-id="size"] .hubm-pos', "2"); page.press('#hub-menu-rows .hubm-row[data-id="size"] .hubm-pos', "Enter"); wait(200)
         rows = rowvals()
         check("typing a position moves the row there and keeps the typed text", rows[1][0] == "size" and rows[1][1] == "Sizing" and rows[1][2] == "How big I go", str(rows[:3]))
-        check("positions are renumbered 1..19", [r[3] for r in rows] == [str(i) for i in range(1, 20)])
+        check("positions are renumbered 1..20", [r[3] for r in rows] == [str(i) for i in range(1, 21)])
         # arrows
         page.click('#hub-menu-rows .hubm-row[data-id="size"] button[title="Move down"]'); wait(150)
         check("the down arrow moves it one place", rowvals()[2][0] == "size")
@@ -149,7 +149,7 @@ def main():
         page.click("#hub-menu-save"); wait(600)
         sent = STATE["saved"][-1] if STATE["saved"] else {}
         check("saved on the server: full order, only the changed texts",
-              sent.get("order", [])[:3] == ["pair", "size", "chart"] and len(sent.get("order", [])) == 19
+              sent.get("order", [])[:3] == ["pair", "size", "chart"] and len(sent.get("order", [])) == 20
               and sent.get("names") == {"size": "Sizing"} and sent.get("descs") == {"size": "How big I go"}, str(sent))
         n = names(); d = descs()
         check("the menu follows: new order, new name, new grey text", n[1] == "Sizing" and d[1] == "How big I go" and n[0] == "Pair" and n[2] == "Chart type", str(n[:4]))
@@ -161,7 +161,7 @@ def main():
         # reload: the same from the server
         page.reload(); wait(600); open_hub()
         n = names()
-        check("after a reload (same server = another device) the menu is the same", n[1] == "Sizing" and len(n) == 19, str(n[:3]))
+        check("after a reload (same server = another device) the menu is the same", n[1] == "Sizing" and len(n) == 20, str(n[:3]))
         # empty box = original text; original button
         page.click("#hub-menu-edit-btn"); wait(300)
         page.fill('#hub-menu-rows .hubm-row[data-id="size"] .hubm-desc', "")
@@ -188,12 +188,12 @@ def main():
         check("a refused save shows the reason and keeps the window open", page.is_visible("#dlg-hub-menu") and "Not saved" in page.inner_text("#hub-menu-msg"), page.inner_text("#hub-menu-msg"))
         check("and the menu is not changed", names() == orig_names)
         page.click("#hub-menu-cancel"); wait(100)
-        # unknown / new functions: a saved order with an unknown id and a missing id still shows all 19
+        # unknown / new functions: a saved order with an unknown id and a missing id still shows all 20
         STATE["menu"] = {"order": ["tp", "ghost"], "names": {}, "descs": {}}
         page.reload(); wait(600); open_hub()
         n = names()
         check("an unknown id in the saved order is ignored; functions missing from it follow at the end",
-              len(n) == 19 and n[0] == "Take profit" and n[1] == "Pair", str(n[:3]))
+              len(n) == 20 and n[0] == "Take profit" and n[1] == "Pair", str(n[:3]))
         check("no JavaScript errors", not errors, str(errors))
         b.close()
     server.shutdown()

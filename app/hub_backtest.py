@@ -61,7 +61,7 @@ def _gap_open(book: dict, price: float, t_ms: int) -> list[dict]:
 
 
 def run(df: pd.DataFrame, plan: dict, initial_equity: float, commission_pct: float, slippage_pct: float,
-        tick_size: float = 0.0) -> dict:
+        tick_size: float = 0.0, htf: dict = None) -> dict:
     """Replays the plan over df (closed candles, oldest first, columns open_time/open/high/low/close/volume).
     Returns {"trades": [...], "tested_from": index, "candles": n}. Every trade has its net % result on the
     equity at its entry (costs taken off), and counted = False when it fell in a trades-off period."""
@@ -74,12 +74,14 @@ def run(df: pd.DataFrame, plan: dict, initial_equity: float, commission_pct: flo
     n = len(df)
     if n < WARMUP + 50:
         raise BacktestError(f"not enough history: need at least {WARMUP + 50} closed candles, have {n}")
-    frame = hub.compute_hub(df.reset_index(drop=True), plan)
+    htf = htf if htf is not None else df.attrs.get("htf")
+    frame = hub.compute_hub(df.reset_index(drop=True), plan, htf) if htf else hub.compute_hub(df.reset_index(drop=True), plan)
     cost_rate = (float(commission_pct) + float(slippage_pct)) / 100.0
     book = B.new_book(1.0)
     plan_paper = dict(plan, shadow=dict(plan["shadow"], slippage_ticks=0))   # slippage comes from the owner's %
     shadow_on = bool(plan["shadow"]["on"])
     off_n = int(plan["shadow"].get("trades") or 0)
+    every_win = bool(plan["shadow"].get("every_win"))
     lock = plan["sizing"].get("lock_pct")
 
     equity = float(initial_equity)
@@ -103,7 +105,7 @@ def run(df: pd.DataFrame, plan: dict, initial_equity: float, commission_pct: flo
         row = {"direction": rec.get("direction"), "entry_time": rec.get("entry_time"),
                "exit_time": rec.get("exit_time"), "entry_price": rec.get("signal_close"),
                "exit_price": rec.get("exit_price"), "exit_reason": rec.get("exit_reason"),
-               "gross_pct": gross_pct, "cost_pct": cost_pct, "net_pct": net_pct, "counted": counted,
+               "leverage": rec.get("leverage"), "gross_pct": gross_pct, "cost_pct": cost_pct, "net_pct": net_pct, "counted": counted,
                "equity_before": base}
         if counted:
             pnl = base * net_pct / 100.0
@@ -112,7 +114,7 @@ def run(df: pd.DataFrame, plan: dict, initial_equity: float, commission_pct: flo
             row.update(pnl=pnl, costs=base * cost_pct / 100.0, equity_after=equity)
             if hub.uses_fixed_base(plan):
                 last_total = hub.carry_total(margin, pnl, lock)
-            if shadow_on and off_n > 0 and pnl > 0 and equity > peak + 1e-12:
+            if shadow_on and off_n > 0 and pnl > 0 and (every_win or equity > peak + 1e-12):
                 off_left = off_n
             peak = max(peak, equity)
         else:

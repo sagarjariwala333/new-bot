@@ -323,7 +323,7 @@ def get_okx_ledger_csv(account_id: str, symbol: str):
 # 12-column format analysis.py expects (see that function's own docstring
 # on this exact fix) - so this needed no special-casing beyond which
 # client/store to use.
-async def _fetch_okx_history(account_id: str, symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
+async def _fetch_okx_history(account_id: str, symbol: str, timeframe: str, limit: int, plan: dict = None) -> pd.DataFrame:
     acc = okx_store.get_account(account_id)
     if acc is None or symbol not in acc.pairs:
         raise HTTPException(404, "pair not found")
@@ -331,8 +331,14 @@ async def _fetch_okx_history(account_id: str, symbol: str, timeframe: str, limit
     from app.okx_futures import OKXFuturesClient
     client = OKXFuturesClient(api_key=api_key, api_secret=api_secret,
                                passphrase=passphrase, demo=acc.demo)
+    htf_raw = None
     try:
         raw = await client.get_klines(symbol, timeframe, limit=limit)
+        from app import strategy_hub as _sh
+        if plan and _sh.div_tfs_needed(plan):         # Exit when -> Divergence on another timeframe: those candles too
+            from app import hub_htf
+            _closed = hub_htf._frame(raw).iloc[:-1].reset_index(drop=True)
+            htf_raw = await hub_htf.fetch_htf(client, symbol, plan, _closed, live=False)
     finally:
         await client.close()
     df = pd.DataFrame(raw, columns=[
@@ -342,7 +348,9 @@ async def _fetch_okx_history(account_id: str, symbol: str, timeframe: str, limit
     for col in ["open", "high", "low", "close", "volume"]:
         df[col] = df[col].astype(float)
     df["open_time"] = df["open_time"].astype("int64")
-    return df.iloc[:-1].reset_index(drop=True)  # drop the still-forming candle
+    out_df = df.iloc[:-1].reset_index(drop=True)  # drop the still-forming candle
+    out_df.attrs["htf"] = htf_raw
+    return out_df
 
 
 @router.post("/analysis/{account_id}/{symbol}/walk-forward", dependencies=[auth_dep])
@@ -354,7 +362,7 @@ async def okx_walk_forward(account_id: str, symbol: str, body: WalkForwardReques
     if not getattr(pc, "plan", None):
         raise HTTPException(400, "This pair has no Strategy Hub plan. Save a plan in the Strategy Hub first - the "
                                  "Analysis tab tests the pair's own Hub strategy.")
-    df = await _fetch_okx_history(account_id, symbol, pc.timeframe, body.limit)
+    df = await _fetch_okx_history(account_id, symbol, pc.timeframe, body.limit, pc.plan)
     try:
         return hub_backtest.walk_forward(df, pc.plan, n_folds=body.n_folds, initial_equity=body.initial_equity,
                                          commission_pct=body.commission_pct, slippage_pct=body.slippage_pct)
@@ -371,7 +379,7 @@ async def okx_monte_carlo(account_id: str, symbol: str, body: MonteCarloRequest)
     if not getattr(pc, "plan", None):
         raise HTTPException(400, "This pair has no Strategy Hub plan. Save a plan in the Strategy Hub first - the "
                                  "Analysis tab tests the pair's own Hub strategy.")
-    df = await _fetch_okx_history(account_id, symbol, pc.timeframe, body.limit)
+    df = await _fetch_okx_history(account_id, symbol, pc.timeframe, body.limit, pc.plan)
     try:
         return hub_backtest.monte_carlo(df, pc.plan, n_sims=body.n_sims, initial_equity=body.initial_equity,
                                         commission_pct=body.commission_pct, slippage_pct=body.slippage_pct,
